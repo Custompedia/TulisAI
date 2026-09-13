@@ -14,3 +14,4 @@ coverage/
 *.log
 .local/
 evaluation-results/
+.vscode/
