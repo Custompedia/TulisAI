@@ -1,0 +1,25 @@
+{
+  "generator": "Built-in GPT Image",
+  "assets": [
+    {
+      "file": "public/images/landing/hero.webp",
+      "prompt": "Use case: stylized-concept. Asset type: wide website hero backdrop for an Indonesian AI writing workspace. Create a beautifully hand painted watercolor pastoral panorama, wide landscape 1536x1024. Ivory handmade paper background #faf9f6, soft sage green hills, olive trees with delicate trunks at far left and right, distant rolling mountains, pale wildflowers low at the edges, a few subtle blank ivory pages resting in meadow at lower corners. Airy poetic editorial illustration, authentic translucent watercolor washes and fine granulated paper, restrained natural greens, warm daylight. Composition: upper 38 percent almost entirely blank ivory, center largely open pale valley to allow a large HTML editor panel to overlay lower central 75 percent; most foliage on outer 15 percent left and right. Bottom meadow continues off canvas. Flat edge to edge artwork, no borders. No typography, no text, no logos, no robots, no UI, no people, no book lettering. Sophisticated peaceful aesthetic."
+    },
+    {
+      "file": "public/images/landing/feature-modes.webp",
+      "prompt": "Use case: stylized-concept. Asset type: square watercolor backdrop behind an HTML writing-feature card. Generate 1024x1024. Beautiful soft sage and moss green watercolor garden, ivory paper texture, rolling grassy hillside, delicate wildflowers and light leafy trees concentrated along outer frame, small blank ivory loose pages softly curling among leaves at bottom left. Middle 65 percent very pale open ivory negative space for UI overlay. Hand painted botanical landscape, elegant editorial illustration, translucent watercolor, muted olive, sage, pale butter, tiny pink flowers. Daylight. Edge to edge artwork. No text, typography, logos, robots, people or UI."
+    },
+    {
+      "file": "public/images/landing/feature-protection.webp",
+      "prompt": "Use case: stylized-concept. Asset type: square watercolor backdrop behind an HTML citation protection feature card. Generate 1024x1024. Elegant hand painted watercolor still life merging into a garden, blank ivory sheets and a gently open blank book in bottom corners, fine olive branches and sage foliage around edges, pale warm stone and cream background, hints of distant muted green hills. Center 65 percent very pale and empty for a UI overlay. Fine handmade paper grain, delicate translucent watercolor washes, warm soft daylight, restrained botanical editorial aesthetic. No readable writing or scribbles, no text, logos, robots, people, UI or frames."
+    },
+    {
+      "file": "public/images/landing/feature-versions.webp",
+      "prompt": "Use case: stylized-concept. Asset type: square watercolor backdrop behind an HTML version history feature card. Generate 1024x1024. Delicate watercolor winding pale footpath through a soft sage green garden with olive trees and low wildflowers, path forks subtly at bottom then joins into one in distant pale mist, suggesting editing choices. Keep center 65 percent extremely pale ivory with low detail for HTML overlay, foliage mostly on outer edges. Hand painted translucent washes, authentic paper grain, moss green and muted butter, airy peaceful editorial art, matching botanical writing-workspace illustrations. No text, logos, robots, people, UI, borders."
+    },
+    {
+      "file": "public/images/landing/footer.webp",
+      "prompt": "Use case: stylized-concept. Asset type: wide footer panorama for a refined AI writing website. Generate wide landscape 1536x1024. Hand painted watercolor panorama of rolling sage green meadows and distant hills, graceful olive tree at left edge, small trees at right, delicate wildflowers, pale curving path suggesting a flowing sheet of blank ivory paper in bottom foreground. Landscape entirely in bottom 45 percent, upper 55 percent completely blank warm ivory #faf9f6 softly blending into distant hills. Authentic translucent watercolor washes, finely textured handmade paper, muted olive and fresh sage, restrained pale yellow and tiny blush flowers. Peaceful elegant editorial mood, edge to edge with no border. No lettering, typography, text, logos, robots, people, UI."
+    }
+  ]
+}
