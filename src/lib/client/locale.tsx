@@ -23,4 +23,9 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
+export function LocaleScope({ locale, children }: { locale: Locale; children?: React.ReactNode }) {
+  const value = useMemo(() => ({ locale, setLocale: () => {}, t: (id: string, en: string) => locale === 'en' ? en : id }), [locale]);
+  return <Context.Provider value={value}>{children}</Context.Provider>;
+}
+
 export const useLocale = () => useContext(Context);

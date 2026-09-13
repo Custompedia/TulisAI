@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowRight, Check, ChevronDown, Columns2, Feather, FileText, History, LockKeyhole, Menu, PanelLeft, ShieldCheck, Sparkles, X } from 'lucide-react';
-import { useLocale } from '@/lib/client/locale';
+import { LocaleScope, useLocale } from '@/lib/client/locale';
 import { request } from '@/lib/client/api';
 import { Logo } from '@/components/ui/Logo';
 import { MODES, modeIcon, modeLabel } from '@/components/writing/modes';
@@ -31,13 +31,6 @@ function StartLink({ signedIn, arrow = false }: { signedIn: boolean; arrow?: boo
   return <Link className={styles.primary} href={signedIn ? '/app' : '/register'}>{signedIn ? t('Buka Dashboard', 'Open Dashboard') : t('Mulai Menulis', 'Start Writing')}{arrow && <ArrowRight size={15} aria-hidden="true" />}</Link>;
 }
 
-function LocaleToggle() {
-  const { locale, setLocale, t } = useLocale();
-  return <div className={styles.locale} role="group" aria-label={t('Bahasa antarmuka', 'Interface language')}>
-    {(['id', 'en'] as const).map(value => <button type="button" key={value} aria-pressed={locale === value} onClick={() => setLocale(value)}>{value.toUpperCase()}</button>)}
-  </div>;
-}
-
 function Nav({ signedIn }: { signedIn: boolean }) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
@@ -47,11 +40,11 @@ function Nav({ signedIn }: { signedIn: boolean }) {
     <nav className={styles.nav} aria-label={t('Navigasi utama', 'Main navigation')}>
       <div className={styles.brand}><Logo /></div>
       <div className={styles.navLinks}>{links.map(link => <a key={link.href} href={link.href}>{link.label}</a>)}</div>
-      <div className={styles.navActions}><LocaleToggle />{!signedIn && <Link className={styles.signIn} href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} /></div>
+      <div className={styles.navActions}>{!signedIn && <Link className={styles.signIn} href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} /></div>
       <button ref={toggle} type="button" className={styles.menuToggle} aria-expanded={open} aria-controls="landing-menu" aria-label={open ? t('Tutup menu', 'Close menu') : t('Buka menu', 'Open menu')} onClick={() => setOpen(!open)}>{open ? <X size={21} /> : <Menu size={21} />}</button>
       <div id="landing-menu" className={styles.mobileMenu} hidden={!open}>
         {links.map(link => <a key={link.href} href={link.href} onClick={() => setOpen(false)}>{link.label}</a>)}
-        <LocaleToggle />{!signedIn && <Link href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} />
+        {!signedIn && <Link href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} />
       </div>
     </nav>
   </header>;
@@ -124,7 +117,6 @@ function Hero({ signedIn }: { signedIn: boolean }) {
   return <section className={styles.hero} aria-labelledby="hero-title">
     <Image className={styles.heroArt} src="/images/landing/hero.webp" alt="" width={1536} height={1024} sizes="100vw" priority />
     <div className={styles.heroCopy}>
-      <span className={styles.eyebrow}><span />{t('RUANG UNTUK IDE, KENDALI UNTUKMU', 'ROOM FOR IDEAS, CONTROL FOR YOU')}</span>
       <h1 id="hero-title">{t('Tulisanmu, lebih jelas.', 'Your writing, clearer.')}<br />{t('Maknanya tetap milikmu.', 'The meaning stays yours.')}</h1>
       <p>{t('Parafrase dan sempurnakan tulisan dalam satu ruang kerja.', 'Paraphrase and refine your writing in one workspace.')}<br className={styles.desktopBreak} /> {t('Pilih gaya, lihat perubahan, dan tetap pegang kendali.', 'Choose a style, see the changes, and stay in control.')}</p>
       <div className={styles.heroActions}><StartLink signedIn={signedIn} arrow /><a href="#contoh" className={styles.exampleLink}>{t('Coba Contoh', 'Try Example')}<ArrowDown size={14} aria-hidden="true" /></a></div>
@@ -141,21 +133,22 @@ function Closing({ signedIn }: { signedIn: boolean }) {
 function Footer({ signedIn }: { signedIn: boolean }) {
   const { t } = useLocale();
   return <footer className={styles.footer}>
-    <div className={styles.footerCard}>
-      <div className={styles.footerTop}><div className={styles.footerAbout}><div className={styles.brand}><Logo /></div><p>{t('Ruang kerja untuk merawat ide, merapikan kata, dan menemukan suara tulisanmu.', 'A workspace to nurture ideas, refine words, and find your writing voice.')}</p></div>
+    <div className={styles.footerInner}>
+      <div className={styles.footerTop}><div className={styles.footerAbout}><div className={styles.brand}><Logo /></div><p>{t('Ruang kerja untuk merawat ide, merapikan kata, dan menemukan suara tulisanmu.', 'Clearer writing. Your voice, preserved.')}</p></div>
         <nav aria-label={t('Navigasi produk', 'Product navigation')}><strong>{t('Produk', 'Product')}</strong><a href="#produk">{t('Fitur', 'Features')}</a><a href="#cara-kerja">{t('Cara Kerja', 'How It Works')}</a><a href="#mode">{t('Mode Penulisan', 'Writing Modes')}</a></nav>
         <nav aria-label={t('Navigasi bantuan', 'Help navigation')}><strong>{t('Jelajahi', 'Explore')}</strong><a href="#contoh">{t('Coba Contoh', 'Try Example')}</a><a href="#faq">FAQ</a></nav>
         <nav aria-label={t('Navigasi akun', 'Account navigation')}><strong>{t('Ruang Kerjamu', 'Your Workspace')}</strong>{signedIn ? <Link href="/app">Dashboard</Link> : <><Link href="/login">{t('Masuk', 'Sign In')}</Link><Link href="/register">{t('Mulai Menulis', 'Start Writing')}</Link></>}</nav>
       </div>
-      <p className={styles.copyright}>© {new Date().getFullYear()} AI Writing Workspace. {t('Semua hak dilindungi.', 'All rights reserved.')}</p>
-      <div className={styles.wordmark} aria-hidden="true">AI Writing</div>
     </div>
-    <Image className={styles.footerArt} src="/images/landing/footer.webp" alt="" width={1536} height={1024} sizes="100vw" />
   </footer>;
 }
 
-export function Landing() {
+function LandingContent() {
   const signedIn = useSignedIn();
   const { t } = useLocale();
-  return <div className={styles.page}><div className={styles.canvas}><a className={styles.skipLink} href="#main-content">{t('Lewati ke konten', 'Skip to content')}</a><Nav signedIn={signedIn} /><main id="main-content"><Hero signedIn={signedIn} /><SupportingSections /><Closing signedIn={signedIn} /></main><Footer signedIn={signedIn} /></div></div>;
+  return <div id="page-top" lang="en" className={styles.page}><div className={styles.canvas}><a className={styles.skipLink} href="#main-content">{t('Lewati ke konten', 'Skip to content')}</a><Nav signedIn={signedIn} /><main id="main-content"><Hero signedIn={signedIn} /><SupportingSections /></main><div className={styles.ending}><Image className={styles.endingArt} src="/images/landing/hero.webp" alt="" width={1536} height={1024} sizes="100vw" /><Closing signedIn={signedIn} /><Footer signedIn={signedIn} /></div></div></div>;
+}
+
+export function Landing() {
+  return <LocaleScope locale="en"><LandingContent /></LocaleScope>;
 }

@@ -54,9 +54,9 @@
 .flowNote .flowSerif { font-family: var(--font-serif), Georgia, serif; font-size: 10px; color: #5f6855; }
 .flowArrow { margin: 12px auto; color: #bdc2b5; }
 .flowStatus { margin: 25px auto 0; display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 7px; color: #778269; padding: 6px; background: #fff; border: 1px solid #edeee7; border-radius: 5px; }
-.darkStatus { color: #fff; background: #363830; border-color: #363830; }
-.darkIcon, .paleIcon { width: 29px; height: 29px; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; background: #34372f; color: white; border-radius: 7px; }
-.paleIcon { background: #eff1ea; color: #8e9980; }
+.darkStatus { color: #fff; background: var(--landing-raised-black); border-color: var(--landing-raised-border); box-shadow: var(--landing-raised-shadow); }
+.darkIcon, .paleIcon { width: 29px; height: 29px; display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; background: var(--landing-raised-black); color: white; border-radius: 7px; box-shadow: var(--landing-raised-shadow); }
+.paleIcon { box-shadow: none; background: #eff1ea; color: #8e9980; }
 .flowNote .darkIcon { width: 24px; height: 24px; border-radius: 5px; }
 .controlFrame { padding: 18px; position: relative; overflow: hidden; border-radius: 23px; }
 .controlBackdrop { position: absolute; inset: 0; object-fit: cover; width: 100%; height: 100%; }
@@ -84,37 +84,34 @@
 .modeDiagram { height: 340px; position: relative; margin-top: 52px; }
 .connectors { position: absolute; width: 100%; height: 100%; overflow: visible; stroke: #e7e9e1; stroke-width: 1; }
 .modeHub { position: absolute; left: 50%; top: 47%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 12px; }
-.modeHub > span { width: 76px; height: 76px; border: 4px solid white; display: grid; place-items: center; background: #33362e; color: white; border-radius: 19px; box-shadow: 0 6px 18px #3c422916, inset 0 0 0 1px #626856; }
+.modeHub > span { width: 76px; height: 76px; border: 0; display: grid; place-items: center; background: var(--landing-raised-black); color: white; border-radius: 19px; box-shadow: var(--landing-raised-shadow); }
 .modeHub p { font-size: 9px; white-space: nowrap; color: #8a9080; margin: 0; }
-.modeNode { display: flex; gap: 10px; align-items: center; width: 215px; position: absolute; background: #faf9f6; padding: 7px; }
-.modeNodeIcon { width: 37px; height: 37px; flex-shrink: 0; display: grid; place-items: center; background: white; border: 1px solid #eeeee7; border-radius: 9px; color: #859472; }
-.modeNode h3 { margin: 0; font-size: 11px; font-weight: 600; }
-.modeNode p { font-size: 8px; color: #999d90; line-height: 1.5; margin: 4px 0 0; }
-.node0 { left: 6%; top: 5%; }
-.node1 { right: 6%; top: 5%; }
-.node2 { left: 0; top: 38%; }
-.node3 { right: 0; top: 38%; }
-.node4 { left: 6%; top: 70%; }
-.node5 { right: 6%; top: 70%; }
-.node1 .modeNodeIcon, .node3 .modeNodeIcon { color: #899fa6; }
-.node4 .modeNodeIcon { color: #bda989; }
-.node5 .modeNodeIcon { color: #a39caf; }
+.modeNode { display: flex; gap: 10px; align-items: center; width: 215px; position: absolute; padding: 10px; border: 1px solid var(--mode-edge); border-radius: 12px; background: linear-gradient(160deg, var(--mode-light), var(--mode-fill)); box-shadow: inset 0 1px 0 #ffffffc9, 0 3px 0 var(--mode-edge), 0 7px 15px #303a2410; }
+.modeNodeIcon { width: 37px; height: 37px; flex-shrink: 0; display: grid; place-items: center; background: var(--mode-tile); border: 1px solid var(--mode-edge); border-radius: 9px; color: var(--mode-ink); box-shadow: inset 0 1px 1px #ffffffb3, 0 2px 3px #303a2410; }
+.modeNode h3 { margin: 0; font-size: 11px; font-weight: 600; color: var(--mode-ink); }
+.modeNode p { font-size: 8px; color: #62675d; line-height: 1.5; margin: 4px 0 0; }
+.node0 { --mode-light: #f2f8eb; --mode-fill: #e0edcf; --mode-edge: #c5d8ad; --mode-tile: #c9dfb2; --mode-ink: #48632e; left: 6%; top: 5%; }
+.node1 { --mode-light: #eff5ff; --mode-fill: #dae8fc; --mode-edge: #b7ccea; --mode-tile: #bfd8f7; --mode-ink: #355987; right: 6%; top: 5%; }
+.node2 { --mode-light: #fff5eb; --mode-fill: #fbe2cf; --mode-edge: #e9c5a6; --mode-tile: #f6d1af; --mode-ink: #925a31; left: 0; top: 38%; }
+.node3 { --mode-light: #f0f5f8; --mode-fill: #dce8ef; --mode-edge: #b9ccd9; --mode-tile: #c4d9e8; --mode-ink: #3e617a; right: 0; top: 38%; }
+.node4 { --mode-light: #fff0f1; --mode-fill: #f6dce2; --mode-edge: #dfb5c1; --mode-tile: #efc2d0; --mode-ink: #8b4960; left: 6%; top: 70%; }
+.node5 { --mode-light: #fff9e5; --mode-fill: #f7e9ba; --mode-edge: #decc8f; --mode-tile: #f1dd98; --mode-ink: #856522; right: 6%; top: 70%; }
 .customNode { position: absolute; top: 87%; left: 50%; transform: translateX(-50%); background: #faf9f6; text-align: center; }
-.customNode > span { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 500; background: white; border: 1px solid #ebede5; border-radius: 7px; padding: 8px 11px; }
+.customNode > span { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; font-weight: 500; background: linear-gradient(160deg, #faf4ea, #e9decc); color: #736047; border: 1px solid #d7c9b3; border-radius: 8px; padding: 8px 11px; box-shadow: inset 0 1px 0 #fff, 0 2px 0 #d7c9b3, 0 5px 10px #463b2810; }
 .customNode > p { font-size: 8px; color: #969d8d; margin: 6px 0 0; white-space: nowrap; }
 .faqSection { padding-top: 78px; }
-.faqList { max-width: 650px; margin: 0 auto; }
-.faqList details { border-bottom: 1px solid #f0efea; padding-block: 12px; }
-.faqList summary { display: flex; gap: 9px; align-items: center; cursor: pointer; list-style: none; width: fit-content; max-width: 100%; font-size: 11px; font-weight: 500; }
+.faqList { max-width: 760px; margin: 0 auto; border-top: 1px solid #dfe4d6; }
+.faqList details { border-bottom: 1px solid #dfe4d6; }
+.faqList summary { display: flex; justify-content: space-between; gap: 24px; align-items: center; cursor: pointer; list-style: none; width: 100%; padding: 23px 4px; font-size: 14px; line-height: 1.6; font-weight: 500; color: #393f32; }
 .faqList summary::-webkit-details-marker { display: none; }
-.faqList summary:focus-visible { outline: 2px solid #94a680; outline-offset: 5px; border-radius: 4px; }
-.faqList summary > span:last-child { background: white; border: 1px solid #f0f0ea; border-radius: 6px; padding: 8px 10px; }
-.faqPlus { width: 26px; height: 26px; flex-shrink: 0; display: grid; place-items: center; border: 1px solid #edeee8; border-radius: 7px; background: white; color: #737d66; }
+.faqList summary:focus-visible { outline: 2px solid #94a680; outline-offset: 4px; border-radius: 3px; }
+.faqList summary:hover { color: #61774e; }
+.faqPlus { width: 24px; height: 24px; flex-shrink: 0; display: grid; place-items: center; color: #758568; }
 .faqPlus svg { transition: transform .2s ease; }
 .faqList details[open] .faqPlus svg { transform: rotate(45deg); }
-.faqAnswer { display: flex; justify-content: flex-end; align-items: flex-end; gap: 8px; padding-block: 16px 4px; padding-left: 56px; }
-.faqAnswer p { max-width: 430px; padding: 14px 16px; border: 1px solid #efefe9; border-radius: 9px 9px 2px 9px; background: white; color: #81857a; font-size: 11px; line-height: 1.75; margin: 0; }
-.answerIcon { display: grid; place-items: center; flex-shrink: 0; width: 24px; height: 24px; border: 1px solid #efefe9; border-radius: 6px; background: white; color: #646e59; }
+.faqList details[open] summary { color: #526644; }
+.faqAnswer { padding: 0 52px 24px 4px; }
+.faqAnswer p { max-width: 640px; color: #727a67; font-size: 13px; line-height: 1.85; margin: 0; }
 @media (min-width: 1440px) { .section { padding-block: 56px; } }
 @media (max-width: 1000px) {
   .container { width: calc(100% - 48px); }
@@ -237,16 +234,16 @@
   .connectors { display: none; }
   .modeHub { position: relative; left: auto; top: auto; transform: none; margin-bottom: 25px; }
   .modeHub::after { content: ''; position: absolute; width: 1px; background: #e2e6da; height: 22px; top: calc(100% + 8px); }
-  .modeNode { position: relative; inset: auto; width: 100%; border: 1px solid #ebeee3; background: #fff; border-radius: 10px; gap: 12px; padding: 12px 15px; }
+  .modeNode { position: relative; inset: auto; width: 100%; gap: 12px; padding: 12px 15px; }
   .modeNode::after { content: ''; position: absolute; height: 13px; width: 1px; left: 50%; bottom: -14px; background: #e2e6da; }
-  .modeNodeIcon { width: 37px; height: 37px; background: #f5f6f0; border: 0; }
+  .modeNodeIcon { width: 37px; height: 37px; }
   .modeNode h3 { font-size: 12px; }
   .modeNode p { font-size: 10px; }
   .customNode { position: relative; inset: auto; transform: none; padding-top: 7px; }
   .customNode > span { font-size: 11px; }
   .customNode > p { font-size: 9px; }
-  .faqList summary { font-size: 11px; line-height: 1.6; }
-  .faqAnswer { padding-left: 28px; gap: 5px; }
-  .faqAnswer p { font-size: 11px; padding: 13px; }
+  .faqList summary { font-size: 13px; line-height: 1.6; padding: 20px 0; gap: 16px; }
+  .faqAnswer { padding: 0 32px 21px 0; }
+  .faqAnswer p { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .faqPlus svg { transition: none; } }

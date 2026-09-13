@@ -13,7 +13,7 @@ pnpm dev
 
 | Route | Isi |
 | --- | --- |
-| `/` | Landing: hero watercolor, demo editor interaktif dengan contoh statis ID/EN, fitur, cara kerja, mode, FAQ |
+| `/` | Landing: hero watercolor, berbahasa Inggris, demo editor interaktif dengan contoh statis, fitur, cara kerja, mode, FAQ |
 | `/login`, `/register` | Masuk/daftar username-email + Google (opsional) |
 | `/onboarding` | Preferensi pertama: bahasa + kebutuhan utama (bisa dilewati) |
 | `/app` | Dashboard: composer Quick Start + dokumen terbaru |
