@@ -38,3 +38,8 @@ export function authErrorFromResponse(data: unknown, status: number, en: boolean
   if (code.includes("PASSWORD")) return { message: copy.password, fields: { password: copy.password } };
   return { message: copy.generic, fields: {} };
 }
+
+// Post-login destinations must stay on this origin, including after browser URL normalization.
+export function safeAuthNext(value: string | null): string | null {
+  return value && value.startsWith("/") && !value.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(value) ? value : null;
+}
