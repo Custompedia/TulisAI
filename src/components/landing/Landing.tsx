@@ -34,9 +34,22 @@ function StartLink({ signedIn, arrow = false }: { signedIn: boolean; arrow?: boo
 function Nav({ signedIn }: { signedIn: boolean }) {
   const { t } = useLocale();
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const update = () => setScrolled(window.scrollY > 32);
+    const desktop = window.matchMedia('(min-width: 801px)');
+    const closeOnDesktop = () => { if (desktop.matches) setOpen(false); };
+    update();
+    window.addEventListener('scroll', update, { passive: true });
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => {
+      window.removeEventListener('scroll', update);
+      desktop.removeEventListener('change', closeOnDesktop);
+    };
+  }, []);
   const toggle = useRef<HTMLButtonElement>(null);
   const links = [{ href: '#produk', label: t('Produk', 'Product') }, { href: '#cara-kerja', label: t('Cara Kerja', 'How It Works') }, { href: '#mode', label: t('Mode', 'Modes') }, { href: '#faq', label: 'FAQ' }];
-  return <header className={styles.header} onKeyDown={event => { if (event.key === 'Escape' && open) { setOpen(false); toggle.current?.focus(); } }}>
+  return <header className={styles.header} data-scrolled={scrolled || open} onKeyDown={event => { if (event.key === 'Escape' && open) { setOpen(false); toggle.current?.focus(); } }}>
     <nav className={styles.nav} aria-label={t('Navigasi utama', 'Main navigation')}>
       <div className={styles.brand}><Logo /></div>
       <div className={styles.navLinks}>{links.map(link => <a key={link.href} href={link.href}>{link.label}</a>)}</div>
