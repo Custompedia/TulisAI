@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-writing-workspace",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-09-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" },
+  "vars": { "AI_PUBLIC_ENABLED": "false", "AI_MONTHLY_REQUEST_LIMIT": "100", "OPENROUTER_MODEL": "openai/gpt-5.6-luna" },
+  "triggers": { "crons": ["17 * * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "AI_WRITING_DB", "database_id": "REPLACE_BEFORE_DEPLOY" }],
+  "r2_buckets": [{ "binding": "DOCUMENTS", "bucket_name": "ai-writing-workspace-documents"}]
+}
