@@ -56,6 +56,7 @@ export function repairDrift(failed: string, corrected: string, violations: Array
   });
 }
 
+export const emDashCount = (text: string): number => (text.match(/\u2014/g) ?? []).length;
 type Language = 'id' | 'en';
 const say = (language: Language, id: string, en: string) => (language === 'en' ? en : id);
 // Soft checks never reject; they return short user-facing warnings.
@@ -65,6 +66,7 @@ export function softWarnings(promptId: string, source: string, output: string, r
   const band = lengthBand(promptId, runtime.request);
   if (band && !withinBand(source, output, band)) warnings.push(say(language, 'Panjang hasil di luar rentang yang diminta.', 'The result length is outside the requested range.'));
   if (promptId === 'P03_HUMANIZER' && !varianceHolds(source, output)) warnings.push(say(language, 'Panjang kalimat jadi lebih seragam dari teks asli.', 'Sentence lengths became more uniform than the original.'));
+  if (promptId === 'P03_HUMANIZER' && emDashCount(output) > emDashCount(source)) warnings.push(say(language, 'Hasil menambah tanda pisah (—) yang tidak ada di teks asli.', 'The result added em dashes (—) absent from the original.'));
   return warnings;
 }
 

@@ -75,6 +75,8 @@ describe("soft warnings", () => {
     const flat = "Kami datang pagi ini. Kami menyiapkan laporan tim. Laporan itu sudah selesai.";
     expect(softWarnings("P03_HUMANIZER", uneven, flat, { language: "id", strength: "balanced" })).toContain("Panjang kalimat jadi lebih seragam dari teks asli.");
     expect(softWarnings("P03_HUMANIZER", flat, uneven, { language: "id", strength: "balanced" })).toEqual([]);
+    expect(softWarnings("P03_HUMANIZER", "Kalimat satu, lalu dua.", "Kalimat satu — lalu dua.", { language: "id", strength: "balanced" })).toEqual(["Hasil menambah tanda pisah (—) yang tidak ada di teks asli."]);
+    expect(softWarnings("P03_HUMANIZER", "Kalimat satu — lalu dua.", "Kalimat satu, lalu dua.", { language: "en", strength: "balanced" })).toEqual([]);
   });
 });
 

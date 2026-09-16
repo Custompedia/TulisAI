@@ -6,6 +6,8 @@
 
   --color-paper: #faf9f6;
   --color-paper-deep: #f3f2ec;
+  /* App chrome: top bar, side rail, page ground. Brand green stays for accents only. */
+  --color-shell: #f2f1eb;
   --color-line: #e8e9e1;
   --color-line-strong: #d8dacf;
 
@@ -83,6 +85,9 @@
 .editor-plain .ProseMirror table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 .editor-plain .ProseMirror th, .editor-plain .ProseMirror td { border: 1px solid var(--color-line-strong); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
 .editor-plain .ProseMirror a { color: var(--color-brand-600); text-decoration: underline; }
+
+/* Text an inline AI action is working on */
+.ww-inline-target { background: var(--color-brand-100); border-radius: 2px; box-shadow: 0 0 0 1.5px var(--color-brand-100); box-decoration-break: clone; }
 
 /* Locked terms and detected citations */
 .ww-protected { background: #fdf6e3; border-bottom: 1.5px dashed #c58a17; border-radius: 2px; }

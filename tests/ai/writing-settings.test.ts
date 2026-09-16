@@ -37,7 +37,7 @@ describe("writing settings", () => {
     expect(Object.values(promptFor)).not.toContain("P08_CUSTOM_TRANSFORM");
   });
   it("exposes the v3 cost-safe limits", () => {
-    expect({ EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, AI_SCOPE_LIMIT }).toEqual({ EXTRA_LIMIT: 200, FOCUS_LIMIT: 3, INLINE_LIMIT: 600, SELECTION_LIMIT: 5_000, AI_SCOPE_LIMIT: 20_000 });
+    expect({ EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, AI_SCOPE_LIMIT }).toEqual({ EXTRA_LIMIT: 500, FOCUS_LIMIT: 3, INLINE_LIMIT: 600, SELECTION_LIMIT: 5_000, AI_SCOPE_LIMIT: 20_000 });
   });
 });
 

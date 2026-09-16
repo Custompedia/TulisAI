@@ -12,15 +12,17 @@ export type Settings = {
   mode: Mode; language: WritingLanguage; strength: Strength; academic: string; context: string; preservation: string;
   recipient: Recipient; simplifyFor: SimplifyFor; audience: Audience; format: string; length: string;
   focus: string[]; extra: string; customized: boolean;
+  // Id of the saved style these settings came from; cleared as soon as they drift.
+  styleId: string | null;
 };
 
 export const defaults: Settings = {
   mode: 'humanize', language: 'auto', strength: 'balanced', academic: 'thesis', context: 'general', preservation: 'balanced',
   recipient: 'umum', simplifyFor: 'umum', audience: 'general_public', format: 'paragraph', length: 'same',
-  focus: [], extra: '', customized: false,
+  focus: [], extra: '', customized: false, styleId: null,
 };
 
-export const EXTRA_LIMIT = 200;
+export const EXTRA_LIMIT = 500;
 export const FOCUS_LIMIT = 3;
 export const AI_SCOPE_LIMIT = 20_000;
 export const SELECTION_LIMIT = 5_000;
@@ -60,6 +62,7 @@ export function normalizeSettings(raw: Record<string, unknown> | null | undefine
     audience: oneOf(AUDIENCES, value.audience, defaults.audience), format: str(value.format, defaults.format), length: str(value.length, defaults.length),
     focus: Array.isArray(value.focus) ? value.focus.filter((item): item is string => typeof item === 'string').slice(0, FOCUS_LIMIT) : [],
     extra: str(value.extra, '').slice(0, EXTRA_LIMIT), customized: legacyCustom || value.customized === true,
+    styleId: typeof value.styleId === 'string' && value.styleId ? value.styleId : null,
   };
 }
 

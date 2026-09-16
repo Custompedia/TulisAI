@@ -7,8 +7,8 @@ import type { SaveState } from './types';
 export function SaveStatus({ state }: { state: SaveState }) {
   const { t } = useLocale();
   const view = {
-    loading: { icon: <Spinner size={13} />, label: t('Memuat…', 'Loading…'), tone: 'text-ink-400' },
-    saved: { icon: <Check size={13} />, label: t('Tersimpan', 'Saved'), tone: 'text-emerald-700' },
+    loading: { icon: <Spinner size={13} />, label: t('Memuat…', 'Loading…'), tone: 'text-ink-500' },
+    saved: { icon: <Check size={13} />, label: t('Tersimpan', 'Saved'), tone: 'text-brand-700' },
     saving: { icon: <Spinner size={13} />, label: t('Menyimpan…', 'Saving…'), tone: 'text-ink-500' },
     dirty: { icon: <CircleDot size={13} />, label: t('Belum tersimpan', 'Unsaved'), tone: 'text-ink-500' },
     offline: { icon: <CloudOff size={13} />, label: t('Offline · aman di perangkat', 'Offline · kept on device'), tone: 'text-amber-700' },

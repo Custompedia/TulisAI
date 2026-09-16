@@ -1,16 +1,25 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
+import { EXTRA_LIMIT } from "../../src/lib/writing/settings";
 import { buildMessages, buildSystemMessage, buildUserMessage, compileControlBlock, createOpenRouterProvider, exceedsPreservation, getPromptDefinition, normalizeRuntime, promptHash, PROMPT_VERSION, PROMPTS, promptIds, REASONING_EFFORT, validateGeneration } from "../../src/server/ai/core";
-import { BASE, BASE_READONLY, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10 } from "../../src/server/ai/core/prompts";
+import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P01_LANGUAGE, P02, P02_LANGUAGE, P03, P03_LANGUAGE, P04, P04_LANGUAGE, P05, P05_LANGUAGE, P06, P06_LANGUAGE, P07, P07_LANGUAGE, P08_CONTROL_BLOCK, P09, P10 } from "../../src/server/ai/core/prompts";
 
 const transform = (text: string, extra: Record<string, unknown> = {}) => ({ transformed_text: text, change_categories: [], warnings: [], no_change_needed: false, ...extra });
 
-describe("prompt registry v3", () => {
-  it("copies every text block from systemprompt.md verbatim", () => {
-    const blocks = [...readFileSync("systemprompt.md", "utf8").matchAll(/^```text\n([\s\S]*?)\n```$/gm)].map((match) => match[1]);
-    expect([BASE, BASE_READONLY, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10]).toEqual(blocks.slice(0, 12));
-    expect(blocks[12]!.split("\n")).toEqual([...promptIds]);
-    expect(PROMPT_VERSION).toBe("v3");
+describe("prompt registry v4", () => {
+  it("copies every named text block from systemprompt.md verbatim", () => {
+    const blocks = Object.fromEntries([...readFileSync("systemprompt.md", "utf8").matchAll(/^```text ([\w.-]+)\n([\s\S]*?)\n```$/gm)].map((match) => [match[1], match[2]]));
+    const registry: Record<string, string> = { BASE, BASE_INLINE, BASE_READONLY, "OUTPUT_LANGUAGE.id": OUTPUT_LANGUAGE.id, "OUTPUT_LANGUAGE.en": OUTPUT_LANGUAGE.en, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPT_IDS: promptIds.join("\n") };
+    for (const [name, table] of Object.entries({ P01: P01_LANGUAGE, P02: P02_LANGUAGE, P03: P03_LANGUAGE, P04: P04_LANGUAGE, P05: P05_LANGUAGE, P06: P06_LANGUAGE, P07: P07_LANGUAGE })) { registry[`${name}.id`] = table.id; registry[`${name}.en`] = table.en; }
+    expect(Object.keys(blocks).sort()).toEqual(Object.keys(registry).sort());
+    for (const [name, text] of Object.entries(registry)) expect(blocks[name], name).toBe(text);
+    expect(PROMPT_VERSION).toBe("v4");
+  });
+  it("keeps each prompt free of unresolved language placeholders after composition", () => {
+    for (const id of promptIds) { const rules = LANGUAGE_RULES[id]; expect(PROMPTS[id].includes("{{language_rules}}"), id).toBe(Boolean(rules)); }
+    expect(PROMPTS.P10_REPAIR).toBe(P10); expect(PROMPTS.P10_REPAIR).not.toContain("{{");
+    expect(PROMPTS.P07_INLINE_ALTERNATIVES.startsWith(BASE_INLINE)).toBe(true);
+    for (const text of [BASE, BASE_INLINE, BASE_READONLY, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10]) expect(text).not.toMatch(/\bNEVER\b|\bMUST\b/);
   });
   it("composes templates and records reasoning effort per prompt", async () => {
     expect(PROMPTS.P09_QUALITY_EVALUATION.startsWith(BASE_READONLY)).toBe(true);
@@ -51,7 +60,7 @@ describe("enum mapping", () => {
     expect(() => normalizeRuntime("P01_STANDARD_REWRITE", { ...base, strength: "invented" })).toThrow();
     expect(() => normalizeRuntime("P01_STANDARD_REWRITE", { ...base, sourceText: "", strength: "light" })).toThrow();
     expect(() => normalizeRuntime("P08_CUSTOM_TRANSFORM", { ...base, focus: ["clarity", "formality", "naturalness", "persuasiveness"] })).toThrow();
-    expect(() => normalizeRuntime("P08_CUSTOM_TRANSFORM", { ...base, extra_request: "x".repeat(201) })).toThrow();
+    expect(() => normalizeRuntime("P08_CUSTOM_TRANSFORM", { ...base, extra_request: "x".repeat(EXTRA_LIMIT + 1) })).toThrow();
   });
 });
 
@@ -62,19 +71,23 @@ describe("message assembly", () => {
     const second = normalizeRuntime("P01_STANDARD_REWRITE", { ...controls, sourceText: "Teks lain sama sekali rahasia-dua.", contextBefore: "Sebelum.", contextAfter: "Sesudah." });
     const system = buildSystemMessage("P01_STANDARD_REWRITE", first);
     expect(buildSystemMessage("P01_STANDARD_REWRITE", second)).toBe(system);
-    expect(system).toBe(`${BASE.replace("{{language}}", "id")}\n\n${P01.replace("{{strength}}", "balanced")}`);
+    expect(system).toBe(`${BASE.replace("{{output_language}}", OUTPUT_LANGUAGE.id)}\n\n${P01.replace("{{strength}}", "balanced").replace("{{language_rules}}", P01_LANGUAGE.id)}`);
     expect(system).not.toMatch(/rahasia|API v2|\{\{/);
+    const english = buildSystemMessage("P01_STANDARD_REWRITE", normalizeRuntime("P01_STANDARD_REWRITE", { ...controls, language: "en", sourceText: "Text." }));
+    expect(english).toContain(OUTPUT_LANGUAGE.en); expect(english).toContain(P01_LANGUAGE.en); expect(english).not.toContain("INDONESIAN"); expect(system).not.toContain("ENGLISH\n");
     expect(buildUserMessage("P01_STANDARD_REWRITE", second)).toBe("<protected>\nAPI v2\n</protected>\n<context_before>\nSebelum.\n</context_before>\n<input>\nTeks lain sama sekali rahasia-dua.\n</input>\n<context_after>\nSesudah.\n</context_after>");
   });
   it("uses selection for P07, input only for P09 and violations for P10", () => {
     const p07 = normalizeRuntime("P07_INLINE_ALTERNATIVES", { ...controls, protectedTerms: [], selectedText: "meninjau hasil", contextBefore: "Kami perlu ", action: "formal" });
     const [system, user] = buildMessages("P07_INLINE_ALTERNATIVES", p07);
     expect(system!.content).toContain("TASK: produce 3 replacement options"); expect(system!.content).toContain("INTENT lebih formal:");
+    expect(system!.content.startsWith(BASE_INLINE.replace("{{output_language}}", OUTPUT_LANGUAGE.id))).toBe(true); expect(system!.content).toContain(P07_LANGUAGE.id); expect(system!.content).not.toContain("transformed_text");
     expect(user!.content).toBe("<context_before>\nKami perlu \n</context_before>\n<selection>\nmeninjau hasil\n</selection>");
     const p09 = normalizeRuntime("P09_QUALITY_EVALUATION", { language: "en", sourceText: "Some text.", mode: "standard" });
-    expect(buildSystemMessage("P09_QUALITY_EVALUATION", p09).startsWith(BASE_READONLY.replace("{{language}}", "en"))).toBe(true);
+    expect(buildSystemMessage("P09_QUALITY_EVALUATION", p09).startsWith(BASE_READONLY.replace("{{output_language}}", OUTPUT_LANGUAGE.en))).toBe(true);
     expect(buildUserMessage("P09_QUALITY_EVALUATION", p09)).toBe("<input>\nSome text.\n</input>");
     const p10 = normalizeRuntime("P10_REPAIR", { language: "id", failedOutput: "Total item.", originalScope: "Total 4 item.", requiredProtectedTerms: [], requiredProtectedCitations: [] });
+    expect(buildSystemMessage("P10_REPAIR", p10)).toBe(P10);
     expect(buildUserMessage("P10_REPAIR", p10)).toBe("<violations>\nrequired: 4 | appeared instead: (missing)\n</violations>\n<failed_output>\nTotal item.\n</failed_output>\n<original>\nTotal 4 item.\n</original>");
   });
   it("substitutes every variable in every composed system message", () => {
@@ -94,6 +107,13 @@ describe("message assembly", () => {
     expect(buildSystemMessage("P07_INLINE_ALTERNATIVES", normalizeRuntime("P07_INLINE_ALTERNATIVES", { ...common, action: "paraphrase" }))).toContain("produce 3 replacement options");
     expect(buildSystemMessage("P06_SIMPLIFY", normalizeRuntime("P06_SIMPLIFY", { ...common, target_audience: "anak_sekolah" }))).toContain("so a reader in anak sekolah understands");
   });
+  it("drops the request audience for modes that own an audience control", () => {
+    const custom = { format: "paragraph", length: "same", audience: "lecturer", focus: [], extra_request: null };
+    expect(normalizeRuntime("P04_PROFESSIONAL", { ...controls, sourceText: "Teks", audience: "klien", custom_request: custom }).request).not.toHaveProperty("audience");
+    expect(normalizeRuntime("P06_SIMPLIFY", { ...controls, sourceText: "Teks", target_audience: "pemula", custom_request: custom }).request).not.toHaveProperty("audience");
+    expect(normalizeRuntime("P02_ACADEMIC", { ...controls, sourceText: "Teks", academicContext: "journal", custom_request: custom }).request).toMatchObject({ audience: "dosen" });
+    expect(buildSystemMessage("P04_PROFESSIONAL", normalizeRuntime("P04_PROFESSIONAL", { ...controls, sourceText: "Teks", audience: "klien", custom_request: custom }))).not.toContain("Audience:");
+  });
   it("adds the control block only for customised requests", () => {
     const plain = normalizeRuntime("P02_ACADEMIC", { ...controls, sourceText: "Teks", academicContext: "journal" });
     expect(buildSystemMessage("P02_ACADEMIC", plain)).not.toContain("\n<request>\n");
@@ -101,12 +121,12 @@ describe("message assembly", () => {
     expect(buildSystemMessage("P02_ACADEMIC", custom).endsWith(`<request>\nLength: within 10% of the input length\n</request>\n\n${P08_CONTROL_BLOCK.split("\n\n")[1]}`)).toBe(true);
   });
   it("compiles the control block, omitting empty fields and capping emphasis and author note", () => {
-    const block = compileControlBlock({ format: "poin", focus: ["clarity", "formality", "naturalness", "persuasiveness"], additional_instruction: `<b>Tulis\nringkas</b> ${"a".repeat(300)}` });
+    const block = compileControlBlock({ format: "poin", focus: ["clarity", "formality", "naturalness", "persuasiveness"], additional_instruction: `<b>Tulis\nringkas</b> ${"a".repeat(EXTRA_LIMIT + 100)}` });
     expect(block).toContain("Format: bullet points where the content is genuinely enumerable; keep continuous argument as prose");
     expect(block).toContain("Emphasis: clarity, formality, naturalness\n");
     expect(block).not.toMatch(/Length:|Audience:|\{\{|none/);
     const note = block.match(/Author note: (.*)/)![1]!;
-    expect(note.length).toBe(200); expect(note).not.toMatch(/[<>\n]/); expect(note.startsWith("bTulis ringkas/b")).toBe(true);
+    expect(note.length).toBe(EXTRA_LIMIT); expect(note).not.toMatch(/[<>\n]/); expect(note.startsWith("bTulis ringkas/b")).toBe(true);
     expect(compileControlBlock({ format: "paragraf", focus: [], additional_instruction: " " })).toBe("");
   });
 });

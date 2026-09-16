@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { useAutoSide } from './placement';
 
 type Option<V extends string> = { value: V; label: string; hint?: string; disabled?: boolean };
 
@@ -10,6 +11,8 @@ export function HintSelect<V extends string>({ id, label, value, options, onChan
   const listId = useId();
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLDivElement>(null);
+  const placement = useAutoSide(open, root, list);
   const current = options.find((option) => option.value === value);
 
   useEffect(() => {
@@ -38,7 +41,7 @@ export function HintSelect<V extends string>({ id, label, value, options, onChan
         <ChevronDown size={size === 'sm' ? 14 : 16} aria-hidden="true" className={`shrink-0 text-ink-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div id={listId} role="listbox" aria-label={label} onKeyDown={move} className={`absolute top-full z-40 ${align === 'end' ? 'right-0' : 'left-0'} mt-1 w-full min-w-64 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-12px_rgb(31_32_29/0.22)] animate-fade-up`}>
+        <div ref={list} id={listId} role="listbox" aria-label={label} onKeyDown={move} style={{ maxHeight: placement.maxHeight }} className={`scrollbar-thin absolute z-40 ${placement.side === 'bottom' ? 'top-full mt-1' : 'bottom-full mb-1'} ${align === 'end' ? 'right-0' : 'left-0'} w-full min-w-64 max-w-[calc(100vw-2rem)] overflow-y-auto rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-12px_rgb(31_32_29/0.22)] animate-fade-up`}>
           {options.map((option) => {
             const selected = option.value === value;
             return (

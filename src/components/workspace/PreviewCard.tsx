@@ -1,27 +1,26 @@
 'use client';
 import { useState } from 'react';
-import { Check, CircleCheck, Columns2, Copy, Eye, EyeOff, Feather, Minus, Plus, RefreshCw, TextCursorInput, TriangleAlert, X } from 'lucide-react';
+import { Check, CircleCheck, Columns2, Copy, Eye, EyeOff, Feather, Minus, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { changePercentage } from '@/lib/editor/metrics';
 import { Button } from '@/components/ui/Button';
 import { DiffText, useDiff } from './DiffText';
 import { previewText, type Preview } from './types';
 
+// Panel-side preview for whole-scope rewrites; inline quick actions render in InlineResult instead.
 type Props = {
-  preview: Preview; alternative: number; onAlternative: (index: number) => void; stale: boolean; busy: boolean; applying: boolean;
-  onApply: () => void; onCompare: () => void; onDiscard: () => void; onRetry: () => void; onInsert: () => void;
-  onStronger: () => void; onReduce: () => void;
+  preview: Preview; stale: boolean; busy: boolean; applying: boolean;
+  onApply: () => void; onCompare: () => void; onDiscard: () => void; onRetry: () => void; onStronger: () => void; onReduce: () => void;
 };
 
-export function PreviewCard({ preview, alternative, onAlternative, stale, busy, applying, onApply, onCompare, onDiscard, onRetry, onInsert, onStronger, onReduce }: Props) {
+export function PreviewCard({ preview, stale, busy, applying, onApply, onCompare, onDiscard, onRetry, onStronger, onReduce }: Props) {
   const { t } = useLocale();
   const [showDiff, setShowDiff] = useState(true);
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
-  const result = previewText(preview, alternative);
+  const result = previewText(preview);
   const parts = useDiff(preview.source, result);
   const unchanged = !!preview.output.no_change_needed || result.trim() === preview.source.trim();
   const exceeds = !!preview.output.exceeds_preservation && !unchanged;
-  const alternatives = preview.output.alternatives;
   const humanize = preview.settings.mode === 'humanize';
   const scopeLabel = { selection: t('Teks terpilih', 'Selection'), paragraph: t('Paragraf', 'Paragraph'), document: t('Seluruh dokumen', 'Entire document') }[preview.scope];
 
@@ -47,21 +46,8 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
         )}
         {stale && <p role="alert" className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-[13px] text-amber-900"><TriangleAlert size={15} className="mt-0.5 shrink-0" />{t('Tulisan berubah sejak hasil dibuat. Buat ulang agar editan terbarumu aman.', 'The text changed after this result was made. Regenerate to keep your latest edits safe.')}</p>}
 
-        {alternatives ? (
-          <fieldset>
-            <legend className="mb-2 text-[13px] font-semibold text-ink-700">{t('Pilih alternatif', 'Choose an alternative')}</legend>
-            <div className="space-y-1.5">
-              {alternatives.map((option, index) => (
-                <label key={index} className={`flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2.5 text-sm leading-relaxed transition-colors ${alternative === index ? 'border-brand-500 bg-brand-50/60' : 'border-line hover:border-ink-300'}`}>
-                  <input type="radio" name="alternative" checked={alternative === index} onChange={() => onAlternative(index)} className="mt-1 accent-brand-600" />
-                  <span className="min-w-0 flex-1 font-serif text-[15px] text-ink-900">{option.text}</span>
-                  {option.variation_level && <span className="h-fit shrink-0 rounded bg-paper-deep px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-ink-500">{option.variation_level.replace(/_/g, ' ')}</span>}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        ) : unchanged ? (
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-3 text-[13px] text-emerald-900">
+        {unchanged ? (
+          <div className="rounded-lg border border-brand-200 bg-brand-50 px-3 py-3 text-[13px] text-brand-900">
             <p className="flex items-center gap-2 font-semibold"><CircleCheck size={15} />{t('Teks ini sudah cukup sesuai dengan tujuan yang dipilih.', 'This text already fits the selected goal.')}</p>
             {preview.settings.strength !== 'strong' && <Button size="sm" className="mt-2.5" icon={Plus} disabled={busy} onClick={onStronger}>{t('Coba perubahan lebih kuat', 'Try a stronger change')}</Button>}
           </div>
@@ -82,7 +68,7 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
         {!!preview.output.change_categories?.length && (
           <div>
             <p className="mb-1.5 text-xs font-semibold text-ink-600">{t('Yang berubah', 'What changed')}</p>
-            <ul className="flex flex-wrap gap-1.5">{preview.output.change_categories.map((item, index) => <li key={index} className="inline-flex items-center gap-1 rounded-md bg-paper-deep px-2 py-1 text-xs text-ink-700"><Check size={12} className="text-emerald-600" aria-hidden="true" />{item}</li>)}</ul>
+            <ul className="flex flex-wrap gap-1.5">{preview.output.change_categories.map((item, index) => <li key={index} className="inline-flex items-center gap-1 rounded-md bg-paper-deep px-2 py-1 text-xs text-ink-700"><Check size={12} className="text-brand-600" aria-hidden="true" />{item}</li>)}</ul>
           </div>
         )}
         {!!preview.output.warnings?.length && (
@@ -91,7 +77,7 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
       </div>
 
       <footer className="space-y-2 border-t border-line bg-paper/40 p-3">
-        <Button variant="primary" className="w-full" icon={Check} loading={applying} disabled={busy || stale || unchanged} onClick={onApply}>{alternatives ? t('Ganti dengan pilihan ini', 'Replace with this') : t('Gunakan Hasil Ini', 'Use This Result')}</Button>
+        <Button variant="primary" className="w-full" icon={Check} loading={applying} disabled={busy || stale || unchanged} onClick={onApply}>{t('Gunakan Hasil Ini', 'Use This Result')}</Button>
         <div className="flex flex-wrap gap-1.5 [&>*]:flex-1">
           <Button size="sm" icon={Columns2} disabled={busy} onClick={onCompare}>{t('Bandingkan', 'Compare')}</Button>
           <Button size="sm" icon={copied === 'done' ? Check : Copy} disabled={busy} onClick={() => void copy()}>{copied === 'done' ? t('Tersalin', 'Copied') : copied === 'failed' ? t('Gagal', 'Failed') : t('Salin', 'Copy')}</Button>
@@ -99,9 +85,8 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
         </div>
         <div className="flex flex-wrap gap-1.5">
           <Button size="sm" variant="ghost" icon={RefreshCw} disabled={busy} onClick={onRetry}>{t('Coba alternatif lain', 'Try another')}</Button>
-          {alternatives && <Button size="sm" variant="ghost" icon={TextCursorInput} disabled={busy || stale} onClick={onInsert}>{t('Sisipkan sebagai alternatif', 'Insert as alternative')}</Button>}
-          {humanize && !alternatives && <Button size="sm" variant="ghost" icon={Feather} disabled={busy} onClick={onStronger}>{t('Lebih natural', 'More natural')}</Button>}
-          {humanize && !alternatives && !exceeds && !unchanged && <Button size="sm" variant="ghost" icon={Minus} disabled={busy} onClick={onReduce}>{t('Kurangi perubahan', 'Reduce changes')}</Button>}
+          {humanize && <Button size="sm" variant="ghost" icon={Feather} disabled={busy} onClick={onStronger}>{t('Lebih natural', 'More natural')}</Button>}
+          {humanize && !exceeds && !unchanged && <Button size="sm" variant="ghost" icon={Minus} disabled={busy} onClick={onReduce}>{t('Kurangi perubahan', 'Reduce changes')}</Button>}
         </div>
       </footer>
     </section>

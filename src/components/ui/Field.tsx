@@ -5,7 +5,7 @@ export function FieldLabel({ children, htmlFor, hint }: { children: React.ReactN
   return (
     <div className="mb-1.5 flex items-baseline justify-between gap-2">
       <label htmlFor={htmlFor} className="text-[13px] font-semibold text-ink-700">{children}</label>
-      {hint && <span className="text-xs text-ink-400">{hint}</span>}
+      {hint && <span className="text-xs text-ink-500">{hint}</span>}
     </div>
   );
 }

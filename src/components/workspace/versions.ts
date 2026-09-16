@@ -22,6 +22,6 @@ export function versionLabel(version: Version, t: T) {
 export const kindTone: Record<VersionKind, string> = {
   original: 'border-ink-300 bg-ink-50 text-ink-700',
   ai_apply: 'border-brand-200 bg-brand-50 text-brand-800',
-  checkpoint: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  restore: 'border-amber-200 bg-amber-50 text-amber-800',
+  checkpoint: 'border-mode-slate-edge bg-mode-slate-light text-mode-slate-ink',
+  restore: 'border-mode-gold-edge bg-mode-gold-light text-mode-gold-ink',
 };

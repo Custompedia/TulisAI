@@ -79,7 +79,7 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="min-w-0 break-all">{account.email}</span>
                 {account.emailVerified
-                  ? <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700"><CircleCheck size={13} aria-hidden="true" />{t('Terverifikasi', 'Verified')}</span>
+                  ? <span className="inline-flex items-center gap-1 rounded-md bg-brand-50 px-1.5 py-0.5 text-xs font-semibold text-brand-800"><CircleCheck size={13} aria-hidden="true" />{t('Terverifikasi', 'Verified')}</span>
                   : <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-800"><CircleAlert size={13} aria-hidden="true" />{t('Belum diverifikasi', 'Not verified')}</span>}
               </span>
               {google && <span className="mt-1.5 flex items-center gap-2 text-[13px] font-normal text-ink-600"><span className="grid h-4 w-4 place-items-center [&_svg]:h-4 [&_svg]:w-4"><GoogleIcon /></span>{t('Terhubung dengan Google', 'Linked with Google')}</span>}

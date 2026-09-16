@@ -82,7 +82,7 @@ export function InfoPanel({ editor, loaded, navigable, text, original, hasChange
           <ul className="space-y-1.5">
             {terms.map((term) => (
               <li key={term.id} className="flex items-center gap-1.5 rounded-lg border border-line bg-white py-0.5 pl-3 pr-0.5">
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-800" title={term.term}>{term.term}{!text.includes(term.term) && <span className="ml-1 text-[11px] font-normal text-ink-400">· {t('tidak ada di teks', 'not in text')}</span>}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink-800" title={term.term}>{term.term}{!text.includes(term.term) && <span className="ml-1 text-[11px] font-normal text-ink-500">· {t('tidak ada di teks', 'not in text')}</span>}</span>
                 <IconButton size="sm" icon={X} label={`${t('Buka kunci', 'Unlock')} ${term.term}`} disabled={busy} onClick={() => onUnlock(term)} />
               </li>
             ))}

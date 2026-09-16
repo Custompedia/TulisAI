@@ -1,15 +1,17 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
+import { PluginKey } from '@tiptap/pm/state';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Minimize2, ScanText, SlidersHorizontal, Smile, WandSparkles, type LucideIcon } from 'lucide-react';
+import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Minimize2, ScanText, Shuffle, SlidersHorizontal, Smile, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
+import { commandLabel, type SelectionCommand } from './selection-commands';
 import type { InlineAction } from './types';
+import { useAutoSide } from '@/components/ui/placement';
 
-export type SelectionCommand = InlineAction | 'humanize' | 'academic' | 'lock' | 'unlock' | 'customize';
-
+const MENU_KEY = new PluginKey('selectionMenu');
 const keep = (event: React.MouseEvent) => event.preventDefault();
 
 function Action({ icon: Icon, label, onRun, disabled, title }: { icon: LucideIcon; label: string; onRun: () => void; disabled?: boolean; title?: string }) {
@@ -30,12 +32,16 @@ function MenuAction({ icon: Icon, label, onRun, disabled }: { icon: LucideIcon; 
   );
 }
 
-type Props = { editor: Editor; locked: boolean; disabled: boolean; chars: number; onCommand: (command: SelectionCommand) => void };
+// Hidden while an inline result is open so the two never stack on the same text.
+type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; onCommand: (command: SelectionCommand) => void };
+const INLINE: Array<[InlineAction, LucideIcon]> = [['alternatives', Shuffle], ['shorter', Minimize2], ['clearer', ScanText], ['formal', BriefcaseBusiness], ['natural', Smile]];
 
-export function SelectionMenu({ editor, locked, disabled, chars, onCommand }: Props) {
+export function SelectionMenu({ editor, locked, disabled, hidden, chars, onCommand }: Props) {
   const { t, locale } = useLocale();
   const [more, setMore] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const placement = useAutoSide(more, ref, moreRef);
   const overInline = chars > INLINE_LIMIT; const overSelection = chars > SELECTION_LIMIT;
   const limit = overSelection ? SELECTION_LIMIT : INLINE_LIMIT;
   const hint = overInline ? t(`${numberFormat(chars, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan`, `${numberFormat(chars, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection`) : '';
@@ -45,6 +51,12 @@ export function SelectionMenu({ editor, locked, disabled, chars, onCommand }: Pr
     editor.on('selectionUpdate', reset);
     return () => { editor.off('selectionUpdate', reset); };
   }, [editor]);
+  // The plugin only re-checks visibility on selection or document changes, so hiding is driven explicitly.
+  useEffect(() => {
+    if (hidden) { setMore(false); editor.view.dispatch(editor.state.tr.setMeta(MENU_KEY, 'hide')); return; }
+    const { from, to } = editor.state.selection;
+    if (editor.isEditable && to > from && editor.state.doc.textBetween(from, to, ' ').trim()) editor.view.dispatch(editor.state.tr.setMeta(MENU_KEY, 'show'));
+  }, [editor, hidden]);
   useEffect(() => {
     if (!more) return;
     const close = (event: MouseEvent | KeyboardEvent) => { if (event instanceof KeyboardEvent ? event.key === 'Escape' : !ref.current?.contains(event.target as Node)) setMore(false); };
@@ -53,29 +65,25 @@ export function SelectionMenu({ editor, locked, disabled, chars, onCommand }: Pr
   }, [more]);
 
   const run = (command: SelectionCommand) => () => { setMore(false); onCommand(command); };
-  const inline: Array<[InlineAction, LucideIcon, string]> = [
-    ['alternatives', WandSparkles, t('Alternatif', 'Alternatives')], ['shorter', Minimize2, t('Lebih singkat', 'Shorter')], ['clearer', ScanText, t('Lebih jelas', 'Clearer')],
-    ['formal', BriefcaseBusiness, t('Lebih formal', 'More formal')], ['natural', Smile, t('Lebih natural', 'More natural')],
-  ];
 
   return (
     <BubbleMenu
       editor={editor}
+      pluginKey={MENU_KEY}
       options={{ placement: 'top', offset: 10, flip: true, shift: { padding: 12 } }}
-      shouldShow={({ editor: e, from, to }) => e.isEditable && to - from > 0 && e.state.doc.textBetween(from, to, ' ').trim().length > 0}
+      shouldShow={({ editor: e, from, to }) => !hidden && e.isEditable && to - from > 0 && e.state.doc.textBetween(from, to, ' ').trim().length > 0}
       className="z-30"
     >
       <div ref={ref} className="relative max-w-[92vw]">
         <div role="toolbar" aria-label={t('Aksi untuk teks terpilih', 'Actions for selected text')} className="rounded-2xl border border-line bg-white p-1 shadow-[0_2px_6px_rgb(0_0_0/0.05),0_12px_28px_-12px_rgb(0_0_0/0.18)]">
           {locked ? (
-            <Action icon={LockKeyholeOpen} label={t('Buka kunci istilah', 'Unlock term')} disabled={disabled} onRun={run('unlock')} />
+            <Action icon={LockKeyholeOpen} label={commandLabel('unlock', t)} disabled={disabled} onRun={run('unlock')} />
           ) : (
             <div className="flex items-center gap-0.5">
               <div className="scrollbar-thin flex min-w-0 items-center gap-0.5 overflow-x-auto">
-                {inline.map(([command, icon, label]) => <Action key={command} icon={icon} label={label} disabled={disabled || overInline} title={overInline ? hint : undefined} onRun={run(command)} />)}
+                {INLINE.map(([command, icon]) => <Action key={command} icon={icon} label={commandLabel(command, t)} disabled={disabled || overInline} title={overInline ? hint : undefined} onRun={run(command)} />)}
               </div>
               <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-line" />
-              <span className={`shrink-0 px-1.5 text-[11px] tabular-nums ${overInline ? 'font-semibold text-amber-700' : 'text-ink-400'}`} aria-label={t(`${chars} karakter dipilih`, `${chars} characters selected`)}>{numberFormat(chars, locale)}</span>
               <button type="button" aria-label={t('Aksi lainnya', 'More actions')} title={t('Aksi lainnya', 'More actions')} aria-haspopup="menu" aria-expanded={more} onMouseDown={keep} onClick={() => setMore(!more)}
                 className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition-colors ${more ? 'bg-paper-deep text-ink-900' : 'text-ink-600 hover:bg-paper-deep hover:text-ink-900'}`}>
                 <Ellipsis size={16} aria-hidden="true" />
@@ -85,12 +93,13 @@ export function SelectionMenu({ editor, locked, disabled, chars, onCommand }: Pr
           {hint && !locked && <p role="status" className="border-t border-line px-2.5 pb-0.5 pt-1.5 text-[11px] font-medium text-amber-800">{hint}</p>}
         </div>
         {more && !locked && (
-          <div role="menu" className="absolute right-0 top-full z-40 mt-1.5 w-52 rounded-xl border border-line bg-white p-1 shadow-lg animate-fade-up">
-            <MenuAction icon={Feather} label="Humanize" disabled={disabled || overSelection} onRun={run('humanize')} />
-            <MenuAction icon={GraduationCap} label={t('Akademik', 'Academic')} disabled={disabled || overSelection} onRun={run('academic')} />
-            <MenuAction icon={SlidersHorizontal} label={t('Sesuaikan…', 'Customize…')} disabled={disabled || overSelection} onRun={run('customize')} />
+          <div ref={moreRef} role="menu" style={{ maxHeight: placement.maxHeight }} className={`scrollbar-thin absolute right-0 z-40 w-56 overflow-y-auto rounded-xl border border-line bg-white p-1 shadow-lg animate-fade-up ${placement.side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}>
+            <MenuAction icon={Feather} label={commandLabel('humanize', t)} disabled={disabled || overSelection} onRun={run('humanize')} />
+            <MenuAction icon={GraduationCap} label={commandLabel('academic', t)} disabled={disabled || overSelection} onRun={run('academic')} />
             <div className="my-1 h-px bg-line" />
-            <MenuAction icon={LockKeyhole} label={t('Kunci Istilah', 'Lock Term')} disabled={disabled} onRun={run('lock')} />
+            <MenuAction icon={SlidersHorizontal} label={commandLabel('customize', t)} disabled={disabled || overSelection} onRun={run('customize')} />
+            <MenuAction icon={LockKeyhole} label={commandLabel('lock', t)} disabled={disabled} onRun={run('lock')} />
+            <p className="px-2.5 pb-1 pt-1.5 text-[11px] text-ink-500">{t(`${numberFormat(chars, locale)} karakter dipilih`, `${numberFormat(chars, locale)} characters selected`)}</p>
           </div>
         )}
       </div>

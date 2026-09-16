@@ -1,17 +1,17 @@
 'use client';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { resolveSide, VIEWPORT_GUTTER as GUTTER } from '../ui/placement';
 
 export const CHIP = 'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line-strong bg-white px-3 text-[12.5px] text-ink-800 transition-colors hover:border-ink-300 hover:text-ink-900 disabled:opacity-50';
 const PANEL = 'fixed z-50 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-12px_rgb(31_32_29/0.22)] animate-fade-up';
-const GUTTER = 16;
 
 type Option<T extends string> = { value: T; label: string; short?: string; hint?: string; disabled?: boolean };
 
 // Fixed-position panel so chips inside a horizontally scrolling row are never clipped.
 export function ChipPopover({ label, value, disabled, width = 'w-60', align = 'start', ghost = false, prefix, children }: { label: string; value?: string; disabled?: boolean; width?: string; align?: 'start' | 'end'; ghost?: boolean; prefix?: string; children: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const [position, setPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
@@ -22,12 +22,16 @@ export function ChipPopover({ label, value, disabled, width = 'w-60', align = 's
     const place = () => {
       const anchor = button.current?.getBoundingClientRect(); const box = panel.current?.getBoundingClientRect(); if (!anchor || !box) return;
       const preferred = align === 'end' ? anchor.right - box.width : anchor.left;
-      setPosition({ top: anchor.bottom + 6, left: Math.max(GUTTER, Math.min(preferred, window.innerWidth - GUTTER - box.width)) });
+      const { side, maxHeight } = resolveSide(anchor, (panel.current?.scrollHeight ?? box.height) + 6, 'bottom');
+      const height = Math.min(panel.current?.scrollHeight ?? box.height, maxHeight - 6);
+      setPosition({ top: side === 'bottom' ? anchor.bottom + 6 : Math.max(GUTTER, anchor.top - 6 - height), left: Math.max(GUTTER, Math.min(preferred, window.innerWidth - GUTTER - box.width)), maxHeight: maxHeight - 6 });
     };
     place();
     const close = () => setOpen(false);
-    window.addEventListener('resize', close); window.addEventListener('scroll', close, true);
-    return () => { window.removeEventListener('resize', close); window.removeEventListener('scroll', close, true); };
+    // Scrolling inside the panel itself keeps it open; any other scroll closes it.
+    const onScroll = (event: Event) => { if (!panel.current?.contains(event.target as Node)) close(); };
+    window.addEventListener('resize', close); window.addEventListener('scroll', onScroll, true);
+    return () => { window.removeEventListener('resize', close); window.removeEventListener('scroll', onScroll, true); };
   }, [open, align]);
 
   useEffect(() => {
@@ -50,7 +54,7 @@ export function ChipPopover({ label, value, disabled, width = 'w-60', align = 's
         <ChevronDown size={13} aria-hidden="true" className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
       {open && (
-        <div ref={panel} id={id} role="dialog" aria-label={label} style={position ?? { top: 0, left: 0, visibility: 'hidden' }} className={`${PANEL} ${width}`}>{children(close)}</div>
+        <div ref={panel} id={id} role="dialog" aria-label={label} style={position ?? { top: 0, left: 0, visibility: 'hidden' }} className={`${PANEL} scrollbar-thin overflow-y-auto ${width}`}>{children(close)}</div>
       )}
     </div>
   );

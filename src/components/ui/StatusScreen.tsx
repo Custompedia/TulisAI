@@ -48,7 +48,7 @@ export function StatusScreen({ kind = 'error', title, description, primary, seco
   };
 
   return (
-    <main className="flex min-h-dvh flex-col bg-brand-50 px-4 py-5 sm:px-6">
+    <main className="flex min-h-dvh flex-col bg-shell px-4 py-5 sm:px-6">
       <div className="mx-auto w-full max-w-5xl"><Logo href="/app" /></div>
       <div className="grid flex-1 place-items-center py-8">
         <section role={kind === 'not-found' ? undefined : 'alert'} aria-labelledby="status-title" className="w-full max-w-[460px] rounded-[24px] border border-line bg-paper px-6 pb-7 pt-8 text-center shadow-[0_24px_60px_-32px_rgb(66_91_52/0.45)] sm:px-10">

@@ -25,7 +25,7 @@ export function useSignOut() {
   const [busy, setBusy] = useState(false);
   const signOut = useCallback(async () => {
     setBusy(true);
-    try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' }); } finally { router.replace('/login'); router.refresh(); }
+    try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' }); } finally { router.replace('/'); router.refresh(); }
   }, [router]);
   return { signOut, busy };
 }
@@ -64,7 +64,7 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
   useEffect(() => { void load(); }, [load]);
 
   if (!state) {
-    if (!error) return <main className="grid min-h-dvh place-items-center bg-brand-50 px-4"><LoadingBlock label={t('Menyiapkan ruang kerja…', 'Preparing your workspace…')} /></main>;
+    if (!error) return <main className="grid min-h-dvh place-items-center bg-shell px-4"><LoadingBlock label={t('Menyiapkan ruang kerja…', 'Preparing your workspace…')} /></main>;
     const offline = error instanceof ApiError && error.code === 'NETWORK_ERROR';
     return (
       <StatusScreen kind={offline ? 'offline' : 'error'}
@@ -79,7 +79,7 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
   if (bare) return <ShellContext.Provider value={shell}>{children}</ShellContext.Provider>;
   return (
     <ShellContext.Provider value={shell}>
-      <div className={`bg-brand-50 ${fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh'}`}>
+      <div className={`bg-shell ${fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh'}`}>
         <TopBar />
         <Sidebar />
         <div className={`min-w-0 pb-16 pt-14 md:pb-0 md:pl-[72px] md:pr-2 ${fullBleed ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
@@ -97,7 +97,7 @@ function TopBar() {
   const low = usage !== null && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
 
   return (
-    <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-brand-50 px-4 md:pl-[18px]">
+    <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-shell px-4 md:pl-[18px]">
       <Logo href="/app" mark="h-9 w-9" />
       <div className="ml-auto flex items-center gap-2.5">
         {usage && (

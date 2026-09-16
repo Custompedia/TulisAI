@@ -3,7 +3,7 @@ import { CircleAlert, CircleCheck, Info, TriangleAlert, X } from 'lucide-react';
 type Tone = 'info' | 'success' | 'warning' | 'error';
 const tones: Record<Tone, { box: string; icon: typeof Info }> = {
   info: { box: 'border-brand-200 bg-brand-50 text-brand-900', icon: Info },
-  success: { box: 'border-emerald-200 bg-emerald-50 text-emerald-900', icon: CircleCheck },
+  success: { box: 'border-brand-200 bg-brand-50 text-brand-900', icon: CircleCheck },
   warning: { box: 'border-amber-200 bg-amber-50 text-amber-900', icon: TriangleAlert },
   error: { box: 'border-red-200 bg-red-50 text-red-900', icon: CircleAlert },
 };

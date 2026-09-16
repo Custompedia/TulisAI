@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
+import { useAutoSide } from './placement';
 
 export type MenuItem = { label: string; icon?: LucideIcon; onSelect: () => void; tone?: 'default' | 'danger'; disabled?: boolean };
 
@@ -10,6 +11,7 @@ export function Menu({ label, trigger, items, align = 'end', side = 'bottom', he
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const placement = useAutoSide(open, root, list, side);
 
   useEffect(() => {
     if (!open) return;
@@ -32,8 +34,8 @@ export function Menu({ label, trigger, items, align = 'end', side = 'bottom', he
     <div ref={root} className={`relative ${className}`}>
       <button ref={button} type="button" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpen(!open); }} className={triggerClassName}>{trigger}</button>
       {open && (
-        <div ref={list} id={id} role="menu" aria-label={label} onKeyDown={move}
-          className={`absolute z-40 min-w-44 rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)] ${align === 'end' ? 'right-0' : 'left-0'} ${side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}>
+        <div ref={list} id={id} role="menu" aria-label={label} onKeyDown={move} style={{ maxHeight: placement.maxHeight }}
+          className={`scrollbar-thin absolute z-40 min-w-44 overflow-y-auto rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)] ${align === 'end' ? 'right-0' : 'left-0'} ${placement.side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}>
           {header}
           {items.map(({ label: itemLabel, icon: Icon, onSelect, tone = 'default', disabled: itemDisabled }) => (
             <button key={itemLabel} type="button" role="menuitem" disabled={itemDisabled} onClick={(event) => { event.preventDefault(); event.stopPropagation(); setOpen(false); onSelect(); }}

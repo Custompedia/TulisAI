@@ -38,7 +38,7 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
   const compareLabel = comparing ? t('Keluar dari Bandingkan', 'Exit Compare') : t('Bandingkan', 'Compare');
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-2 bg-brand-50 px-3 sm:px-4">
+    <header className="flex h-14 shrink-0 items-center gap-2 bg-shell px-3 sm:px-4">
       <span title={t('Ke beranda', 'Go to home')} className="shrink-0"><Logo href="/app" compact /></span>
       <input aria-label={t('Judul notebook', 'Notebook title')} value={title} maxLength={180} disabled={disabled} onChange={(event) => onTitle(event.target.value)} placeholder={t('Notebook tanpa judul', 'Untitled notebook')}
         className="ml-1 h-10 min-w-0 max-w-xl flex-1 truncate rounded-lg bg-transparent px-2 text-[20px] font-medium tracking-[-0.01em] text-ink-950 placeholder:text-ink-400 hover:bg-white/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />

@@ -77,7 +77,7 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
               <span className={`${chip} bg-white text-ink-700 ring-1 ring-line`}>{readDelta === 0 ? t('waktu baca sama', 'same reading time') : `${readDelta > 0 ? '+' : ''}${readDelta} ${t('mnt baca', 'min read')}`}</span>
             </span>
           )}
-        <span className="ml-auto flex items-center gap-2 text-xs text-ink-400">
+        <span className="ml-auto flex items-center gap-2 text-xs text-ink-500">
           <span className="inline-flex items-center gap-1"><Lock size={12} aria-hidden="true" />{t('Editor dikunci selama membandingkan.', 'Editing is paused while comparing.')}</span>
           {!loading && !identical && (
             <span className="group relative">
@@ -94,7 +94,7 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
         <div className="flex flex-1 flex-col items-center justify-center bg-white px-6 text-center">
           <CopyCheck size={28} strokeWidth={1.6} className="text-ink-300" aria-hidden="true" />
           <p className="mt-3 text-[15px] font-medium text-ink-700">{t('Kedua versi sama persis.', 'Both versions are identical.')}</p>
-          <p className="mt-1 text-xs text-ink-400">{t('Pilih versi lain di atas untuk melihat perubahan.', 'Pick another version above to see changes.')}</p>
+          <p className="mt-1 text-xs text-ink-500">{t('Pilih versi lain di atas untuk melihat perubahan.', 'Pick another version above to see changes.')}</p>
         </div>
       ) : layout === 'side' ? (
         <div className="grid min-h-0 flex-1 grid-rows-2 divide-y divide-line bg-white @2xl:grid-cols-2 @2xl:grid-rows-1 @2xl:divide-x @2xl:divide-y-0">

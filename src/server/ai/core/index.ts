@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { changePercentage } from "@/lib/editor/metrics";
 import { EXTRA_LIMIT, FOCUS_LIMIT } from "@/lib/writing/settings";
-import { BASE, BASE_READONLY, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT } from "./prompts";
+import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
 import { responseSchemas, runtimeSchemas } from "./schemas";
 import { paragraphsPreserved, repairDrift, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
@@ -57,7 +57,7 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
   const source = record(input.request) ?? record(get("customRequest", "custom_request")) ?? (id === "P08_CUSTOM_TRANSFORM" ? input : undefined);
   const request = source && {
     format: lookup(ENUM_MAP.format, source.format ?? "paragraph"), length: lookup(ENUM_MAP.length, source.length),
-    audience: audienceOf(ENUM_MAP.request_audience, ["dosen", "profesional", "klien", "umum"], source.audience), focus: source.focus ?? [],
+    audience: id === "P04_PROFESSIONAL" || id === "P06_SIMPLIFY" ? undefined : audienceOf(ENUM_MAP.request_audience, ["dosen", "profesional", "klien", "umum"], source.audience), focus: source.focus ?? [],
     additional_instruction: [source.additional_instruction, source.extra_request, source.extraRequest].find((value) => typeof value === "string") ?? "",
   };
   const candidate: Record<string, unknown> = {
@@ -83,9 +83,19 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
 
 const CAPABILITY: Record<PromptId, string> = { P01_STANDARD_REWRITE: P01, P02_ACADEMIC: P02, P03_HUMANIZER: P03, P04_PROFESSIONAL: P04, P05_CREATIVE: P05, P06_SIMPLIFY: P06, P07_INLINE_ALTERNATIVES: P07, P08_CUSTOM_TRANSFORM: P01, P09_QUALITY_EVALUATION: P09, P10_REPAIR: P10 };
 
+const BASE_OF: Partial<Record<PromptId, string>> = { P07_INLINE_ALTERNATIVES: BASE_INLINE, P09_QUALITY_EVALUATION: BASE_READONLY, P10_REPAIR: "" };
+export const languageOf = (runtime: Record<string, unknown>): Language => runtime.language === "en" ? "en" : "id";
+// Language blocks are chosen server-side so only the active language's rules and examples are sent.
+export function languageValues(id: PromptId, runtime: Record<string, unknown>): Record<string, string> {
+  const language = languageOf(runtime); const rules = LANGUAGE_RULES[id];
+  return { output_language: OUTPUT_LANGUAGE[language], ...(rules ? { language_rules: rules[language] } : {}) };
+}
+
 // System message holds only prompt text and compiled controls; user text never enters it.
 export function buildSystemMessage(id: PromptId, runtime: Record<string, unknown>): string {
-  const parts = [fill(id === "P09_QUALITY_EVALUATION" ? BASE_READONLY : BASE, runtime), fill(CAPABILITY[id], runtime)];
+  const values = { ...runtime, ...languageValues(id, runtime) };
+  const base = BASE_OF[id] ?? BASE;
+  const parts = [...(base ? [fill(base, values)] : []), fill(CAPABILITY[id], values)];
   const request = record(runtime.request) as ControlRequest | undefined;
   const block = request ? compileControlBlock(request) : "";
   return (block ? [...parts, block] : parts).join("\n\n");

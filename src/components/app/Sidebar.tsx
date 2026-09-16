@@ -33,11 +33,11 @@ export function Sidebar() {
 
   return (
     <nav aria-label={t('Navigasi utama', 'Main navigation')}>
-      <div className="fixed bottom-0 left-0 top-14 z-20 hidden w-[72px] flex-col items-center gap-1 bg-brand-50 px-2 pb-3 pt-3 md:flex">
+      <div className="fixed bottom-0 left-0 top-14 z-20 hidden w-[72px] flex-col items-center gap-1 bg-shell px-2 pb-3 pt-3 md:flex">
         {items.map((item) => <RailLink key={item.href} {...item} />)}
         <div className="mt-auto w-full"><RailLink {...settings} /></div>
       </div>
-      <div className="fixed inset-x-0 bottom-0 z-30 flex h-16 items-stretch justify-around border-t border-line bg-brand-50/95 px-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-30 flex h-16 items-stretch justify-around border-t border-line bg-shell/95 px-4 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:hidden">
         {[...items, settings].map((item) => <div key={item.href} className="flex w-20 items-center"><RailLink {...item} /></div>)}
       </div>
     </nav>

@@ -148,7 +148,7 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     expect(preview.output).toMatchObject({transformed_text:'Laporan ini kami susun secara cermat.',exceeds_preservation:true});expect(preview.output).not.toHaveProperty('humanized_text');
     const body=JSON.parse((transport.mock.calls[0] as unknown as [string,{body:string}])[1].body);expect(body.reasoning).toEqual({effort:'low'});expect(body.messages[0].content).not.toContain('Kami menyiapkan');
     const row=db.prepare('SELECT prompt_version,runtime_json FROM transformations WHERE id=?').get(preview.id) as {prompt_version:string;runtime_json:string};
-    expect(row.prompt_version).toBe('v3');expect(JSON.parse(row.runtime_json)).toMatchObject({prompt_version:'v3',reasoning_effort:'low',humanizer_context:'umum',preservation:'conservative'});
+    expect(row.prompt_version).toBe('v4');expect(JSON.parse(row.runtime_json)).toMatchObject({prompt_version:'v4',reasoning_effort:'low',humanizer_context:'umum',preservation:'conservative'});
   });
   it('adds soft validator warnings without rejecting and rejects structural failures before any repair',async()=>{
     enable();const source='Tim kami menyelesaikan migrasi sistem pada bulan lalu. Semua layanan berjalan normal setelah pengujian selesai dilakukan.';

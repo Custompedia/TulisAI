@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EXTRA_LIMIT } from "@/lib/writing/settings";
 
 const warnings = z.array(z.string().max(160)).max(3);
 const transform = z.object({ transformed_text: z.string(), change_categories: z.array(z.string().max(40)).max(3), warnings, no_change_needed: z.boolean() });
@@ -35,7 +36,7 @@ const request = z.object({
   length: z.enum(["lebih singkat", "sama", "lebih detail"]).optional(),
   audience: z.enum(["dosen", "profesional", "klien", "umum"]).optional(),
   focus: z.array(z.enum(focusValues)).max(3).default([]),
-  additional_instruction: z.string().max(200).default(""),
+  additional_instruction: z.string().max(EXTRA_LIMIT).default(""),
 });
 const rewrite = { source_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, protected_terms: strings, protected_citations: strings, request: request.optional() };
 const strength = z.enum(["light", "balanced", "strong"]);

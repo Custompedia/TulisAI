@@ -1,9 +1,10 @@
 'use client';
-import { ArrowRight, Check, ChevronRight, Languages, Sparkles, TextSelect } from 'lucide-react';
+import { ArrowRight, Check, ChevronRight, Languages, RefreshCw, TextSelect } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { AI_SCOPE_LIMIT, SELECTION_LIMIT, type Mode, type Settings } from '@/lib/writing/settings';
-import { pressGreen, raisedGreen } from '@/components/ui/Button';
+import { Alert } from '@/components/ui/Alert';
+import { Button, pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import { Spinner } from '@/components/ui/Spinner';
@@ -13,8 +14,8 @@ import type { Scope } from './types';
 
 type Props = {
   settings: Settings; onSettings: (settings: Settings) => void; scope: Scope; onScope: (scope: Scope) => void; hasSelection: boolean; scopeWords: number; scopeChars: number;
-  detected: 'id' | 'en' | null; busy: boolean; generating: boolean; hasPreview: boolean;
-  onGenerate: () => void; children?: React.ReactNode; canGenerate: boolean; customizeRequest: number;
+  detected: 'id' | 'en' | null; busy: boolean; generating: boolean; error: string;
+  onGenerate: () => void; onRetry: () => void; onDismissError: () => void; children?: React.ReactNode; canGenerate: boolean; customizeRequest: number;
 };
 const ringClass: Record<ModeTone, string> = {
   green: 'ring-mode-green-ink/40', blue: 'ring-mode-blue-ink/40', orange: 'ring-mode-orange-ink/40', slate: 'ring-mode-slate-ink/40', pink: 'ring-mode-pink-ink/40', gold: 'ring-mode-gold-ink/40', gray: 'ring-mode-gray-ink/40',
@@ -26,7 +27,7 @@ const hoverClass: Record<ModeTone, string> = {
 function SectionTitle({ children, aside }: { children: React.ReactNode; aside?: React.ReactNode }) {
   return (
     <div className="mb-2 flex items-center justify-between gap-2">
-      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-400">{children}</h3>
+      <h3 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">{children}</h3>
       {aside}
     </div>
   );
@@ -51,7 +52,7 @@ function ModeTiles({ value, disabled, onChange }: { value: Mode; disabled: boole
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, hasPreview, onGenerate, children, canGenerate, customizeRequest }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, error, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest }: Props) {
   const { t, locale } = useLocale();
   const languageName = detected === 'id' ? 'Indonesia' : detected === 'en' ? 'English' : t('belum jelas', 'unclear');
   const limit = scope === 'document' ? AI_SCOPE_LIMIT : SELECTION_LIMIT;
@@ -68,7 +69,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
             <div role="status" className="space-y-2.5 rounded-xl border border-line bg-paper p-3.5">
               <p className="flex items-center gap-2 text-[13px] font-medium text-ink-700"><Spinner size={14} className="text-brand-600" />{t('Menulis ulang dan memeriksa istilah terkunci…', 'Rewriting and checking locked terms…')}</p>
               <div className="h-2 w-full animate-pulse rounded bg-paper-deep" /><div className="h-2 w-11/12 animate-pulse rounded bg-paper-deep" /><div className="h-2 w-3/4 animate-pulse rounded bg-paper-deep" />
-              <p className="text-[11px] text-ink-400">{t('Kamu tetap bisa mengedit selama menunggu.', 'You can keep editing while you wait.')}</p>
+              <p className="text-[11px] text-ink-500">{t('Kamu tetap bisa mengedit selama menunggu.', 'You can keep editing while you wait.')}</p>
             </div>
           )}
 
@@ -81,13 +82,13 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
           </section>
 
           <section aria-label={t('Pengaturan mode', 'Mode settings')}>
-            <SectionTitle>{t('Pengaturan', 'Settings')}</SectionTitle>
+            <SectionTitle aside={<span className="text-[11px] text-ink-500">{t('untuk', 'for')} {modeLabel(settings.mode, t)}</span>}>{t('Pengaturan', 'Settings')}</SectionTitle>
             <div className="space-y-2">
               <ModeOptions compact settings={settings} disabled={busy} onChange={onSettings} />
               <div className="flex items-center gap-3">
                 <label htmlFor="studio-language" className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-ink-600">
                   {t('Bahasa', 'Language')}
-                  {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-400"><Languages size={11} aria-hidden="true" />{languageName}</span>}
+                  {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-500"><Languages size={11} aria-hidden="true" />{languageName}</span>}
                 </label>
                 <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
               </div>
@@ -95,17 +96,14 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
             <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings} /></div>
           </section>
 
-          {!hasPreview && !generating && (
-            <div className="flex flex-col items-center border-t border-line px-4 pb-2 pt-6 text-center">
-              <Sparkles size={20} className="text-brand-600" aria-hidden="true" />
-              <p className="mt-2 text-[13px] font-medium text-brand-800">{t('Hasil AI akan muncul di sini.', 'AI results will appear here.')}</p>
-              <p className="mt-1 max-w-64 text-xs leading-relaxed text-ink-500">{t('Pilih mode dan cakupan, lalu jalankan dari tombol di bawah.', 'Pick a mode and scope, then run it from the button below.')}</p>
-            </div>
-          )}
         </div>
       </div>
 
       <footer className="shrink-0 space-y-2.5 border-t border-line bg-white px-4 pb-4 pt-3">
+        {error && !generating && (
+          <Alert tone="error" onDismiss={onDismissError} dismissLabel={t('Tutup', 'Dismiss')} actions={<Button size="sm" icon={RefreshCw} onClick={onRetry}>{t('Coba lagi', 'Retry')}</Button>}>{error}</Alert>
+        )}
+        <SectionTitle aside={(scope === 'selection' || overLimit) && <span className={`text-[11px] tabular-nums ${overLimit ? 'font-semibold text-amber-700' : 'text-ink-500'}`}>{numberFormat(scopeChars, locale)}/{numberFormat(limit, locale)}</span>}>{t('Bagian yang diubah', 'Scope')}</SectionTitle>
         <Segmented<Scope> size="sm" label={t('Bagian yang diubah', 'Scope')} value={scope} disabled={busy} onChange={onScope}
           options={[{ value: 'selection', label: t('Pilihan', 'Selection') }, { value: 'paragraph', label: t('Paragraf', 'Paragraph') }, { value: 'document', label: t('Dokumen', 'Document') }]} />
         <p className={`flex items-center gap-1.5 text-xs ${needsSelection || overLimit ? 'text-amber-700' : 'text-ink-500'}`}>
@@ -115,7 +113,6 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               : overLimit ? t(`Terlalu panjang — persingkat ${scope === 'selection' ? 'pilihan' : 'bagian ini'}.`, `Too long — shorten the ${scope === 'selection' ? 'selection' : 'scope'}.`)
               : `${scopeLabel} · ${numberFormat(scopeWords, locale)} ${t('kata', 'words')}`}
           </span>
-          {(scope === 'selection' || overLimit) && <span className={`shrink-0 tabular-nums ${overLimit ? 'font-semibold' : 'text-ink-400'}`}>{numberFormat(scopeChars, locale)}/{numberFormat(limit, locale)}</span>}
         </p>
         <button type="button" onClick={onGenerate} disabled={disabled} title={generateLabel(settings.mode, t)}
           className={`inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold transition-colors ${disabled ? 'bg-paper-deep text-ink-300' : `${raisedGreen} ${pressGreen}`}`}>

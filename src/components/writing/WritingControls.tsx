@@ -54,8 +54,53 @@ export function ModeOptions({ settings, onChange, disabled, compact = false }: {
   }
 }
 
-type CustomFields = Pick<Settings, 'format' | 'length' | 'audience' | 'focus' | 'extra'>;
-const pickCustom = (settings: Settings): CustomFields => ({ format: settings.format, length: settings.length, audience: settings.audience, focus: settings.focus, extra: settings.extra });
+export type CustomFields = Pick<Settings, 'format' | 'length' | 'audience' | 'focus' | 'extra'>;
+export const pickCustom = (settings: Settings): CustomFields => ({ format: settings.format, length: settings.length, audience: settings.audience, focus: settings.focus, extra: settings.extra });
+
+// Format, audience, length, emphasis and (optionally) the note; shared by the panel and the style dialog.
+export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean }) {
+  const { t } = useLocale();
+  const id = useId();
+  return (
+    <>
+      <div>
+        <FieldLabel htmlFor={`${id}-fmt`}>{t('Format', 'Format')}</FieldLabel>
+        <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} onChange={(value) => onChange({ ...draft, format: value })} options={formatOptions(t).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
+      </div>
+      <div>
+        <FieldLabel htmlFor={`${id}-aud`}>{t('Pembaca', 'Audience')}</FieldLabel>
+        <HintSelect id={`${id}-aud`} label={t('Pembaca', 'Audience')} value={draft.audience} disabled={disabled} onChange={(value) => onChange({ ...draft, audience: value })} options={audienceOptions(t)} />
+      </div>
+      <div>
+        <FieldLabel htmlFor={`${id}-len`}>{t('Panjang', 'Length')}</FieldLabel>
+        <HintSelect id={`${id}-len`} label={t('Panjang', 'Length')} value={draft.length} disabled={disabled} onChange={(value) => onChange({ ...draft, length: value })} options={lengthOptions(t).map((option) => ({ ...option, disabled: option.value === 'more_detailed' && draft.format === 'short_summary' }))} />
+        {draft.format === 'short_summary' && <p className="mt-1.5 text-xs text-ink-500">{t('"Lebih detail" tidak bisa digabung dengan ringkasan.', '"More detailed" cannot be combined with a summary.')}</p>}
+      </div>
+      <fieldset>
+        <legend className="mb-1.5 text-[13px] font-semibold text-ink-700">{t('Penekanan', 'Emphasis')} <span className="font-normal text-ink-500">({t(`maksimal ${FOCUS_LIMIT}`, `up to ${FOCUS_LIMIT}`)} · {draft.focus.length}/{FOCUS_LIMIT})</span></legend>
+        <div className="flex flex-wrap gap-1.5">
+          {focusOptions(t).map((option) => {
+            const on = draft.focus.includes(option.value); const full = !on && draft.focus.length >= FOCUS_LIMIT;
+            return (
+              <button key={option.value} type="button" aria-pressed={on} disabled={disabled || full} title={full ? t(`Maksimal ${FOCUS_LIMIT} penekanan`, `Up to ${FOCUS_LIMIT} emphases`) : option.hint} onClick={() => onChange({ ...draft, focus: on ? draft.focus.filter((value) => value !== option.value) : [...draft.focus, option.value].slice(0, FOCUS_LIMIT) })}
+                className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold transition-colors disabled:opacity-45 ${on ? 'border-brand-300 bg-brand-50 text-brand-800' : 'border-line-strong bg-white text-ink-600 hover:border-ink-300'}`}>
+                {on && <Check size={13} aria-hidden="true" />}{option.label}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+      {showExtra && (
+        <div className={embedded ? 'md:col-span-2' : ''}>
+          <FieldLabel htmlFor={`${id}-extra`} hint={`${draft.extra.length}/${EXTRA_LIMIT}`}>{t('Catatan untuk AI', 'Note for the AI')}</FieldLabel>
+          <textarea id={`${id}-extra`} rows={2} maxLength={EXTRA_LIMIT} disabled={disabled} value={draft.extra} onChange={(event) => onChange({ ...draft, extra: event.target.value.slice(0, EXTRA_LIMIT) })}
+            placeholder={t('Mis. jangan ubah istilah teknis', 'E.g. don’t change technical terms')}
+            className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
+        </div>
+      )}
+    </>
+  );
+}
 
 export function CustomizePanel({ settings, onChange, disabled, defaultOpen = false, embedded = false, onClose }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; defaultOpen?: boolean; embedded?: boolean; onClose?: () => void }) {
   const { t } = useLocale();
@@ -78,39 +123,7 @@ export function CustomizePanel({ settings, onChange, disabled, defaultOpen = fal
       </button>}
       {open && (
         <div id={`${id}-panel`} className={`grid gap-x-5 gap-y-4 ${embedded ? 'md:grid-cols-2' : 'border-t border-line px-3 pb-3.5 pt-3'}`}>
-          <div>
-            <FieldLabel htmlFor={`${id}-fmt`}>{t('Format', 'Format')}</FieldLabel>
-            <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} onChange={(value) => setDraft({ ...draft, format: value })} options={formatOptions(t).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
-          </div>
-          <div>
-            <FieldLabel htmlFor={`${id}-aud`}>{t('Pembaca', 'Audience')}</FieldLabel>
-            <HintSelect id={`${id}-aud`} label={t('Pembaca', 'Audience')} value={draft.audience} disabled={disabled} onChange={(value) => setDraft({ ...draft, audience: value })} options={audienceOptions(t)} />
-          </div>
-          <div>
-            <FieldLabel htmlFor={`${id}-len`}>{t('Panjang', 'Length')}</FieldLabel>
-            <HintSelect id={`${id}-len`} label={t('Panjang', 'Length')} value={draft.length} disabled={disabled} onChange={(value) => setDraft({ ...draft, length: value })} options={lengthOptions(t).map((option) => ({ ...option, disabled: option.value === 'more_detailed' && draft.format === 'short_summary' }))} />
-            {draft.format === 'short_summary' && <p className="mt-1.5 text-xs text-ink-400">{t('"Lebih detail" tidak bisa digabung dengan ringkasan.', '"More detailed" cannot be combined with a summary.')}</p>}
-          </div>
-          <fieldset>
-            <legend className="mb-1.5 text-[13px] font-semibold text-ink-700">{t('Penekanan', 'Emphasis')} <span className="font-normal text-ink-400">({t(`maksimal ${FOCUS_LIMIT}`, `up to ${FOCUS_LIMIT}`)} · {draft.focus.length}/{FOCUS_LIMIT})</span></legend>
-            <div className="flex flex-wrap gap-1.5">
-              {focusOptions(t).map((option) => {
-                const on = draft.focus.includes(option.value); const full = !on && draft.focus.length >= FOCUS_LIMIT;
-                return (
-                  <button key={option.value} type="button" aria-pressed={on} disabled={disabled || full} title={full ? t(`Maksimal ${FOCUS_LIMIT} penekanan`, `Up to ${FOCUS_LIMIT} emphases`) : option.hint} onClick={() => setDraft({ ...draft, focus: on ? draft.focus.filter((value) => value !== option.value) : [...draft.focus, option.value].slice(0, FOCUS_LIMIT) })}
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-semibold transition-colors disabled:opacity-45 ${on ? 'border-brand-300 bg-brand-50 text-brand-800' : 'border-line-strong bg-white text-ink-600 hover:border-ink-300'}`}>
-                    {on && <Check size={13} aria-hidden="true" />}{option.label}
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
-          <div className={embedded ? 'md:col-span-2' : ''}>
-            <FieldLabel htmlFor={`${id}-extra`} hint={`${draft.extra.length}/${EXTRA_LIMIT}`}>{t('Catatan untuk AI', 'Note for the AI')}</FieldLabel>
-            <textarea id={`${id}-extra`} rows={2} maxLength={EXTRA_LIMIT} disabled={disabled} value={draft.extra} onChange={(event) => setDraft({ ...draft, extra: event.target.value.slice(0, EXTRA_LIMIT) })}
-              placeholder={t('Mis. jangan ubah istilah teknis', 'E.g. don’t change technical terms')}
-              className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
-          </div>
+          <CustomFields draft={draft} onChange={setDraft} disabled={disabled} embedded={embedded} />
           <div className={`flex flex-wrap items-center justify-between gap-2 ${embedded ? 'border-t border-line pt-3.5 md:col-span-2' : ''}`}>
             <Button size="sm" variant="ghost" icon={RotateCcw} disabled={disabled} onClick={reset}>{t('Reset', 'Reset')}</Button>
             <div className="flex gap-2">

@@ -7,14 +7,16 @@ export type Version = { id: string; kind: VersionKind; label: string | null; rev
 export type Term = { id: string; term: string };
 export type Draft = { owner: string; revision: number; content: JSONContent; title: string; settings: Settings; updatedAt: number };
 export type Scope = 'selection' | 'paragraph' | 'document';
-export type SelectionRange = { from: number; to: number; text: string; pmTo: number };
+export type SelectionRange = { from: number; to: number; text: string; pmFrom: number; pmTo: number };
 export type SaveState = 'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'offline' | 'conflict' | 'local-unavailable';
 export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | 'natural';
+// Where an AI request was started and where its result is shown: on the text itself or in the Assistant panel.
+export type Surface = 'inline' | 'panel';
 
 export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean };
 export type Preview = {
   id: string; output: PreviewOutput; expiresAt: string; source: string; stamp: number; anchor?: { from: number; to: number };
-  settings: Settings; scope: Scope; revision: number; inlineAction?: InlineAction; pmTo?: number;
+  settings: Settings; scope: Scope; revision: number; inlineAction?: InlineAction; surface: Surface; label?: string;
 };
 
 // A comparison side is a version id, the live working copy, or an AI preview.
