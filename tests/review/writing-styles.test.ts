@@ -5,6 +5,7 @@ import type { SelectionRange } from '@/components/workspace/types';
 import { defaults, EXTRA_LIMIT, FOCUS_LIMIT, SELECTION_LIMIT, type Settings } from '@/lib/writing/settings';
 import { applyStyle, matchesStyle, reconcileStyle, STYLE_NAME_LIMIT, StyleInputSchema, type WritingStyle } from '@/lib/writing/styles';
 import { ApiError, errorText } from '@/lib/client/api';
+import { rememberSettings, tabForSettings, tabSettings, type TabMemory } from '@/components/workspace/assistant-tabs';
 
 const t = (id: string) => id;
 const format = (value: number) => String(value);
@@ -82,5 +83,41 @@ describe('review: saved writing styles', () => {
       expect(id).not.toBe(errorText(new ApiError('UNKNOWN_CODE', 500), false));
       expect(en).not.toBe(id);
     }
+  });
+});
+
+describe('review: Mode and Skills tabs keep separate configurations', () => {
+  const skill = style('Email klien', { mode: 'professional', recipient: 'klien' });
+  const manual: Settings = { ...defaults, mode: 'creative', strength: 'strong', language: 'id' };
+  const empty: TabMemory = { mode: null, styleId: null };
+
+  it('opens on the tab that matches the saved settings', () => {
+    expect(tabForSettings(defaults)).toBe('mode');
+    expect(tabForSettings({ ...defaults, styleId: 'Email klien' })).toBe('skills');
+  });
+
+  it('remembers the manual mode setup and the applied skill', () => {
+    const afterManual = rememberSettings('mode', manual, empty);
+    expect(afterManual).toEqual({ mode: manual, styleId: null });
+    const applied = applyStyle(manual, skill);
+    const afterSkill = rememberSettings('skills', applied, afterManual);
+    expect(afterSkill).toEqual({ mode: manual, styleId: skill.id });
+    // A skill configuration never overwrites the remembered manual setup.
+    expect(rememberSettings('mode', applied, afterSkill).mode).toEqual(manual);
+  });
+
+  it('restores each tab instead of inheriting the other one', () => {
+    const applied = applyStyle(manual, skill);
+    const memory: TabMemory = { mode: manual, styleId: skill.id };
+    const backToMode = tabSettings('mode', applied, memory, [skill]);
+    expect(backToMode).toEqual({ ...manual, language: applied.language, styleId: null });
+    expect(tabSettings('skills', backToMode, memory, [skill])).toEqual({ ...skill.settings, language: backToMode.language, styleId: skill.id });
+  });
+
+  it('keeps the writing language and drops the marker when the skill is gone or unknown', () => {
+    const applied = { ...applyStyle(manual, skill), language: 'en' as const };
+    expect(tabSettings('mode', applied, empty, [skill])).toMatchObject({ language: 'en', styleId: null });
+    expect(tabSettings('skills', { ...manual, styleId: null }, { mode: manual, styleId: 'gone' }, [])).toEqual({ ...manual, styleId: null });
+    expect(tabSettings('skills', applied, { mode: manual, styleId: skill.id }, []).styleId).toBeNull();
   });
 });

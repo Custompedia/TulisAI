@@ -106,7 +106,7 @@ export function StylesCard() {
         <Button variant="primary" icon={Plus} disabled={loading || full || busy !== ''} onClick={() => setDialog({ style: null })}>{t('Buat skill', 'Create skill')}</Button>
       </footer>
 
-      {dialog && <StyleDialog styles={styles} style={dialog.style} preset={defaults} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} />}
+      {dialog && <StyleDialog styles={styles} style={dialog.style} preset={defaults} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} onDeleted={() => setDialog(null)} />}
       {confirm && (
         <ConfirmDialog title={t('Hapus skill ini?', 'Delete this skill?')} tone="danger" busy={busy === confirm.id} confirmLabel={t('Hapus skill', 'Delete skill')} onClose={() => { if (!busy) setConfirm(null); }} onConfirm={() => void remove()}>
           <p>{t('Skill', 'The skill')} <b className="text-ink-900">“{confirm.name}”</b> {t('akan dihapus. Notebook yang memakainya tetap menyimpan pengaturannya.', 'will be deleted. Notebooks using it keep their current settings.')}</p>

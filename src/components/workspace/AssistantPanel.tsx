@@ -178,25 +178,25 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
                   <p className="mt-1.5 text-xs leading-relaxed text-ink-600">{requestSummary(settings, t)}</p>
                 </div>
                 <p className="text-[11px] leading-relaxed text-ink-500">{t('Semua kontrol ikut dari skill ini. Untuk mengatur sendiri, pindah ke tab Mode.', 'Every control comes from this skill. Switch to the Mode tab to set them yourself.')}</p>
-              <div className="flex items-center gap-3">
-                <label htmlFor="studio-language" className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-ink-600">
-                  {t('Bahasa', 'Language')}
-                  {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-500"><Languages size={11} aria-hidden="true" />{languageName}</span>}
-                </label>
-                <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
-              </div>
+                <div className="flex items-center gap-3">
+                  <label htmlFor="studio-language" className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-ink-600">
+                    {t('Bahasa', 'Language')}
+                    {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-500"><Languages size={11} aria-hidden="true" />{languageName}</span>}
+                  </label>
+                  <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
+                </div>
               </div>
             ) : (
               <>
                 <div className="space-y-2">
                   <ModeOptions compact settings={settings} disabled={busy} onChange={onSettings} />
-              <div className="flex items-center gap-3">
-                <label htmlFor="studio-language" className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-ink-600">
-                  {t('Bahasa', 'Language')}
-                  {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-500"><Languages size={11} aria-hidden="true" />{languageName}</span>}
-                </label>
-                <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
-              </div>
+                  <div className="flex items-center gap-3">
+                    <label htmlFor="studio-language" className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-ink-600">
+                      {t('Bahasa', 'Language')}
+                      {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-500"><Languages size={11} aria-hidden="true" />{languageName}</span>}
+                    </label>
+                    <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
+                  </div>
                 </div>
                 <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings} /></div>
               </>

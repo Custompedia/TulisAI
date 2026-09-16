@@ -644,6 +644,12 @@ export default function Workspace() {
   const updateSettings = (next: Settings) => { const value = reconcileStyle(next, styleList.styles); setSettings(value); markMetadata(title, value); };
   const chooseStyle = (style: WritingStyle) => updateSettings(applyStyle(latest.current.settings, style));
   const openStyleDialog = (style: WritingStyle | null, preset: Settings, apply: boolean) => setStyleDialog({ style, preset, apply });
+  // Deleting the applied skill only drops the marker; the notebook keeps the settings it is running with.
+  function onStyleDeleted(removed: WritingStyle) {
+    setStyleDialog(null);
+    if (latest.current.settings.styleId === removed.id) updateSettings({ ...latest.current.settings, styleId: null });
+    setNotice({ tone: 'success', message: t(`Skill “${removed.name}” dihapus.`, `Skill “${removed.name}” deleted.`) });
+  }
   function onStyleSaved(saved: WritingStyle, created: boolean) {
     const shouldApply = styleDialog?.apply || latest.current.settings.styleId === saved.id;
     setStyleDialog(null);
@@ -841,7 +847,7 @@ export default function Workspace() {
           </>} />
       )}
       {styleDialog && (
-        <StyleDialog styles={styleList.styles} style={styleDialog.style} preset={styleDialog.preset} onClose={() => setStyleDialog(null)} onSaved={onStyleSaved} />
+        <StyleDialog styles={styleList.styles} style={styleDialog.style} preset={styleDialog.preset} onClose={() => setStyleDialog(null)} onSaved={onStyleSaved} onDeleted={onStyleDeleted} />
       )}
       {recovery && (
         <Modal title={t('Ada tulisan yang belum tersimpan', 'Unsaved writing found')} description={`${t('Dari perangkat ini', 'From this device')} · ${dateTime(recovery.updatedAt, locale)}`} busy={busy === 'recover'} dismissible={false} onClose={() => undefined} size="lg"

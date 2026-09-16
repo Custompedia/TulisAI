@@ -115,7 +115,7 @@ export function AiMonitor({ summary, onOpenUser }: { summary: AdminSummary | nul
       </section>
 
       {data && charts && (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="grid gap-5">
           <UsageChart title={t('Permintaan per hari', 'Requests per day')} unit={t('permintaan', 'requests')} bars={charts.days} highlight={charts.peakDay} empty={t('Tidak ada permintaan di rentang ini.', 'No requests in this range.')} />
           <UsageChart title={charts.peakName ? t(`Per hari dalam seminggu · puncak ${charts.peakName}`, `By weekday · peak ${charts.peakName}`) : t('Per hari dalam seminggu', 'By weekday')} unit={t('rata-rata permintaan / hari', 'average requests / day')} bars={charts.weekdays} highlight={charts.peakWeekday} empty={t('Tidak ada permintaan di rentang ini.', 'No requests in this range.')} />
         </div>

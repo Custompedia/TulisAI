@@ -1,12 +1,12 @@
 'use client';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 
 export type Bar = { key: string; label: string; value: number; detail: Array<[string, string]> };
 type Props = { title: string; bars: Bar[]; highlight?: string; empty: string; unit: string };
 
-const H = 180; const PAD = { top: 14, right: 8, bottom: 26, left: 40 };
+const H = 260; const PAD = { top: 18, right: 12, bottom: 28, left: 44 };
 function ticks(max: number): number[] {
   if (max <= 0) return [0];
   const raw = max / 4; const power = 10 ** Math.floor(Math.log10(raw)); const step = [1, 2, 5, 10].map((m) => m * power).find((s) => s >= raw) ?? power;
@@ -17,26 +17,36 @@ function ticks(max: number): number[] {
 export function UsageChart({ title, bars, highlight, empty, unit }: Props) {
   const { locale } = useLocale();
   const id = useId();
+  const frame = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(960);
   const [hover, setHover] = useState<string | null>(null);
+  // The SVG takes its real pixel width so the height stays fixed instead of scaling with the container.
+  useEffect(() => {
+    const node = frame.current; if (!node) return;
+    const update = () => setWidth(Math.max(320, Math.round(node.clientWidth - 16)));
+    update(); const observer = new ResizeObserver(update); observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
   const max = Math.max(0, ...bars.map((bar) => bar.value));
-  const scale = useMemo(() => ticks(max), [max]);
+  const scale = useMemo(() => ticks(max || 4), [max]);
   const top = scale[scale.length - 1] || 1;
-  const width = 720; const plotW = width - PAD.left - PAD.right; const plotH = H - PAD.top - PAD.bottom;
+  const plotW = width - PAD.left - PAD.right; const plotH = H - PAD.top - PAD.bottom;
   const band = bars.length ? plotW / bars.length : plotW;
-  const barW = Math.min(24, Math.max(2, band - 2));
+  const barW = Math.min(28, Math.max(2, band - 3));
   const y = (value: number) => PAD.top + plotH - (value / top) * plotH;
-  const labelEvery = Math.max(1, Math.ceil(bars.length / 12));
+  const labelEvery = Math.max(1, Math.ceil(bars.length / Math.max(6, Math.floor(plotW / 56))));
   const active = bars.find((bar) => bar.key === hover) ?? null;
 
   return (
-    <section className="rounded-2xl border border-line bg-white" aria-labelledby={`${id}-title`}>
+    <section className="min-w-0 overflow-hidden rounded-2xl border border-line bg-white" aria-labelledby={`${id}-title`}>
       <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-2.5">
         <h3 id={`${id}-title`} className="text-[14px] font-semibold text-ink-900">{title}</h3>
         <span className="text-[12px] text-ink-500" aria-live="polite">{active ? `${active.label} · ${numberFormat(active.value, locale)} ${unit}` : unit}</span>
       </div>
-      {bars.length === 0 || max === 0 ? <p className="px-4 py-10 text-center text-[13px] text-ink-500">{empty}</p> : (
-        <div className="relative px-2 pb-1 pt-2">
-          <svg viewBox={`0 0 ${width} ${H}`} role="img" aria-label={title} className="block w-full" onMouseLeave={() => setHover(null)}>
+      {bars.length === 0 ? <p className="px-4 py-10 text-center text-[13px] text-ink-500">{empty}</p> : (
+        <div ref={frame} className="relative w-full min-w-0 overflow-hidden px-2 pb-1 pt-2">
+          <svg viewBox={`0 0 ${width} ${H}`} preserveAspectRatio="none" role="img" aria-label={title} style={{ height: H }} className="block w-full" onMouseLeave={() => setHover(null)}>
+            <line x1={PAD.left} x2={width - PAD.right} y1={PAD.top + plotH} y2={PAD.top + plotH} stroke="var(--color-line-strong)" strokeWidth={1} />
             {scale.map((value) => <g key={value}><line x1={PAD.left} x2={width - PAD.right} y1={y(value)} y2={y(value)} stroke="var(--color-line)" strokeWidth={1} /><text x={PAD.left - 6} y={y(value) + 3.5} textAnchor="end" fontSize={10} fill="var(--color-ink-500)">{numberFormat(value, locale)}</text></g>)}
             {bars.map((bar, index) => {
               const x = PAD.left + index * band + (band - barW) / 2; const h = Math.max(0, PAD.top + plotH - y(bar.value)); const isMax = bar.key === highlight; const isHover = bar.key === hover;
