@@ -31,7 +31,7 @@ export function StylesCard() {
   async function duplicate(style: WritingStyle) {
     if (busy || full) return;
     setBusy(style.id); setNotice('');
-    try { await createStyle({ name: copyName(style.name, styles), color: style.color, icon: style.icon, settings: style.settings }); }
+    try { await createStyle({ name: copyName(style.name, styles), description: style.description, color: style.color, icon: style.icon, settings: style.settings }); }
     catch (caught) { if (!guard(caught)) setNotice(errorText(caught, en)); }
     finally { setBusy(''); }
   }
@@ -79,7 +79,7 @@ export function StylesCard() {
                       <p className="truncate text-sm font-semibold text-ink-900">{style.name}</p>
                       <span className={`shrink-0 rounded-md border px-1.5 py-px text-[11px] font-semibold ${toneClass[modeTone[style.settings.mode]].chip}`}>{modeLabel(style.settings.mode, t)}</span>
                     </div>
-                    <p className="mt-0.5 truncate text-xs text-ink-500">{style.settings.extra.trim() || requestSummary(style.settings, t)}</p>
+                    <p className="mt-0.5 truncate text-xs text-ink-500">{style.description || style.settings.extra.trim() || requestSummary(style.settings, t)}</p>
                   </div>
                   <div className="hidden shrink-0 items-center sm:flex">
                     {actions.map((action) => (

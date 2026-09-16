@@ -14,7 +14,8 @@ export const rememberSettings = (tab: AssistantTab, settings: Settings, memory: 
 
 // The effective settings a tab should run with; the writing language always follows the notebook.
 export function tabSettings(tab: AssistantTab, current: Settings, memory: TabMemory, styles: WritingStyle[]): Settings {
-  if (tab === 'mode') { const base = memory.mode ?? current; return { ...base, language: current.language, styleId: null }; }
+  // A writing sample belongs to a skill, so a plain mode run never carries one it did not set itself.
+  if (tab === 'mode') { const base = memory.mode ?? current; return { ...base, language: current.language, styleId: null, sample: memory.mode?.sample ?? '' }; }
   const style = styles.find((item) => item.id === (current.styleId ?? memory.styleId));
   return style ? applyStyle(current, style) : { ...current, styleId: null };
 }

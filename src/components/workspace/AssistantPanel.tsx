@@ -1,5 +1,5 @@
 'use client';
-import { ArrowRight, BookmarkPlus, Check, ChevronRight, Languages, PencilLine, Plus, RefreshCw, TextSelect } from 'lucide-react';
+import { ArrowRight, BookmarkPlus, Check, ChevronRight, Languages, PencilLine, Plus, RefreshCw, Sparkles, TextSelect, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
@@ -22,6 +22,7 @@ type Props = {
   detected: 'id' | 'en' | null; busy: boolean; generating: boolean; error: string;
   onGenerate: () => void; onRetry: () => void; onDismissError: () => void; children?: React.ReactNode; canGenerate: boolean; customizeRequest: number;
   styles: WritingStyle[]; stylesLoading: boolean; stylesError: string; onRetryStyles: () => void; onApplyStyle: (style: WritingStyle) => void; onCreateStyle: () => void; onEditStyle: (style: WritingStyle) => void; onSaveAsStyle: () => void;
+  suggestion: WritingStyle | null; onDismissSuggestion: () => void;
 };
 const ringClass: Record<ModeTone, string> = {
   green: 'ring-mode-green-ink/40', blue: 'ring-mode-blue-ink/40', orange: 'ring-mode-orange-ink/40', slate: 'ring-mode-slate-ink/40', pink: 'ring-mode-pink-ink/40', gold: 'ring-mode-gold-ink/40', gray: 'ring-mode-gray-ink/40',
@@ -69,7 +70,7 @@ function SkillTiles({ styles, activeId, disabled, full, onPick, onEdit, onCreate
         const name = notebookTone(style.color, style.settings.mode); const tone = toneClass[name]; const active = style.id === activeId;
         return (
           <div key={style.id} className="relative">
-            <button type="button" aria-pressed={active} disabled={disabled} title={`${style.name} · ${requestSummary(style.settings, t)}`} onClick={() => onPick(style)}
+            <button type="button" aria-pressed={active} disabled={disabled} title={`${style.name}${style.description ? ` · ${style.description}` : ''} · ${requestSummary(style.settings, t)}`} onClick={() => onPick(style)}
               className={`${TILE} w-full ${active ? `${tone.fill} ${tone.edge} ring-1 ${ringClass[name]}` : `border-transparent ${tone.light} ${hoverClass[name]}`}`}>
               <NotebookIcon icon={style.icon} mode={style.settings.mode} size={16} className={tone.ink} />
               <span className={`truncate text-[13px] ${active ? 'font-semibold text-ink-900' : 'font-medium text-ink-800'}`}>{style.name}</span>
@@ -91,7 +92,7 @@ function SkillTiles({ styles, activeId, disabled, full, onPick, onEdit, onCreate
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, error, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, error, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion }: Props) {
   const { t, locale } = useLocale();
   const [tab, setTab] = useState<AssistantTab>(() => tabForSettings(settings));
   // Each tab keeps its own configuration: the last manual mode setup and the last applied skill.
@@ -128,6 +129,18 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
 
           {children}
 
+          {suggestion && (
+            <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2.5">
+              <Sparkles size={14} className="shrink-0 text-brand-700" aria-hidden="true" />
+              <p className="min-w-0 flex-1 truncate text-xs text-ink-700">{t(`Pakai skill “${suggestion.name}”?`, `Use the “${suggestion.name}” skill?`)}</p>
+              <span className="flex shrink-0 items-center gap-1">
+                <Button size="sm" disabled={busy} onClick={() => { onDismissSuggestion(); onApplyStyle(suggestion); }}>{t('Pakai', 'Use')}</Button>
+                <button type="button" onClick={onDismissSuggestion} aria-label={t('Abaikan saran skill', 'Ignore the skill suggestion')} title={t('Abaikan', 'Ignore')}
+                  className="grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100/70 hover:text-ink-900"><X size={15} aria-hidden="true" /></button>
+              </span>
+            </div>
+          )}
+
           <section aria-label={t('Mode dan skill', 'Mode and skills')}>
             <div className="mb-2.5 flex items-center justify-between gap-2">
               <div className="w-44 shrink-0">
@@ -143,7 +156,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
             </div>
             {tab === 'mode' ? (
               <>
-                <ModeTiles value={settings.mode} disabled={busy} onChange={(mode) => onSettings({ ...settings, mode, styleId: null })} />
+                <ModeTiles value={settings.mode} disabled={busy} onChange={(mode) => onSettings({ ...settings, mode, styleId: null, sample: '' })} />
                 <p className="mt-2 text-xs leading-relaxed text-ink-500">{modeHint(settings.mode, t)}</p>
               </>
             ) : stylesLoading ? (
@@ -175,6 +188,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
                     <p className="min-w-0 flex-1 truncate text-[13px] font-semibold text-ink-900">{activeStyle.name}</p>
                     <button type="button" disabled={busy} onClick={() => onEditStyle(activeStyle)} className="shrink-0 rounded-md px-1.5 py-0.5 text-[12px] font-semibold text-brand-800 transition-colors hover:bg-brand-50 disabled:opacity-50">{t('Ubah skill', 'Edit skill')}</button>
                   </div>
+                  {activeStyle.description && <p className="mt-1 truncate text-xs text-ink-500">{activeStyle.description}</p>}
                   <p className="mt-1.5 text-xs leading-relaxed text-ink-600">{requestSummary(settings, t)}</p>
                 </div>
                 <p className="text-[11px] leading-relaxed text-ink-500">{t('Semua kontrol ikut dari skill ini. Untuk mengatur sendiri, pindah ke tab Mode.', 'Every control comes from this skill. Switch to the Mode tab to set them yourself.')}</p>

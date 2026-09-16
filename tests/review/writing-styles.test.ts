@@ -11,17 +11,19 @@ const t = (id: string) => id;
 const format = (value: number) => String(value);
 const range = (text: string): SelectionRange => ({ from: 0, to: text.length, text, pmFrom: 1, pmTo: 1 + text.length });
 const style = (name: string, settings: Partial<Settings> = {}): WritingStyle =>
-  ({ id: name, name, color: 'blue', icon: 'icon:Rocket', settings: { ...defaults, ...settings }, createdAt: '', updatedAt: '' });
+  ({ id: name, name, description: null, color: 'blue', icon: 'icon:Rocket', settings: { ...defaults, ...settings }, createdAt: '', updatedAt: '' });
 
 describe('review: saved writing styles', () => {
   it('builds a payload that strips the language and marker and marks customized only when a field differs', () => {
-    const plain = stylePayload({ name: '  Email klien  ', color: 'gold', icon: null, settings: { ...defaults, mode: 'professional', language: 'en', styleId: 'old' } });
+    const plain = stylePayload({ name: '  Email klien  ', description: ' bab pembuka ', color: 'gold', icon: null, settings: { ...defaults, mode: 'professional', language: 'en', styleId: 'old' } });
     expect(plain.name).toBe('Email klien');
+    expect(plain.description).toBe('bab pembuka');
     expect(plain.settings).toMatchObject({ mode: 'professional', language: 'auto', styleId: null, customized: false });
     expect(StyleInputSchema.safeParse(plain).success).toBe(true);
 
-    const custom = stylePayload({ name: 'Ringkas', color: null, icon: null, settings: { ...defaults, length: 'shorter', extra: '  catatan  ', focus: ['clarity', 'naturalness', 'formality', 'persuasiveness'] } });
+    const custom = stylePayload({ name: 'Ringkas', description: '', color: null, icon: null, settings: { ...defaults, length: 'shorter', extra: '  catatan  ', focus: ['clarity', 'naturalness', 'formality', 'persuasiveness'] } });
     expect(custom.settings).toMatchObject({ customized: true, extra: 'catatan' });
+    expect(custom.description).toBeNull();
     expect((custom.settings as unknown as Settings).focus).toHaveLength(FOCUS_LIMIT);
     expect(hasCustomFields({ ...defaults, audience: 'client' })).toBe(true);
     expect(hasCustomFields({ ...defaults, mode: 'creative', strength: 'strong' })).toBe(false);
@@ -107,6 +109,8 @@ describe('review: Mode and Skills tabs keep separate configurations', () => {
   });
 
   it('restores each tab instead of inheriting the other one', () => {
+    const withSample = style('Email klien', { mode: 'professional', recipient: 'klien', sample: 'Contoh gaya.' });
+    expect(tabSettings('mode', applyStyle(manual, withSample), { mode: manual, styleId: withSample.id }, [withSample]).sample).toBe('');
     const applied = applyStyle(manual, skill);
     const memory: TabMemory = { mode: manual, styleId: skill.id };
     const backToMode = tabSettings('mode', applied, memory, [skill]);
@@ -116,7 +120,7 @@ describe('review: Mode and Skills tabs keep separate configurations', () => {
 
   it('keeps the writing language and drops the marker when the skill is gone or unknown', () => {
     const applied = { ...applyStyle(manual, skill), language: 'en' as const };
-    expect(tabSettings('mode', applied, empty, [skill])).toMatchObject({ language: 'en', styleId: null });
+    expect(tabSettings('mode', applied, empty, [skill])).toMatchObject({ language: 'en', styleId: null, sample: '' });
     expect(tabSettings('skills', { ...manual, styleId: null }, { mode: manual, styleId: 'gone' }, [])).toEqual({ ...manual, styleId: null });
     expect(tabSettings('skills', applied, { mode: manual, styleId: skill.id }, []).styleId).toBeNull();
   });

@@ -4,8 +4,8 @@ import { ChevronDown, Plus, Trash2 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText } from '@/lib/client/api';
 import { createStyle, removeStyle, saveStyle } from '@/lib/client/styles-store';
-import { customConflict, EXTRA_LIMIT, FOCUS_LIMIT, type Settings } from '@/lib/writing/settings';
-import { STYLE_LIMIT, STYLE_NAME_LIMIT, type WritingStyle } from '@/lib/writing/styles';
+import { customConflict, EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT, type Settings } from '@/lib/writing/settings';
+import { STYLE_DESCRIPTION_LIMIT, STYLE_LIMIT, STYLE_NAME_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { useSessionGuard } from '@/components/app/AppShell';
 import { AppearanceFields } from '@/components/app/AppearancePicker';
 import { Alert } from '@/components/ui/Alert';
@@ -42,7 +42,7 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
   const blocked = !trimmed || duplicate || full || conflict !== null;
   const setSettings = (settings: Settings) => setDraft({ ...draft, settings });
   const nameProblem = nameError || (duplicate ? t('Sudah ada skill dengan nama ini.', 'A skill with this name already exists.') : '');
-  const preview: WritingStyle = { id: style?.id ?? 'preview', name: trimmed, color: draft.color, icon: draft.icon, settings: summary, createdAt: '', updatedAt: '' };
+  const preview: WritingStyle = { id: style?.id ?? 'preview', name: trimmed, description: draft.description.trim() || null, color: draft.color, icon: draft.icon, settings: summary, createdAt: '', updatedAt: '' };
 
   async function submit(event?: React.FormEvent) {
     event?.preventDefault();
@@ -97,7 +97,14 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
           {nameProblem
             ? <p id={`${id}-name-error`} className="mt-1.5 text-xs font-medium text-red-700">{nameProblem}</p>
             : <p id={`${id}-name-hint`} className="mt-1.5 text-xs text-ink-500">{t('Nama yang kamu kenali saat memilih skill, bukan instruksi untuk AI.', 'A name you will recognise when picking the skill, not an instruction for the AI.')}</p>}
-          <div className="mt-2.5 overflow-hidden rounded-xl border border-line">
+          <div className="mt-3">
+            <FieldLabel htmlFor={`${id}-description`} hint={`${draft.description.length}/${STYLE_DESCRIPTION_LIMIT}`}>{t('Kapan dipakai', 'When to use it')}</FieldLabel>
+            <input id={`${id}-description`} className={inputClass} value={draft.description} maxLength={STYLE_DESCRIPTION_LIMIT} disabled={busy} autoComplete="off"
+              placeholder={t('Mis. bab tinjauan pustaka skripsi', 'E.g. the literature review chapter of a thesis')}
+              onChange={(event) => setDraft({ ...draft, description: event.target.value.slice(0, STYLE_DESCRIPTION_LIMIT) })} />
+            <p className="mt-1.5 text-xs text-ink-500">{t('Catatan untukmu sendiri: tampil di daftar skill dan tidak pernah dikirim ke AI.', 'A note for yourself: it shows in your skill list and is never sent to the AI.')}</p>
+          </div>
+          <div className="mt-3 overflow-hidden rounded-xl border border-line">
             <AppearanceFields color={draft.color} icon={draft.icon} mode={draft.settings.mode} gridHeight="max-h-40"
               onSelect={(next) => setDraft({ ...draft, color: next.color, icon: next.icon })}
               trailing={<button type="button" disabled={!draft.color && !draft.icon} onClick={() => setDraft({ ...draft, color: null, icon: null })}
@@ -131,6 +138,15 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
           </div>
         </div>
 
+        <div>
+          <FieldLabel htmlFor={`${id}-sample`} hint={`${draft.settings.sample.length}/${SAMPLE_LIMIT}`}>{t('Contoh tulisan', 'Writing sample')}</FieldLabel>
+          <textarea id={`${id}-sample`} rows={4} maxLength={SAMPLE_LIMIT} disabled={busy} value={draft.settings.sample}
+            onChange={(event) => setSettings({ ...draft.settings, sample: event.target.value.slice(0, SAMPLE_LIMIT) })}
+            placeholder={t('Tempel satu atau dua paragraf tulisanmu sendiri…', 'Paste one or two paragraphs of your own writing…')}
+            className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
+          <p className="mt-1.5 text-xs leading-relaxed text-ink-500">{t('Dipakai sebagai contoh gaya saja: AI meniru cara menulisnya, bukan isinya. Dikirim ke AI hanya saat skill ini dipakai, jadi menambah sedikit biaya token.', 'Used as a style example only: the AI imitates how it is written, never its content. It is sent only when this skill is applied, so it adds a little token cost.')}</p>
+        </div>
+
         <div className="rounded-xl border border-line">
           <button type="button" onClick={() => setAdvanced(!detailsOpen)} aria-expanded={detailsOpen} aria-controls={`${id}-advanced`}
             className="flex h-10 w-full items-center gap-2 rounded-xl px-3.5 text-left transition-colors hover:bg-paper">
@@ -162,7 +178,9 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
             <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500">{modeLabel(summary.mode, t)}</span>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-ink-600"><span className="font-semibold text-ink-800">{t('Yang diminta ke AI', 'What the AI is asked for')}:</span> {requestSummary(summary, t)}</p>
+          {draft.description.trim() && <p className="mt-1.5 truncate text-xs text-ink-500">{draft.description.trim()}</p>}
           {summary.extra.trim() && <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-ink-500">“{summary.extra.trim()}”</p>}
+          {summary.sample.trim() && <p className="mt-1.5 text-xs font-medium text-ink-600">{t('Contoh tulisan ikut dikirim sebagai acuan gaya.', 'A writing sample is sent as a style reference.')}</p>}
           {!trimmed && <p className="mt-2 text-xs font-medium text-amber-700">{t('Beri nama skill ini sebelum menyimpan.', 'Give this skill a name before saving.')}</p>}
         </section>
       </form>

@@ -9,6 +9,8 @@ import { countWords } from '@/lib/editor/metrics';
 import { numberFormat } from '@/lib/client/format';
 import { AI_SCOPE_LIMIT, defaults, detectLanguage, LEGACY_CUSTOM_PROMPT, MIN_WORDS, modeFromPrompt, normalizeSettings, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle } from '@/lib/writing/styles';
+import { rememberSettings, tabSettings, type TabMemory } from '@/components/workspace/assistant-tabs';
+import { StyleMark } from '@/components/writing/StyleMark';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { useSessionGuard, useShell } from '@/components/app/AppShell';
 import { COMPOSER_FOCUS_EVENT } from '@/components/app/Sidebar';
@@ -58,6 +60,9 @@ export function Composer() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const { styles } = useWritingStyles();
+  // Remembers the manual configuration so removing a skill restores it instead of resetting.
+  const memory = useRef<TabMemory>({ mode: null, styleId: null });
+  const manualPicked = useRef(false);
 
   const focus = useCallback(() => { const node = textarea.current; if (!node) return; node.focus(); node.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, []);
   useEffect(() => { try { const saved = sessionStorage.getItem(DRAFT_KEY); if (saved) setText(saved); } catch { /* storage unavailable */ } }, []);
@@ -92,18 +97,23 @@ export function Composer() {
 
   // Any manual change drops the style marker as soon as the settings drift from the saved preset.
   const update = (next: Settings) => setSettings(reconcileStyle(next, styles));
-  const set = <K extends keyof Settings>(key: K, value: Settings[K]) => update({ ...settings, [key]: value });
-  const pick = (mode: Mode) => { update({ ...settings, mode }); setPicked(true); textarea.current?.focus(); };
+  // Editing a control by hand is a manual run, so the skill and its sample go with it; language belongs to the document.
+  const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
+    update(key === 'language' ? { ...settings, [key]: value } : { ...settings, [key]: value, styleId: null, sample: '' });
+  const pick = (mode: Mode) => { update({ ...settings, mode, styleId: null, sample: '' }); setPicked(true); textarea.current?.focus(); };
   const unpick = () => { update({ ...settings, mode: baseMode, styleId: null }); setPicked(false); setCustomizing(false); };
+  const activeStyle = styles.find((item) => item.id === settings.styleId) ?? null;
+  if (!settings.styleId) { memory.current = rememberSettings('mode', settings, memory.current); manualPicked.current = picked; }
   const pickStyle = (id: string) => {
     const style = styles.find((item) => item.id === id);
-    if (!style) { setSettings({ ...settings, styleId: null }); return; }
-    setSettings(applyStyle(settings, style)); setPicked(true);
+    if (!style) return;
+    setSettings(applyStyle(settings, style)); setCustomizing(false); setPicked(true); textarea.current?.focus();
   };
+  // Removing a skill hands the row back to the manual configuration the user had before.
+  const clearStyle = () => { setSettings(tabSettings('mode', settings, memory.current, styles)); setPicked(manualPicked.current); };
   const styleChip = styles.length > 0 && (
-    <ChipSelect label={t('Skill', 'Skill')} title={t('Skills', 'Skills')} value={settings.styleId ?? ''} disabled={busy} onChange={pickStyle} width="w-72"
-      options={[{ value: '', label: t('Tanpa skill', 'No skill'), hint: t('Pakai mode dan pengaturan di bawah', 'Use the mode and settings below') },
-        ...styles.map((style) => ({ value: style.id, label: style.name, hint: requestSummary(style.settings, t) }))]} />
+    <ChipSelect label={t('Skill', 'Skill')} title={t('Skills', 'Skills')} value="" disabled={busy} onChange={pickStyle} width="w-72"
+      options={styles.map((style) => ({ value: style.id, label: style.name, hint: style.description ?? requestSummary(style.settings, t) }))} />
   );
 
   async function create() {
@@ -175,11 +185,21 @@ export function Composer() {
           </div>
         </div>
 
-        <div className={`flex flex-nowrap items-center gap-2 px-2 py-2.5 ${picked ? '' : 'justify-center'}`}>
-          {picked ? (
+        <div className={`flex flex-nowrap items-center gap-2 px-2 py-2.5 ${picked || activeStyle ? '' : 'justify-center'}`}>
+          {activeStyle ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-line bg-white py-1 pl-1.5 pr-1">
+              <StyleMark style={activeStyle} size={24} />
+              <span className="shrink-0 truncate text-[12.5px] font-semibold text-ink-900">{activeStyle.name}</span>
+              <span aria-hidden="true" className="hidden shrink-0 text-ink-300 sm:inline">·</span>
+              <span className="hidden min-w-0 flex-1 truncate text-[12px] text-ink-500 sm:block">{requestSummary(settings, t)}</span>
+              <button type="button" onClick={clearStyle} disabled={busy} title={t('Lepas skill ini', 'Remove this skill')}
+                className="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-ink-600 transition-colors hover:bg-paper-deep hover:text-ink-900 disabled:opacity-50 sm:ml-0">
+                <X size={13} aria-hidden="true" />{t('Ganti', 'Change')}
+              </button>
+            </div>
+          ) : picked ? (
             <>
               <ChipRow>
-                {styleChip}
                 <span className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-white pl-1 pr-0.5 text-[12.5px] font-medium ${tone.edge} ${tone.ink}`}>
                   <span className={`grid h-6 w-6 place-items-center rounded-full ${tone.fill}`}><ModeIcon size={13} aria-hidden="true" /></span>
                   {modeLabel(settings.mode, t)}
@@ -207,13 +227,13 @@ export function Composer() {
               })}
             </ChipRow>
           )}
-          {!picked && (
+          {!picked && !activeStyle && (
             <Menu label={t('Mode lainnya', 'More modes')} align="end" disabled={busy} className="shrink-0" triggerClassName={`${CHIP} font-medium`}
               trigger={<><Plus size={16} aria-hidden="true" />{t('Lainnya', 'More')}</>}
               items={MORE.map((mode) => ({ label: modeLabel(mode, t), icon: modeIcon[mode], onSelect: () => pick(mode) }))} />
           )}
         </div>
-        {picked && customizing && (
+        {picked && customizing && !activeStyle && (
           <div id="composer-customize" className="mx-0 mb-0.5 rounded-2xl bg-white px-4 py-4 shadow-[0_1px_3px_rgb(31_32_29/0.08)] animate-fade-up sm:px-5">
             <div className="mb-4 flex items-start justify-between gap-3">
               <div><p className="text-sm font-semibold text-ink-900">{t('Sesuaikan hasil', 'Customize result')}</p><p className="mt-0.5 text-xs text-ink-500">{t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>

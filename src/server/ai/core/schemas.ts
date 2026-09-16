@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EXTRA_LIMIT } from "@/lib/writing/settings";
+import { EXTRA_LIMIT, SAMPLE_LIMIT } from "@/lib/writing/settings";
 
 const warnings = z.array(z.string().max(160)).max(3);
 const transform = z.object({ transformed_text: z.string(), change_categories: z.array(z.string().max(40)).max(3), warnings, no_change_needed: z.boolean() });
@@ -38,7 +38,8 @@ const request = z.object({
   focus: z.array(z.enum(focusValues)).max(3).default([]),
   additional_instruction: z.string().max(EXTRA_LIMIT).default(""),
 });
-const rewrite = { source_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, protected_terms: strings, protected_citations: strings, request: request.optional() };
+// style_reference is the author's writing sample; it travels in the user message as its own block.
+const rewrite = { source_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, protected_terms: strings, protected_citations: strings, request: request.optional(), style_reference: z.string().max(SAMPLE_LIMIT).optional() };
 const strength = z.enum(["light", "balanced", "strong"]);
 
 export const runtimeSchemas = {

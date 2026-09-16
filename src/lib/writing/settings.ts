@@ -12,6 +12,8 @@ export type Settings = {
   mode: Mode; language: WritingLanguage; strength: Strength; academic: string; context: string; preservation: string;
   recipient: Recipient; simplifyFor: SimplifyFor; audience: Audience; format: string; length: string;
   focus: string[]; extra: string; customized: boolean;
+  // Short writing sample used as a style reference; sent to the model, never reused as content.
+  sample: string;
   // Id of the saved style these settings came from; cleared as soon as they drift.
   styleId: string | null;
 };
@@ -19,10 +21,11 @@ export type Settings = {
 export const defaults: Settings = {
   mode: 'humanize', language: 'auto', strength: 'balanced', academic: 'thesis', context: 'general', preservation: 'balanced',
   recipient: 'umum', simplifyFor: 'umum', audience: 'general_public', format: 'paragraph', length: 'same',
-  focus: [], extra: '', customized: false, styleId: null,
+  focus: [], extra: '', customized: false, sample: '', styleId: null,
 };
 
 export const EXTRA_LIMIT = 500;
+export const SAMPLE_LIMIT = 1_000;
 export const FOCUS_LIMIT = 3;
 export const AI_SCOPE_LIMIT = 20_000;
 export const SELECTION_LIMIT = 5_000;
@@ -62,6 +65,7 @@ export function normalizeSettings(raw: Record<string, unknown> | null | undefine
     audience: oneOf(AUDIENCES, value.audience, defaults.audience), format: str(value.format, defaults.format), length: str(value.length, defaults.length),
     focus: Array.isArray(value.focus) ? value.focus.filter((item): item is string => typeof item === 'string').slice(0, FOCUS_LIMIT) : [],
     extra: str(value.extra, '').slice(0, EXTRA_LIMIT), customized: legacyCustom || value.customized === true,
+    sample: str(value.sample, '').slice(0, SAMPLE_LIMIT),
     styleId: typeof value.styleId === 'string' && value.styleId ? value.styleId : null,
   };
 }
@@ -78,7 +82,8 @@ export function runtimeControls(settings: Settings, language: 'id' | 'en', inlin
     simplify: { target_audience: settings.simplifyFor },
   };
   const request = { format: settings.format, length: settings.length, audience: oneOf(AUDIENCES, settings.audience, 'general_public'), focus: settings.focus.slice(0, FOCUS_LIMIT), extra_request: settings.extra.trim().slice(0, EXTRA_LIMIT) || null };
-  return { language, ...controls[settings.mode], ...(settings.customized ? { custom_request: request } : {}) };
+  const sample = settings.sample.trim().slice(0, SAMPLE_LIMIT);
+  return { language, ...controls[settings.mode], ...(sample ? { style_sample: sample } : {}), ...(settings.customized ? { custom_request: request } : {}) };
 }
 
 const ID_WORDS = new Set(['yang', 'dan', 'untuk', 'dengan', 'pada', 'ini', 'adalah', 'dalam', 'tidak', 'saya', 'kami', 'tersebut', 'akan', 'dari', 'itu', 'bahwa', 'juga', 'atau', 'sebagai', 'karena']);

@@ -26,7 +26,7 @@ class Statement {
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:'); state.user = 'owner-a';
-  for (const file of ['0000_initial', '0001_username_auth', '0002_workspace_metadata', '0003_notebook_appearance', '0005_user_role', '0006_admin_panel', '0007_usage_created_index']) db.exec(readFileSync(`migrations/${file}.sql`, 'utf8'));
+  for (const file of ['0000_initial', '0001_username_auth', '0002_workspace_metadata', '0003_notebook_appearance', '0004_writing_styles', '0005_user_role', '0006_admin_panel', '0007_usage_created_index', '0008_style_description']) db.exec(readFileSync(`migrations/${file}.sql`, 'utf8'));
   const objects = new Map<string, string>();
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => statements.map((statement) => statement.execute()) },

@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { changePercentage } from "@/lib/editor/metrics";
-import { EXTRA_LIMIT, FOCUS_LIMIT } from "@/lib/writing/settings";
+import { EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT } from "@/lib/writing/settings";
 import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
 import { responseSchemas, runtimeSchemas } from "./schemas";
-import { paragraphsPreserved, repairDrift, simplifyLengthKept } from "./validators";
+import { paragraphsPreserved, repairDrift, sampleEcho, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
 
 // Strict structured outputs reject string length keywords; lengths are clamped before zod parsing instead.
@@ -52,6 +52,13 @@ export function compileControlBlock(request: ControlRequest): string {
 
 const record = (value: unknown) => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
+// Same treatment as the author note: tags stripped, spacing tamed, hard cap; blank lines survive so the sample keeps its shape.
+export const sanitizeSample = (value: unknown): string | undefined => {
+  if (typeof value !== "string") return undefined;
+  const cleaned = value.replace(/[<>]/g, "").replace(/[ \t]+/g, " ").replace(/ ?\n ?/g, "\n").replace(/\n{3,}/g, "\n\n").trim().slice(0, SAMPLE_LIMIT).trim();
+  return cleaned || undefined;
+};
+
 export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<string, unknown> {
   const get = (...keys: string[]) => keys.map((key) => input[key]).find((value) => value !== undefined);
   const source = record(input.request) ?? record(get("customRequest", "custom_request")) ?? (id === "P08_CUSTOM_TRANSFORM" ? input : undefined);
@@ -74,6 +81,7 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     intent: lookup(ENUM_MAP.intent, get("intent", "action")), n: input.n,
     mode: lookup(ENUM_MAP.mode, get("mode", "context")),
     request: request && Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)),
+    style_reference: sanitizeSample(get("styleSample", "style_sample", "styleReference", "style_reference")),
     failed_output: get("failedOutput", "failed_output"), original_scope: get("originalScope", "original_scope"),
     required_protected_terms: get("requiredProtectedTerms", "required_protected_terms"), required_protected_citations: get("requiredProtectedCitations", "required_protected_citations"),
   };
@@ -102,6 +110,9 @@ export function buildSystemMessage(id: PromptId, runtime: Record<string, unknown
 }
 
 const section = (tag: string, value: unknown) => typeof value === "string" && value ? `<${tag}>\n${value}\n</${tag}>` : "";
+// Added block, not part of the verbatim v4 prompt text: it rides in the user message and says how the sample may be used.
+export const STYLE_REFERENCE_RULES = `The block above is a writing sample the author picked as a style example. Match its tone, its typical sentence length, and its vocabulary level. Its sentences, facts, names, and numbers stay out of your output; only <input> supplies content.`;
+const styleReferenceBlock = (value: unknown) => { const body = section("style_reference", value); return body ? `${body}\n${section("style_reference_rules", STYLE_REFERENCE_RULES)}` : ""; };
 export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>): string {
   const strings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   if (id === "P09_QUALITY_EVALUATION") return section("input", runtime.source_text);
@@ -112,7 +123,7 @@ export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>)
   }
   const protectedStrings = [...new Set([...strings(runtime.protected_terms), ...strings(runtime.protected_citations)])].join("\n");
   const body = id === "P07_INLINE_ALTERNATIVES" ? section("selection", runtime.selected_text) : section("input", runtime.source_text);
-  return [section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
+  return [styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
 }
 
 export function buildMessages(id: PromptId, runtime: Record<string, unknown>) {
@@ -206,6 +217,8 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
     return { ...parsed, alternatives: kept };
   }
   const text = String(parsed.transformed_text ?? "");
+  const sample = [runtime.style_reference, runtime.styleSample, runtime.style_sample].find((value) => typeof value === "string");
+  if (typeof sample === "string") { const echo = sampleEcho(sample, original, text); if (echo) throw new Error(`style sample copied verbatim: ${echo}`); }
   const check = validateProtectedContent(original, text, protectedTerms, protectedCitations, true, id === "P04_PROFESSIONAL");
   if (!check.valid) throw new Error(check.errors.join("; "));
   if (parsed.no_change_needed === true && changePercentage(original, text) > 2) throw new Error("no_change_needed was set but the text changed");
@@ -281,6 +294,6 @@ export function createOpenRouterProvider(options: OpenRouterOptions) {
 }
 function usageOf(value: { usage?: Record<string, unknown> }) { return { inputTokens: typeof value.usage?.prompt_tokens === "number" ? value.usage.prompt_tokens : undefined, outputTokens: typeof value.usage?.completion_tokens === "number" ? value.usage.completion_tokens : undefined, totalTokens: typeof value.usage?.total_tokens === "number" ? value.usage.total_tokens : undefined }; }
 
-export { mergeWarnings, softWarnings } from "./validators";
+export { mergeWarnings, sampleEcho, softWarnings } from "./validators";
 export { PROMPTS, PROMPT_VERSION, REASONING_EFFORT, promptIds, responseSchemas, runtimeSchemas };
 export type { AIResponse, ControlRequest, PromptId, PromptDefinition, ProviderResult, RuntimeInput } from "./types";

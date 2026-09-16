@@ -1,9 +1,9 @@
 import type { NotebookColor } from '@/lib/notebook/appearance';
-import { defaults, EXTRA_LIMIT, FOCUS_LIMIT, type Settings } from '@/lib/writing/settings';
-import { STYLE_NAME_LIMIT, type StyleInput, type WritingStyle } from '@/lib/writing/styles';
+import { defaults, EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT, type Settings } from '@/lib/writing/settings';
+import { STYLE_DESCRIPTION_LIMIT, STYLE_NAME_LIMIT, type StyleInput, type WritingStyle } from '@/lib/writing/styles';
 
 type T = (id: string, en: string) => string;
-export type StyleDraft = { name: string; color: NotebookColor | null; icon: string | null; settings: Settings };
+export type StyleDraft = { name: string; description: string; color: NotebookColor | null; icon: string | null; settings: Settings };
 
 const CUSTOM_KEYS = ['format', 'length', 'audience', 'focus', 'extra'] as const;
 // Everything hidden behind "Rincian lanjutan": mode-specific controls plus the output shape.
@@ -15,17 +15,17 @@ export const hasCustomFields = (settings: Settings): boolean => CUSTOM_KEYS.some
 
 export const hasAdvancedValues = (settings: Settings): boolean => ADVANCED_KEYS.some((key) => !same(settings[key], defaults[key]));
 
-export const styleDraft = (settings: Settings, style?: WritingStyle | null): StyleDraft => ({
-  name: style?.name ?? '', color: style?.color ?? null, icon: style?.icon ?? null,
-  settings: { ...(style?.settings ?? settings), extra: (style?.settings ?? settings).extra.slice(0, EXTRA_LIMIT) },
-});
+export const styleDraft = (settings: Settings, style?: WritingStyle | null): StyleDraft => {
+  const base = style?.settings ?? settings;
+  return { name: style?.name ?? '', description: style?.description ?? '', color: style?.color ?? null, icon: style?.icon ?? null, settings: { ...base, extra: base.extra.slice(0, EXTRA_LIMIT), sample: base.sample.slice(0, SAMPLE_LIMIT) } };
+};
 
 // The stored snapshot never carries a language or an active-style marker.
 export function stylePayload(draft: StyleDraft): StyleInput {
   const settings = draft.settings;
   return {
-    name: draft.name.trim().slice(0, STYLE_NAME_LIMIT), color: draft.color, icon: draft.icon,
-    settings: { ...settings, focus: settings.focus.slice(0, FOCUS_LIMIT), extra: settings.extra.trim().slice(0, EXTRA_LIMIT), customized: hasCustomFields(settings), language: 'auto', styleId: null },
+    name: draft.name.trim().slice(0, STYLE_NAME_LIMIT), description: draft.description.trim().slice(0, STYLE_DESCRIPTION_LIMIT) || null, color: draft.color, icon: draft.icon,
+    settings: { ...settings, focus: settings.focus.slice(0, FOCUS_LIMIT), extra: settings.extra.trim().slice(0, EXTRA_LIMIT), sample: settings.sample.trim().slice(0, SAMPLE_LIMIT), customized: hasCustomFields(settings), language: 'auto', styleId: null },
   };
 }
 

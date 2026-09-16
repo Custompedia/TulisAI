@@ -17,6 +17,7 @@ import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/
 import { countWords } from '@/lib/editor/metrics';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
+import { suggestStyle } from '@/lib/writing/suggest';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useSessionGuard, type UserSettings } from '@/components/app/AppShell';
@@ -109,6 +110,7 @@ export default function Workspace() {
   const [leaving, setLeaving] = useState<{ href: string; saving: boolean } | null>(null);
   // `apply` marks the notebook as using the style right after it is saved from the current settings.
   const [styleDialog, setStyleDialog] = useState<{ style: WritingStyle | null; preset: Settings; apply: boolean } | null>(null);
+  const [suggestionOff, setSuggestionOff] = useState(true);
   const styleList = useWritingStyles();
 
   const current = useRef<Doc | null>(null);
@@ -211,6 +213,18 @@ export default function Workspace() {
     return () => window.removeEventListener('keydown', close);
   }, [narrow]);
   useEffect(() => { if (notice?.tone !== 'success') return; const timer = setTimeout(() => setNotice(null), 4000); return () => clearTimeout(timer); }, [notice]);
+
+  // The skill suggestion is dismissed per notebook so it never nags after the user says no.
+  const suggestionKey = `skill-suggestion-dismissed:${id}`;
+  useEffect(() => {
+    let dismissed = false;
+    try { dismissed = window.localStorage.getItem(suggestionKey) === '1'; } catch { dismissed = false; }
+    setSuggestionOff(dismissed);
+  }, [suggestionKey]);
+  function dismissSuggestion() {
+    setSuggestionOff(true);
+    try { window.localStorage.setItem(suggestionKey, '1'); } catch { /* storage unavailable */ }
+  }
 
   const syncUrl = useCallback((params: Record<string, string | null>) => {
     const url = new URL(window.location.href);
@@ -682,9 +696,12 @@ export default function Workspace() {
   }
 
   const words = countWords(text);
+  // Suggestion only: it never changes settings and never starts a generation.
+  const suggestion = !suggestionOff && loaded && !settings.styleId ? suggestStyle(styleList.styles, { title, text }) : null;
   const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
   const assistant = (
     <AssistantPanel
+      suggestion={suggestion} onDismissSuggestion={dismissSuggestion}
       styles={styleList.styles} stylesLoading={styleList.loading} stylesError={styleList.error ? errorText(styleList.error, english) : ''} onRetryStyles={styleList.reload}
       onApplyStyle={chooseStyle} onCreateStyle={() => openStyleDialog(null, defaults, false)} onEditStyle={(style) => openStyleDialog(style, settings, false)} onSaveAsStyle={() => openStyleDialog(null, settings, true)}
       settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}

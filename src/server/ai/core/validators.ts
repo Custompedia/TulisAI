@@ -56,6 +56,21 @@ export function repairDrift(failed: string, corrected: string, violations: Array
   });
 }
 
+export const SAMPLE_ECHO_WORDS = 8;
+const words = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+const grams = (list: string[], size: number) => { const set = new Set<string>(); for (let index = 0; index + size <= list.length; index++) set.add(list.slice(index, index + size).join(' ')); return set; };
+// Style samples are references, not content: a run of SAMPLE_ECHO_WORDS words taken from the sample and absent from the author's own input is a copy.
+export function sampleEcho(sample: string, source: string, output: string, span = SAMPLE_ECHO_WORDS): string | null {
+  const sampleWords = words(sample); const outputWords = words(output);
+  if (sampleWords.length < span || outputWords.length < span) return null;
+  const fromSample = grams(sampleWords, span); const fromSource = grams(words(source), span);
+  for (let index = 0; index + span <= outputWords.length; index++) {
+    const phrase = outputWords.slice(index, index + span).join(' ');
+    if (fromSample.has(phrase) && !fromSource.has(phrase)) return phrase;
+  }
+  return null;
+}
+
 export const emDashCount = (text: string): number => (text.match(/\u2014/g) ?? []).length;
 type Language = 'id' | 'en';
 const say = (language: Language, id: string, en: string) => (language === 'en' ? en : id);

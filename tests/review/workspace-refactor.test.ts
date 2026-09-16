@@ -27,7 +27,7 @@ class Statement {
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  db.exec(readFileSync('migrations/0000_initial.sql', 'utf8')); db.exec(readFileSync('migrations/0001_username_auth.sql', 'utf8')); db.exec(readFileSync('migrations/0002_workspace_metadata.sql', 'utf8')); db.exec(readFileSync('migrations/0003_notebook_appearance.sql', 'utf8')); db.exec(readFileSync('migrations/0005_user_role.sql', 'utf8')); db.exec(readFileSync('migrations/0006_admin_panel.sql', 'utf8')); db.exec(readFileSync('migrations/0007_usage_created_index.sql', 'utf8'));
+  db.exec(readFileSync('migrations/0000_initial.sql', 'utf8')); db.exec(readFileSync('migrations/0001_username_auth.sql', 'utf8')); db.exec(readFileSync('migrations/0002_workspace_metadata.sql', 'utf8')); db.exec(readFileSync('migrations/0003_notebook_appearance.sql', 'utf8')); db.exec(readFileSync('migrations/0004_writing_styles.sql', 'utf8')); db.exec(readFileSync('migrations/0005_user_role.sql', 'utf8')); db.exec(readFileSync('migrations/0006_admin_panel.sql', 'utf8')); db.exec(readFileSync('migrations/0007_usage_created_index.sql', 'utf8')); db.exec(readFileSync('migrations/0008_style_description.sql', 'utf8'));
   objects = new Map(); objectReads = 0;
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => {
