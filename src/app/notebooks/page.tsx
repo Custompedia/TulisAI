@@ -1,13 +1,13 @@
 'use client';
-import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NotebookPen, Plus, Search, SearchX, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, request } from '@/lib/client/api';
 import { AppShell, PageHeader, useSessionGuard, type DocumentSummary } from '@/components/app/AppShell';
 import { NotebookCard, NotebookCardSkeleton } from '@/components/app/NotebookCard';
+import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
 import { Toast } from '@/components/ui/Toast';
-import { Button, buttonClass } from '@/components/ui/Button';
+import { Button } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 
 export default function NotebooksPage() {
@@ -18,6 +18,7 @@ const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-5';
 
 function Notebooks() {
   const { t, locale } = useLocale();
+  const [creating, setCreating] = useState(false);
   const guard = useSessionGuard();
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -29,7 +30,7 @@ function Notebooks() {
     setError(''); if (next) setLoadingMore(true);
     try {
       const page = await request<{ items: DocumentSummary[]; nextCursor: string | null }>(`/api/documents?limit=20${next ? `&cursor=${encodeURIComponent(next)}` : ''}`);
-      setDocs((current) => (next && current ? [...current, ...page.items] : page.items)); setCursor(page.nextCursor);
+      setDocs((current) => { if (!next || !current) return page.items; const seen = new Set(current.map((doc) => doc.id)); return [...current, ...page.items.filter((doc) => !seen.has(doc.id))]; }); setCursor(page.nextCursor);
     } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
     finally { setLoadingMore(false); }
   }, [guard, locale]);
@@ -37,7 +38,7 @@ function Notebooks() {
 
   const term = query.trim().toLowerCase();
   const visible = useMemo(() => (docs && term ? docs.filter((doc) => doc.title.toLowerCase().includes(term)) : docs), [docs, term]);
-  const newNotebook = <Link href="/app#compose" className={buttonClass('primary')}><Plus size={17} aria-hidden="true" />{t('Notebook baru', 'New notebook')}</Link>;
+  const newNotebook = <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>{t('Notebook baru', 'New notebook')}</Button>;
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 pb-12 pt-8 sm:px-6">
@@ -73,6 +74,7 @@ function Notebooks() {
           )}
         {cursor && docs && <div className="mt-5 text-center"><Button loading={loadingMore} onClick={() => void load(cursor)}>{t('Muat lebih banyak', 'Load more')}</Button></div>}
       </div>
+      {creating && <NewNotebookDialog onClose={() => setCreating(false)} />}
     </main>
   );
 }

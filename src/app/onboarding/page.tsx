@@ -11,7 +11,7 @@ import { LoadingBlock } from '@/components/ui/Spinner';
 
 type UseCase = 'academic' | 'professional' | 'general';
 type Language = 'id' | 'en' | 'auto';
-const modeFor: Record<UseCase, string> = { academic: 'P02_ACADEMIC', professional: 'P04_PROFESSIONAL', general: 'P01_STANDARD_REWRITE' };
+const modeFor: Record<UseCase, string> = { academic: 'P02_ACADEMIC', professional: 'P04_PROFESSIONAL', general: 'P03_HUMANIZER' };
 
 function Choice({ active, onClick, icon: Icon, title, hint }: { active: boolean; onClick: () => void; icon?: LucideIcon; title: string; hint?: string }) {
   return (

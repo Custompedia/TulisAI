@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NotebookAppearanceSchema } from "@/lib/notebook/appearance";
 
 export const ApiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) });
 const MAX_EDITOR_NODES = 12_000;
@@ -10,7 +11,7 @@ const EditorNodeSchema: z.ZodType<EditorNode> = z.lazy(() => z.object({
 }).strict().superRefine((node, ctx) => { if (node.type === "text" && node.text === undefined) ctx.addIssue({ code: "custom", message: "Text nodes require text." }); if (node.type !== "text" && node.text !== undefined) ctx.addIssue({ code: "custom", message: "Only text nodes may contain text." }); }));
 export const EditorDocumentSchema = z.object({ type: z.literal("doc"), content: z.array(EditorNodeSchema).max(MAX_EDITOR_NODES).default([]) }).strict().superRefine((document, ctx) => { const encoded = JSON.stringify(document); if (encoded.length > 1_500_000) ctx.addIssue({ code: "custom", message: "Document exceeds the inline safety limit." }); });
 const DocumentPreferencesSchema = z.record(z.string(), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.array(z.string().max(300)).max(20)]));
-export const DocumentCreateSchema = z.object({ title: z.string().trim().min(1).max(180).default("Untitled document"), content: EditorDocumentSchema.optional(), language: z.enum(["auto", "id", "en"]).default("auto"), preferences: DocumentPreferencesSchema.optional() });
+export const DocumentCreateSchema = z.object({ title: z.string().trim().min(1).max(180).default("Untitled document"), content: EditorDocumentSchema.optional(), language: z.enum(["auto", "id", "en"]).default("auto"), preferences: DocumentPreferencesSchema.optional(), color: NotebookAppearanceSchema.shape.color.optional(), icon: NotebookAppearanceSchema.shape.icon.optional() });
 export const DocumentPatchSchema = z.object({ title: z.string().trim().min(1).max(180).optional(), language: z.enum(["auto", "id", "en"]).optional(), preferences: DocumentPreferencesSchema.optional(), content: EditorDocumentSchema.optional(), expectedRevision: z.number().int().min(0) });
 export const AutosaveSchema = z.object({ content: EditorDocumentSchema, title: z.string().trim().min(1).max(180).optional(), language: z.enum(["auto", "id", "en"]).optional(), preferences: z.record(z.string(), z.unknown()).optional(), expectedRevision: z.number().int().min(0) });
 export const LockCreateSchema = z.object({ term: z.string().min(1).max(300).refine((term) => term.trim().length > 0, "A locked term cannot be blank.") });

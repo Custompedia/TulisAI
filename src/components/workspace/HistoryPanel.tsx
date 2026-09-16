@@ -4,7 +4,7 @@ import { ChevronDown, Columns2, Copy, History, PencilLine, RefreshCw, RotateCcw,
 import { useLocale } from '@/lib/client/locale';
 import { dateTime, relativeTime } from '@/lib/client/format';
 import { modeFromPrompt } from '@/lib/writing/settings';
-import { Button } from '@/components/ui/Button';
+import { Button, pillButton } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { modeIcon, modeLabel } from '@/components/writing/modes';
 import { kindIcon, kindTone, versionLabel } from './versions';
@@ -89,10 +89,10 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
                           : preview.status === 'error' ? <p role="alert" className="flex items-center gap-2 text-xs text-red-700"><TriangleAlert size={13} aria-hidden="true" />{t('Isi versi gagal dimuat.', 'Could not load this version.')}<button type="button" className="font-semibold underline" onClick={() => fetchText(version.id)}>{t('Coba lagi', 'Retry')}</button></p>
                           : <p className="line-clamp-4 whitespace-pre-wrap font-serif text-[13px] leading-relaxed text-ink-700">{preview.text.trim() || t('(kosong)', '(empty)')}</p>}
                         <div className="flex flex-wrap gap-1.5">
-                          <Button size="sm" icon={Columns2} disabled={busy} onClick={() => onCompare(version)}>{t('Bandingkan dengan saat ini', 'Compare with current')}</Button>
-                          <Button size="sm" icon={RotateCcw} disabled={busy} onClick={() => onRestore(version)}>{t('Pulihkan', 'Restore')}</Button>
-                          {version.kind !== 'original' && <Button size="sm" variant="ghost" icon={PencilLine} disabled={busy} onClick={() => onRename(version)}>{t('Ganti nama', 'Rename')}</Button>}
-                          <Button size="sm" variant="ghost" icon={Copy} disabled={busy} onClick={() => onDuplicate(version)}>{t('Duplikat', 'Duplicate')}</Button>
+                          <button type="button" className={pillButton} disabled={busy} onClick={() => onCompare(version)}><Columns2 size={13} aria-hidden="true" />{t('Bandingkan dengan saat ini', 'Compare with current')}</button>
+                          <button type="button" className={pillButton} disabled={busy} onClick={() => onRestore(version)}><RotateCcw size={13} aria-hidden="true" />{t('Pulihkan', 'Restore')}</button>
+                          {version.kind !== 'original' && <button type="button" className={pillButton} disabled={busy} onClick={() => onRename(version)}><PencilLine size={13} aria-hidden="true" />{t('Ganti nama', 'Rename')}</button>}
+                          <button type="button" className={pillButton} disabled={busy} onClick={() => onDuplicate(version)}><Copy size={13} aria-hidden="true" />{t('Duplikat', 'Duplicate')}</button>
                         </div>
                       </div>
                     )}

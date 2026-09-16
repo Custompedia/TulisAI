@@ -2,13 +2,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Minimize2, Repeat2, ScanText, SlidersHorizontal, Smile, WandSparkles, type LucideIcon } from 'lucide-react';
+import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Minimize2, ScanText, SlidersHorizontal, Smile, WandSparkles, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
 import type { InlineAction } from './types';
 
-export type SelectionCommand = InlineAction | 'humanize' | 'academic' | 'lock' | 'unlock' | 'custom';
+export type SelectionCommand = InlineAction | 'humanize' | 'academic' | 'lock' | 'unlock' | 'customize';
 
 const keep = (event: React.MouseEvent) => event.preventDefault();
 
@@ -54,8 +54,8 @@ export function SelectionMenu({ editor, locked, disabled, chars, onCommand }: Pr
 
   const run = (command: SelectionCommand) => () => { setMore(false); onCommand(command); };
   const inline: Array<[InlineAction, LucideIcon, string]> = [
-    ['paraphrase', Repeat2, t('Parafrase', 'Paraphrase')], ['shorter', Minimize2, t('Lebih singkat', 'Shorter')], ['clearer', ScanText, t('Lebih jelas', 'Clearer')],
-    ['formal', BriefcaseBusiness, t('Lebih formal', 'More formal')], ['natural', Smile, t('Lebih natural', 'More natural')], ['alternatives', WandSparkles, t('Alternatif', 'Alternatives')],
+    ['alternatives', WandSparkles, t('Alternatif', 'Alternatives')], ['shorter', Minimize2, t('Lebih singkat', 'Shorter')], ['clearer', ScanText, t('Lebih jelas', 'Clearer')],
+    ['formal', BriefcaseBusiness, t('Lebih formal', 'More formal')], ['natural', Smile, t('Lebih natural', 'More natural')],
   ];
 
   return (
@@ -88,7 +88,7 @@ export function SelectionMenu({ editor, locked, disabled, chars, onCommand }: Pr
           <div role="menu" className="absolute right-0 top-full z-40 mt-1.5 w-52 rounded-xl border border-line bg-white p-1 shadow-lg animate-fade-up">
             <MenuAction icon={Feather} label="Humanize" disabled={disabled || overSelection} onRun={run('humanize')} />
             <MenuAction icon={GraduationCap} label={t('Akademik', 'Academic')} disabled={disabled || overSelection} onRun={run('academic')} />
-            <MenuAction icon={SlidersHorizontal} label={t('Kustom', 'Custom')} disabled={disabled || overSelection} onRun={run('custom')} />
+            <MenuAction icon={SlidersHorizontal} label={t('Sesuaikan…', 'Customize…')} disabled={disabled || overSelection} onRun={run('customize')} />
             <div className="my-1 h-px bg-line" />
             <MenuAction icon={LockKeyhole} label={t('Kunci Istilah', 'Lock Term')} disabled={disabled} onRun={run('lock')} />
           </div>

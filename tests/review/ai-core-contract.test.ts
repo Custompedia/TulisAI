@@ -6,12 +6,12 @@ const base = { language: "id" as const, protectedTerms: ["API"], protectedCitati
 
 const fixtures: Record<Exclude<PromptId, "P10_REPAIR">, RuntimeInput> = {
   P01_STANDARD_REWRITE: { ...base, sourceText: "Teks", strength: "light" },
-  P02_ACADEMIC: { ...base, sourceText: "Teks", academicContext: "thesis", audience: null, length: "same" },
+  P02_ACADEMIC: { ...base, sourceText: "Teks", academicContext: "thesis" },
   P03_HUMANIZER: { ...base, sourceText: "Teks", humanizerContext: "academic", strength: "balanced", preservation: "conservative" },
-  P04_PROFESSIONAL: { ...base, sourceText: "Teks", audience: "client", documentType: "email", length: "same" },
-  P05_CREATIVE: { ...base, sourceText: "Teks", audience: "umum", creativeGoal: "natural", creativityStrength: "light" },
-  P06_SIMPLIFY: { ...base, sourceText: "Teks", targetAudience: "umum", readingLevel: null, length: "same", outputFormat: "paragraph" },
-  P07_INLINE_ALTERNATIVES: { ...base, selectedText: "Teks", contextBefore: null, contextAfter: null, action: "alternatives", activeMode: "standard" },
+  P04_PROFESSIONAL: { ...base, sourceText: "Teks", audience: "klien" },
+  P05_CREATIVE: { ...base, sourceText: "Teks", creativity_strength: "light" },
+  P06_SIMPLIFY: { ...base, sourceText: "Teks", target_audience: "pemula" },
+  P07_INLINE_ALTERNATIVES: { ...base, selectedText: "Teks", contextBefore: null, contextAfter: null, action: "alternatives" },
   P08_CUSTOM_TRANSFORM: { ...base, sourceText: "Teks", format: "paragraph", length: "same", audience: "umum", focus: ["clarity"], extraRequest: null },
 };
 

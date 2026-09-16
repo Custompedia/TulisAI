@@ -48,7 +48,8 @@ function SettingsView() {
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const dirty = JSON.stringify(form) !== JSON.stringify(settings);
-  const keyword = t('HAPUS', 'DELETE');
+  const deleteKeyword = account?.username || user.username || user.name;
+  const isConfirmValid = Boolean(deleteKeyword && confirmText.trim().replace(/^["']|["']$/g, '').toLowerCase() === deleteKeyword.toLowerCase());
   const en = locale === 'en';
 
   const loadAccount = useCallback(async () => {
@@ -218,9 +219,9 @@ function SettingsView() {
           actions={notice.retry ? <Button size="sm" icon={RotateCw} onClick={notice.retry}>{t('Coba lagi', 'Retry')}</Button> : undefined}>{notice.message}</Toast>
       )}
       {confirmDelete && (
-        <ConfirmDialog title={t('Hapus akun secara permanen?', 'Permanently delete account?')} tone="danger" busy={deleting} disabled={confirmText.trim().toUpperCase() !== keyword} confirmLabel={t('Hapus permanen', 'Delete permanently')} onClose={() => setConfirmDelete(false)} onConfirm={() => void deleteAccount()}>
+        <ConfirmDialog title={t('Hapus akun secara permanen?', 'Permanently delete account?')} tone="danger" busy={deleting} disabled={!isConfirmValid} confirmLabel={t('Hapus permanen', 'Delete permanently')} onClose={() => setConfirmDelete(false)} onConfirm={() => void deleteAccount()}>
           <p>{t('Semua dokumen, versi, dan pratinjau akan hilang dan tidak bisa dipulihkan.', 'All documents, versions, and previews will be lost and cannot be recovered.')}</p>
-          <label className="mt-4 block text-[13px] font-semibold text-ink-700">{t(`Ketik ${keyword} untuk konfirmasi`, `Type ${keyword} to confirm`)}<input className={`${inputClass} mt-1.5`} value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoComplete="off" /></label>
+          <label className="mt-4 block text-[13px] font-semibold text-ink-700">{t(`Ketik "${deleteKeyword}" untuk konfirmasi`, `Type "${deleteKeyword}" to confirm`)}<input className={`${inputClass} mt-1.5`} value={confirmText} onChange={(event) => setConfirmText(event.target.value)} autoComplete="off" /></label>
         </ConfirmDialog>
       )}
     </main>

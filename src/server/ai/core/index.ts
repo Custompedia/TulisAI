@@ -3,6 +3,7 @@ import { changePercentage } from "@/lib/editor/metrics";
 import { EXTRA_LIMIT, FOCUS_LIMIT } from "@/lib/writing/settings";
 import { BASE, BASE_READONLY, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT } from "./prompts";
 import { responseSchemas, runtimeSchemas } from "./schemas";
+import { paragraphsPreserved, repairDrift, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
 
 // Strict structured outputs reject string length keywords; lengths are clamped before zod parsing instead.
@@ -15,21 +16,20 @@ export function getPromptDefinition(id: PromptId): PromptDefinition {
 
 type Table = Record<string, string>;
 const lookup = (table: Table, value: unknown) => typeof value === "string" && Object.hasOwn(table, value) ? table[value] : value;
-// Free-text audiences have no v3 enum; umum (general reader) is the closest defined value.
+// Values outside a prompt's v3 audience enum fall back to umum (general reader).
 const audienceOf = (table: Table, allowed: readonly string[], value: unknown) => { const mapped = lookup(table, typeof value === "string" ? value.trim() : value); return typeof mapped === "string" && allowed.includes(mapped) ? mapped : typeof mapped === "string" && mapped ? "umum" : undefined; };
+const P04_AUDIENCES = ["atasan", "klien", "rekan", "vendor", "umum"] as const;
+const P06_AUDIENCES = ["anak sekolah", "umum", "klien", "pemula"] as const;
 export const ENUM_MAP = {
   academic_context: { thesis: "skripsi", journal: "jurnal", general_academic: "umum" },
   humanizer_context: { academic: "akademik", professional: "profesional", general: "umum" },
   creativity_strength: { light: "ringan", balanced: "sedang", strong: "berani" },
   intent: { alternatives: "alternatif", paraphrase: "alternatif", shorter: "lebih singkat", clearer: "lebih jelas", formal: "lebih formal", natural: "lebih natural" },
-  // P04 has no lecturer reader; atasan (senior decision-maker) is the closest.
-  p04_audience: { general_public: "umum", client: "klien", professional: "rekan", lecturer: "atasan" },
-  // P06 has no expert or colleague reader; klien knows the business, umum is a general adult.
-  p06_audience: { general_public: "umum", client: "klien", professional: "klien", lecturer: "umum" },
+  simplify_for: { anak_sekolah: "anak sekolah" },
   request_audience: { lecturer: "dosen", professional: "profesional", client: "klien", general_public: "umum" },
   format: { paragraph: "paragraf", bullets: "poin", numbered_list: "bernomor", table: "tabel", short_summary: "ringkasan", summary: "ringkasan" },
   length: { shorter: "lebih singkat", same: "sama", more_detailed: "lebih detail" },
-  mode: { standard: "standar", academic: "akademik", humanize: "humanize", professional: "profesional", creative: "kreatif", simplify: "sederhanakan", custom: "kustom" },
+  mode: { standard: "standar", academic: "akademik", humanize: "humanize", professional: "profesional", creative: "kreatif", simplify: "sederhanakan" },
 } satisfies Record<string, Table>;
 
 const FORMAT_LINE: Table = { poin: "bullet points where the content is genuinely enumerable; keep continuous argument as prose", bernomor: "a numbered list, only where the content has a real sequence", tabel: "a table whose columns come from distinctions already present in the text", ringkasan: "a summary that keeps every claim, at roughly 40% of the input length" };
@@ -68,8 +68,8 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     academic_context: lookup(ENUM_MAP.academic_context, get("academicContext", "academic_context")),
     humanizer_context: lookup(ENUM_MAP.humanizer_context, get("humanizerContext", "humanizer_context")),
     preservation: input.preservation,
-    audience: id === "P04_PROFESSIONAL" ? audienceOf(ENUM_MAP.p04_audience, ["atasan", "klien", "rekan", "vendor", "umum"], input.audience) ?? "umum"
-      : id === "P06_SIMPLIFY" ? audienceOf(ENUM_MAP.p06_audience, ["anak sekolah", "umum", "klien", "pemula"], get("targetAudience", "target_audience", "audience")) ?? "umum" : undefined,
+    audience: id === "P04_PROFESSIONAL" ? audienceOf({}, P04_AUDIENCES, get("recipient", "audience")) ?? "umum"
+      : id === "P06_SIMPLIFY" ? audienceOf(ENUM_MAP.simplify_for, P06_AUDIENCES, get("simplifyFor", "simplify_for", "targetAudience", "target_audience", "audience")) ?? "umum" : undefined,
     creativity_strength: lookup(ENUM_MAP.creativity_strength, get("creativityStrength", "creativity_strength", "strength")),
     intent: lookup(ENUM_MAP.intent, get("intent", "action")), n: input.n,
     mode: lookup(ENUM_MAP.mode, get("mode", "context")),
@@ -142,6 +142,24 @@ export function nearDuplicate(left: string, right: string): boolean {
 const letterCase = (text: string) => { const first = text.trimStart().charAt(0); return first !== first.toLowerCase() ? "upper" : first !== first.toUpperCase() ? "lower" : null; };
 export const capitalisationMatches = (selection: string, option: string) => { const expected = letterCase(selection); const actual = letterCase(option); return !expected || !actual || expected === actual; };
 
+// Request format and length in v3 terms, from a normalized runtime or raw UI controls.
+export function requestOf(id: PromptId, runtime: RuntimeInput): { format?: string; length?: string } | undefined {
+  const source = record(runtime.request) ?? record(runtime.custom_request) ?? record(runtime.customRequest) ?? (id === "P08_CUSTOM_TRANSFORM" ? runtime : undefined);
+  if (!source) return undefined;
+  const format = lookup(ENUM_MAP.format, source.format); const length = lookup(ENUM_MAP.length, source.length);
+  return { ...(typeof format === "string" ? { format } : {}), ...(typeof length === "string" ? { length } : {}) };
+}
+
+const REWRITES = new Set<PromptId>(["P01_STANDARD_REWRITE", "P02_ACADEMIC", "P03_HUMANIZER", "P04_PROFESSIONAL", "P05_CREATIVE", "P06_SIMPLIFY", "P08_CUSTOM_TRANSFORM"]);
+// Hard structural checks a protected-content repair cannot fix.
+export function structuralErrors(id: PromptId, original: string, output: string, runtime: RuntimeInput): string[] {
+  if (!REWRITES.has(id)) return [];
+  const errors: string[] = [];
+  if (!paragraphsPreserved(original, output, requestOf(id, runtime)?.format)) errors.push("paragraph count changed");
+  if (id === "P06_SIMPLIFY" && !simplifyLengthKept(original, output)) errors.push("simplified output is shorter than 85% of the input");
+  return errors;
+}
+
 export const PRESERVATION_CEILING: Record<string, number> = { conservative: 15, balanced: 30, flexible: 50 };
 export const exceedsPreservation = (original: string, output: string, preservation: unknown) => changePercentage(original, output) > (PRESERVATION_CEILING[String(preservation)] ?? 30);
 
@@ -152,8 +170,15 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   const list = (...values: unknown[]) => (values.find((item) => item !== undefined) ?? []) as string[];
   if (id === "P10_REPAIR") {
     const requiredCitations = list(runtime.requiredProtectedCitations, runtime.required_protected_citations);
-    const check = validateProtectedContent(original, String(parsed.corrected_text ?? ""), [...list(runtime.requiredProtectedTerms, runtime.required_protected_terms), ...requiredCitations], requiredCitations, true);
+    const requiredTerms = list(runtime.requiredProtectedTerms, runtime.required_protected_terms);
+    const corrected = String(parsed.corrected_text ?? "");
+    const check = validateProtectedContent(original, corrected, [...requiredTerms, ...requiredCitations], requiredCitations, true);
     if (!check.valid) throw new Error(check.errors.join("; "));
+    const failed = runtime.failedOutput ?? runtime.failed_output;
+    if (typeof failed === "string") {
+      const drift = repairDrift(failed, corrected, validateProtectedContent(original, failed, requiredTerms, requiredCitations, true).violations);
+      if (drift.length) throw new Error(drift.join("; "));
+    }
     return parsed;
   }
   const protectedTerms = list(runtime.protectedTerms, runtime.protected_terms);
@@ -174,6 +199,8 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   const check = validateProtectedContent(original, text, protectedTerms, protectedCitations, true, id === "P04_PROFESSIONAL");
   if (!check.valid) throw new Error(check.errors.join("; "));
   if (parsed.no_change_needed === true && changePercentage(original, text) > 2) throw new Error("no_change_needed was set but the text changed");
+  const structure = structuralErrors(id, original, text, runtime);
+  if (structure.length) throw new Error(structure.join("; "));
   return parsed;
 }
 
@@ -244,5 +271,6 @@ export function createOpenRouterProvider(options: OpenRouterOptions) {
 }
 function usageOf(value: { usage?: Record<string, unknown> }) { return { inputTokens: typeof value.usage?.prompt_tokens === "number" ? value.usage.prompt_tokens : undefined, outputTokens: typeof value.usage?.completion_tokens === "number" ? value.usage.completion_tokens : undefined, totalTokens: typeof value.usage?.total_tokens === "number" ? value.usage.total_tokens : undefined }; }
 
+export { mergeWarnings, softWarnings } from "./validators";
 export { PROMPTS, PROMPT_VERSION, REASONING_EFFORT, promptIds, responseSchemas, runtimeSchemas };
 export type { AIResponse, ControlRequest, PromptId, PromptDefinition, ProviderResult, RuntimeInput } from "./types";

@@ -17,20 +17,17 @@ export function StudioPanel({ tab, onTab, onClose, narrow, children }: Props) {
   const tabs = useTabs();
   return (
     <section aria-label="Studio" className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-white">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line pl-4 pr-2">
-        <h2 className="flex-1 truncate text-[15px] font-medium text-ink-900">Studio</h2>
-        <IconButton size="sm" icon={narrow ? X : PanelRightClose} label={narrow ? t('Tutup Studio', 'Close Studio') : t('Ciutkan Studio', 'Collapse Studio')} onClick={onClose} />
-      </header>
-      <div className="shrink-0 px-3 pt-3">
-        <div role="tablist" aria-label={t('Bagian Studio', 'Studio sections')} className="grid grid-cols-3 gap-1 rounded-xl bg-paper-deep p-1">
+      <header className="flex h-12 shrink-0 items-center gap-1 border-b border-line pl-2 pr-2">
+        <div role="tablist" aria-label={t('Bagian Studio', 'Studio sections')} className="flex h-full min-w-0 flex-1 items-stretch gap-1">
           {tabs.map(({ id, icon: Icon, label }) => (
             <button key={id} type="button" role="tab" id={`studio-tab-${id}`} aria-selected={tab === id} aria-controls="studio-tabpanel" onClick={() => onTab(id)}
-              className={`inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[13px] font-medium transition-colors ${tab === id ? 'bg-white text-ink-900 shadow-[0_1px_2px_rgb(31_32_29/0.08)]' : 'text-ink-600 hover:text-ink-900'}`}>
+              className={`relative inline-flex min-w-0 items-center gap-1.5 px-2.5 text-[13px] font-medium outline-none transition-colors focus-visible:text-ink-900 ${tab === id ? 'text-ink-900 after:absolute after:inset-x-2 after:-bottom-px after:h-0.5 after:rounded-full after:bg-brand-700' : 'text-ink-500 hover:text-ink-900'}`}>
               <Icon size={14} aria-hidden="true" className="shrink-0" /><span className="truncate">{label}</span>
             </button>
           ))}
         </div>
-      </div>
+        <IconButton size="sm" icon={narrow ? X : PanelRightClose} label={narrow ? t('Tutup Studio', 'Close Studio') : t('Ciutkan Studio', 'Collapse Studio')} onClick={onClose} />
+      </header>
       <div role="tabpanel" id="studio-tabpanel" aria-labelledby={`studio-tab-${tab}`} className="min-h-0 flex-1">{children}</div>
     </section>
   );

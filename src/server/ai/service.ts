@@ -2,7 +2,7 @@ import { runtime, requiredSetting, ConfigurationError } from '../runtime';
 import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
-import { createOpenRouterProvider, exceedsPreservation, normalizeRuntime, placeholderTokens, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
+import { createOpenRouterProvider, exceedsPreservation, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
@@ -89,6 +89,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     catch { throw new RequestError('AI_OUTPUT_REJECTED', 'No safe set of alternatives was returned. Your source is unchanged.', 422); }
   } else {
     output = validateAIResponse(input.promptId,output);
+    if (structuralErrors(input.promptId,input.source.text,outputText(output),controls).length) throw new RequestError('AI_OUTPUT_REJECTED', 'AI output changed the text structure. Your source is unchanged.', 422);
     const placeholders = input.promptId === 'P04_PROFESSIONAL';
     const protection = validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders);
     if (!protection.valid) {
@@ -100,8 +101,10 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
         output = {...output,transformed_text:checked.corrected_text};
       } catch { throw new RequestError('AI_OUTPUT_REJECTED', 'AI output could not be repaired safely. Your source is unchanged.', 422); }
     }
-    try { output = validateGeneration(input.promptId,input.source.text,output,trusted); }
+    try { output = validateGeneration(input.promptId,input.source.text,output,{...trusted,request:controls.request}); }
     catch { throw new RequestError('AI_OUTPUT_REJECTED', 'AI output did not pass safety checks. Your source is unchanged.', 422); }
+    const soft = output.no_change_needed === true ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
+    if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
   }
   const id=crypto.randomUUID();const expiry=Date.now()+DAY;

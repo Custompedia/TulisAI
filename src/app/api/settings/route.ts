@@ -17,7 +17,7 @@ type Row = { interface_language: "id" | "en"; writing_language: "auto" | "id" | 
 
 async function get(userId: string) {
   const row = await runtime().DB.prepare("SELECT interface_language,writing_language,default_mode,primary_use_case,humanizer_context,local_drafts,onboarded_at,updated_at FROM user_preferences WHERE user_id=?").bind(userId).first<Row>();
-  if (!row) return { interfaceLanguage: "id", writingLanguage: "auto", defaultMode: "P01_STANDARD_REWRITE", primaryUseCase: "general", humanizerContext: "general", localDrafts: true, onboarded: false, updatedAt: null };
+  if (!row) return { interfaceLanguage: "id", writingLanguage: "auto", defaultMode: "P03_HUMANIZER", primaryUseCase: "general", humanizerContext: "general", localDrafts: true, onboarded: false, updatedAt: null };
   return { interfaceLanguage: row.interface_language, writingLanguage: row.writing_language, defaultMode: row.default_mode, primaryUseCase: row.primary_use_case, humanizerContext: row.humanizer_context, localDrafts: Boolean(row.local_drafts), onboarded: row.onboarded_at !== null, updatedAt: new Date(row.updated_at).toISOString() };
 }
 

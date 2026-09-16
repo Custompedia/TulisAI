@@ -106,7 +106,7 @@ describe('review: scoped editor replacement', () => {
 describe('review: actual AI pipeline with mocked provider transport',()=>{
   function enable(){state.env.AI_PUBLIC_ENABLED='true';state.env.OPENROUTER_API_KEY='test-key';state.env.AI_MONTHLY_REQUEST_LIMIT='100';}
   const response=(output:unknown)=>Response.json({id:'provider-test',choices:[{message:{content:JSON.stringify(output)},finish_reason:'stop'}],usage:{prompt_tokens:12,completion_tokens:7}});
-  const input=(doc:{id:string;revision:number},text='Sumber asli.')=>({documentId:doc.id,promptId:'P01_STANDARD_REWRITE' as const,source:{text},runtime:runtimeControls({...defaults,language:'id'},'id'),expectedRevision:doc.revision});
+  const input=(doc:{id:string;revision:number},text='Sumber asli.')=>({documentId:doc.id,promptId:'P01_STANDARD_REWRITE' as const,source:{text},runtime:runtimeControls({...defaults,mode:'standard',language:'id'},'id'),expectedRevision:doc.revision});
   it('privacy gate makes zero provider calls',async()=>{
     const doc=await create();const transport=vi.fn();vi.stubGlobal('fetch',transport);
     await expect(generatePreview('owner-a','key',input(doc))).rejects.toThrow();expect(transport).not.toHaveBeenCalled();
@@ -149,6 +149,17 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     const body=JSON.parse((transport.mock.calls[0] as unknown as [string,{body:string}])[1].body);expect(body.reasoning).toEqual({effort:'low'});expect(body.messages[0].content).not.toContain('Kami menyiapkan');
     const row=db.prepare('SELECT prompt_version,runtime_json FROM transformations WHERE id=?').get(preview.id) as {prompt_version:string;runtime_json:string};
     expect(row.prompt_version).toBe('v3');expect(JSON.parse(row.runtime_json)).toMatchObject({prompt_version:'v3',reasoning_effort:'low',humanizer_context:'umum',preservation:'conservative'});
+  });
+  it('adds soft validator warnings without rejecting and rejects structural failures before any repair',async()=>{
+    enable();const source='Tim kami menyelesaikan migrasi sistem pada bulan lalu. Semua layanan berjalan normal setelah pengujian selesai dilakukan.';
+    const doc=await createDocument('owner-a',{title:'Soft',language:'id',content:content(source)});
+    const merged='Tim kami menyelesaikan migrasi sistem pada bulan lalu dan semua layanan berjalan normal setelah pengujian selesai dilakukan.';
+    const transport=vi.fn(async()=>response({transformed_text:merged,change_categories:[],warnings:['Catatan model.'],no_change_needed:false}));vi.stubGlobal('fetch',transport);
+    const preview=await generatePreview('owner-a','soft',{...input(doc,source),runtime:runtimeControls({...defaults,mode:'standard',strength:'light'},'id')});
+    expect(preview.output.warnings).toEqual(['Catatan model.','Jumlah kalimat berubah padahal kekuatan Ringan.']);expect(transport).toHaveBeenCalledTimes(1);
+    const split=vi.fn(async()=>response({transformed_text:'Tim kami menyelesaikan migrasi sistem pada bulan lalu.\n\nSemua layanan berjalan normal setelah pengujian selesai dilakukan.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',split);
+    await expect(generatePreview('owner-a','structure',{...input(doc,source),promptId:'P02_ACADEMIC',runtime:runtimeControls({...defaults,mode:'academic'},'id')})).rejects.toMatchObject({code:'AI_OUTPUT_REJECTED',status:422});
+    expect(split).toHaveBeenCalledTimes(1);
   });
   it('rejects a dishonest no_change_needed flag with 422',async()=>{
     enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan yang sepenuhnya berbeda.',change_categories:[],warnings:[],no_change_needed:true})));

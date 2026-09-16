@@ -6,7 +6,7 @@ import { del } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
 import { relativeTime } from '@/lib/client/format';
-import { isMode } from '@/lib/writing/settings';
+import { asMode } from '@/lib/writing/settings';
 import { notebookTone, parseNotebookIcon } from '@/lib/notebook/appearance';
 import { modeLabel, modeTone, toneClass } from '@/components/writing/modes';
 import { Menu } from '@/components/ui/Menu';
@@ -35,10 +35,8 @@ export function NotebookCard({ doc, onChange, onDelete }: { doc: DocumentSummary
 
   const apply = useCallback((next: { color: string | null; icon: string | null }) => onChange?.({ ...latest.current, color: next.color, icon: next.icon }), [onChange]);
   const appearance = useAppearanceSave(doc.id, { color: doc.color, icon: doc.icon }, apply, refresh);
-  const mode = isMode(doc.mode) ? doc.mode : null;
+  const mode = asMode(doc.mode);
   const tone = toneClass[notebookTone(doc.color, doc.mode)];
-  const toneVar = `var(--color-mode-${notebookTone(doc.color, doc.mode)}-edge)`;
-  const emoji = parseNotebookIcon(doc.icon)?.kind === 'emoji';
   const trimmed = name.trim();
 
   const open = (next: 'rename' | 'delete') => { setError(''); setName(doc.title); setDialog(next); };
@@ -66,21 +64,10 @@ export function NotebookCard({ doc, onChange, onDelete }: { doc: DocumentSummary
     finally { setBusy(false); }
   }
 
-  const motion = 'transition-transform duration-300 ease-[cubic-bezier(.2,.7,.3,1)] motion-reduce:transition-none';
   return (
     <article className="group relative">
       <div className="relative aspect-[4/3] w-full">
-        <div className="absolute inset-0 drop-shadow-[0_4px_6px_rgb(31_32_29/0.06)] transition-[filter] duration-300 group-hover:drop-shadow-[0_14px_16px_rgb(31_32_29/0.13)] group-focus-within:drop-shadow-[0_14px_16px_rgb(31_32_29/0.13)]">
-          <svg viewBox="0 0 400 300" aria-hidden="true" className="absolute inset-0 h-full w-full" style={{ fill: toneVar }}><path d={BACK} /></svg>
-          <div aria-hidden="true" style={PAPER_LINES} className={`absolute inset-x-[9%] bottom-[30%] top-[16%] origin-bottom -rotate-2 rounded-md border border-line bg-white ${motion} motion-safe:group-hover:-translate-y-1 motion-safe:group-focus-within:-translate-y-1`} />
-          <div aria-hidden="true" className={`absolute inset-x-[13%] bottom-[34%] top-[20%] rotate-[1.5deg] rounded-md bg-white/80 ${motion} motion-safe:group-hover:-translate-y-0.5`} />
-          <div className={`absolute inset-x-0 bottom-0 top-[22%] origin-bottom rounded-[15px] shadow-[inset_0_1px_0_rgb(255_255_255/0.8),inset_0_10px_18px_-12px_rgb(255_255_255/0.9),0_-1px_3px_rgb(31_32_29/0.06)] ${tone.fill} ${motion} motion-safe:group-hover:[transform:perspective(700px)_rotateX(-8deg)] motion-safe:group-focus-within:[transform:perspective(700px)_rotateX(-8deg)]`}>
-            <span className="absolute bottom-3.5 left-3.5">
-              {emoji ? <NotebookIcon icon={doc.icon} mode={doc.mode} size={30} />
-                : <span className={`grid h-11 w-11 place-items-center rounded-xl bg-white/70 shadow-[0_1px_2px_rgb(31_32_29/0.06)] ${tone.ink}`}><NotebookIcon icon={doc.icon} mode={doc.mode} size={26} /></span>}
-            </span>
-          </div>
-        </div>
+        <NotebookFolder color={doc.color} icon={doc.icon} mode={doc.mode} />
         <div ref={kebab} className="absolute right-2 top-[calc(22%+0.5rem)] z-20 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 has-[[aria-expanded=true]]:opacity-100 [@media(hover:none)]:opacity-100">
           <Menu label={`${t('Opsi untuk', 'Options for')} ${doc.title}`}
             triggerClassName={`grid h-8 w-8 place-items-center rounded-lg bg-white/60 outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-brand-500 ${tone.ink}`}
@@ -126,6 +113,27 @@ export function NotebookCard({ doc, onChange, onDelete }: { doc: DocumentSummary
       {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Toast>}
       {appearance.error && <Toast tone="error" onDismiss={appearance.clearError} dismissLabel={t('Tutup', 'Dismiss')} title={t('Tampilan gagal disimpan', 'Could not save appearance')}>{appearance.error}</Toast>}
     </article>
+  );
+}
+
+// Folder illustration; hover motion follows the nearest `group` ancestor.
+export function NotebookFolder({ color, icon, mode }: { color: string | null; icon: string | null; mode: string | null }) {
+  const tone = toneClass[notebookTone(color, mode)];
+  const toneVar = `var(--color-mode-${notebookTone(color, mode)}-edge)`;
+  const emoji = parseNotebookIcon(icon)?.kind === 'emoji';
+  const motion = 'transition-transform duration-300 ease-[cubic-bezier(.2,.7,.3,1)] motion-reduce:transition-none';
+  return (
+      <div className="absolute inset-0 drop-shadow-[0_4px_6px_rgb(31_32_29/0.06)] transition-[filter] duration-300 group-hover:drop-shadow-[0_14px_16px_rgb(31_32_29/0.13)] group-focus-within:drop-shadow-[0_14px_16px_rgb(31_32_29/0.13)]">
+          <svg viewBox="0 0 400 300" aria-hidden="true" className="absolute inset-0 h-full w-full" style={{ fill: toneVar }}><path d={BACK} /></svg>
+          <div aria-hidden="true" style={PAPER_LINES} className={`absolute inset-x-[9%] bottom-[30%] top-[16%] origin-bottom -rotate-2 rounded-md border border-line bg-white ${motion} motion-safe:group-hover:-translate-y-1 motion-safe:group-focus-within:-translate-y-1`} />
+          <div aria-hidden="true" className={`absolute inset-x-[13%] bottom-[34%] top-[20%] rotate-[1.5deg] rounded-md bg-white/80 ${motion} motion-safe:group-hover:-translate-y-0.5`} />
+          <div className={`absolute inset-x-0 bottom-0 top-[22%] origin-bottom rounded-[15px] shadow-[inset_0_1px_0_rgb(255_255_255/0.8),inset_0_10px_18px_-12px_rgb(255_255_255/0.9),0_-1px_3px_rgb(31_32_29/0.06)] ${tone.fill} ${motion} motion-safe:group-hover:[transform:perspective(700px)_rotateX(-8deg)] motion-safe:group-focus-within:[transform:perspective(700px)_rotateX(-8deg)]`}>
+            <span className="absolute bottom-3.5 left-3.5">
+              {emoji ? <NotebookIcon icon={icon} mode={mode} size={30} />
+                : <span className={`grid h-11 w-11 place-items-center rounded-xl bg-white/70 shadow-[0_1px_2px_rgb(31_32_29/0.06)] ${tone.ink}`}><NotebookIcon icon={icon} mode={mode} size={26} /></span>}
+            </span>
+          </div>
+        </div>
   );
 }
 

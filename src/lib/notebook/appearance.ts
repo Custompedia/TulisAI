@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { modeTone, type ModeTone } from "@/components/writing/modes";
-import { isMode } from "@/lib/writing/settings";
+import { asMode } from "@/lib/writing/settings";
 
 export const NOTEBOOK_COLORS = ["green", "blue", "orange", "slate", "pink", "gold", "gray"] as const;
 export type NotebookColor = (typeof NOTEBOOK_COLORS)[number];
@@ -35,5 +35,6 @@ export type NotebookAppearance = z.infer<typeof NotebookAppearanceSchema>;
 // Falls back to the writing mode tone when no colour is stored.
 export function notebookTone(color: string | null | undefined, mode: string | null | undefined): ModeTone {
   if (isNotebookColor(color)) return color;
-  return isMode(mode) ? modeTone[mode] : "gray";
+  const known = asMode(mode);
+  return known ? modeTone[known] : "gray";
 }

@@ -4,14 +4,14 @@ import { X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { Button } from './Button';
 
-type ModalProps = { title: string; description?: string; children?: React.ReactNode; footer?: React.ReactNode; onClose: () => void; busy?: boolean; size?: 'sm' | 'md' | 'lg' | 'xl'; dismissible?: boolean };
+type ModalProps = { title: string; description?: string; children?: React.ReactNode; footer?: React.ReactNode; onClose: () => void; busy?: boolean; size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl'; dismissible?: boolean };
 
 export function Modal({ title, description, children, footer, onClose, busy = false, size = 'md', dismissible = true }: ModalProps) {
   const canClose = dismissible && !busy;
   const { t } = useLocale();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const node = ref.current; if (node && !node.open) node.showModal(); return () => node?.close(); }, []);
-  const width = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-5xl' }[size];
+  const width = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-5xl', '2xl': 'max-w-7xl' }[size];
   return (
     <dialog
       ref={ref}
@@ -20,7 +20,7 @@ export function Modal({ title, description, children, footer, onClose, busy = fa
       onClick={(event) => { if (event.target === ref.current && canClose) onClose(); }}
       className={`m-auto w-[calc(100%-2rem)] ${width} rounded-2xl border border-line bg-white p-0 text-ink-900 shadow-2xl`}
     >
-      <div className="flex max-h-[85vh] flex-col">
+      <div className="flex max-h-[min(85vh,calc(100dvh-6rem))] flex-col">
         <header className="flex items-start gap-4 border-b border-line px-6 py-5">
           <div className="min-w-0 flex-1">
             <h2 id="modal-title" className="text-lg font-semibold tracking-tight">{title}</h2>

@@ -75,15 +75,25 @@
 .editor-prose .ProseMirror th, .editor-prose .ProseMirror td { border: 1px solid var(--color-line-strong); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
 .editor-prose .ProseMirror th { background: var(--color-paper); font-weight: 600; }
 .editor-prose .ProseMirror[contenteditable="false"] { cursor: default; }
+.editor-plain .ProseMirror { outline: none; min-height: 60vh; font-family: var(--font-sans); font-size: 16px; line-height: 1.75; color: var(--color-ink-900); overflow-wrap: anywhere; }
+.editor-plain .ProseMirror > * + * { margin-top: 0.75em; }
+.editor-plain .ProseMirror ul { list-style: disc; padding-left: 1.5em; }
+.editor-plain .ProseMirror ol { list-style: decimal; padding-left: 1.5em; }
+.editor-plain .ProseMirror li > p { margin: 0.15em 0; }
+.editor-plain .ProseMirror table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+.editor-plain .ProseMirror th, .editor-plain .ProseMirror td { border: 1px solid var(--color-line-strong); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
+.editor-plain .ProseMirror a { color: var(--color-brand-600); text-decoration: underline; }
 
 /* Locked terms and detected citations */
 .ww-protected { background: #fdf6e3; border-bottom: 1.5px dashed #c58a17; border-radius: 2px; }
 
 /* Diff rendering: never color-only, always underline or strikethrough */
 .diff-add { background: var(--color-brand-50); color: var(--color-brand-800); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; text-decoration-color: var(--color-brand-400); border-radius: 2px; }
-.diff-del { background: #fdeceb; color: #9f1c14; text-decoration: line-through; text-decoration-thickness: 1.5px; border-radius: 2px; }
+.diff-del { background: #fdeceb; color: #8f4a44; text-decoration: line-through; text-decoration-thickness: 1.5px; text-decoration-color: #c2524a; border-radius: 2px; }
 
 .scrollbar-thin { scrollbar-width: thin; scrollbar-color: var(--color-line-strong) transparent; }
 
 @keyframes pop { 0% { transform: scale(0.8); } 60% { transform: scale(1.12); } 100% { transform: scale(1); } }
 @media (prefers-reduced-motion: reduce) { .animate-pop { animation: none; } }
+.scrollbar-none { scrollbar-width: none; }
+.scrollbar-none::-webkit-scrollbar { display: none; }

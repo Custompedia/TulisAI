@@ -97,10 +97,11 @@ export function auth() {
 
 async function deliver(to: string, template: EmailTemplate) { await sendEmail({ to, ...renderEmail(template) }); }
 
-export async function requireUser(request: Request): Promise<{ id: string; email: string; name: string; image: string | null }> {
+export async function requireUser(request: Request): Promise<{ id: string; email: string; name: string; username: string | null; image: string | null }> {
   const session = await auth().api.getSession({ headers: request.headers });
   if (!session?.user) throw new UnauthorizedError();
-  return { id: session.user.id, email: session.user.email, name: session.user.name, image: session.user.image ?? null };
+  const user = session.user as typeof session.user & { username?: string | null };
+  return { id: user.id, email: user.email, name: user.name, username: user.username ?? null, image: user.image ?? null };
 }
 
 export class UnauthorizedError extends Error { constructor() { super("Sign in is required."); this.name = "UnauthorizedError"; } }

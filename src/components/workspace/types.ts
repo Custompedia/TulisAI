@@ -9,7 +9,7 @@ export type Draft = { owner: string; revision: number; content: JSONContent; tit
 export type Scope = 'selection' | 'paragraph' | 'document';
 export type SelectionRange = { from: number; to: number; text: string; pmTo: number };
 export type SaveState = 'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'offline' | 'conflict' | 'local-unavailable';
-export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'paraphrase' | 'formal' | 'natural';
+export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | 'natural';
 
 export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean };
 export type Preview = {

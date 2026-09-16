@@ -11,7 +11,7 @@ function viewport() {
   if (!element) {
     element = document.createElement('div');
     element.id = VIEWPORT_ID;
-    element.className = 'pointer-events-none fixed bottom-4 right-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2';
+    element.className = 'pointer-events-none fixed bottom-20 right-4 z-[70] md:bottom-4 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2';
     document.body.appendChild(element);
   }
   return element;

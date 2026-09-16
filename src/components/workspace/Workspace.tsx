@@ -1,32 +1,32 @@
 'use client';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import TextAlign from '@tiptap/extension-text-align';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import type { JSONContent } from '@tiptap/core';
 import { del, get, set } from 'idb-keyval';
-import { CopyPlus, PanelRightOpen, RefreshCw, RotateCcw } from 'lucide-react';
+import { ClipboardPaste, CopyPlus, PanelRightOpen, Redo2, RefreshCw, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef, type LayoutStorage } from 'react-resizable-panels';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { dateTime, numberFormat } from '@/lib/client/format';
+import { guardedPush, leaveHref, leavesPath, setLeaveGuard } from '@/lib/client/navigation-guard';
 import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/document';
 import { countWords } from '@/lib/editor/metrics';
-import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, customConflict, defaults, detectLanguage, isMode, modeFromPrompt, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
+import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { useSessionGuard, type UserSettings } from '@/components/app/AppShell';
 import { Toast } from '@/components/ui/Toast';
-import { Button } from '@/components/ui/Button';
+import { Button, IconButton, pressGreen, raisedGreen } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
-import { LoadingBlock } from '@/components/ui/Spinner';
+import { LoadingBlock, Spinner } from '@/components/ui/Spinner';
 import { StatusScreen, statusIcons } from '@/components/ui/StatusScreen';
 import { AnalyticsPanel } from './AnalyticsPanel';
 import { AssistantPanel } from './AssistantPanel';
 import { CompareView } from './CompareView';
 import { documentLimits } from './document-limits';
-import { FormatToolbar } from './FormatToolbar';
 import { HistoryPanel } from './HistoryPanel';
 import { ANALYTICS_SECTION_ID, InfoPanel } from './InfoPanel';
 import { NotebookHeader } from './NotebookHeader';
@@ -39,7 +39,7 @@ import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type Inlin
 import { versionLabel } from './versions';
 
 type GenerateRequest = { scope: Scope; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; pmTo?: number };
-type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'link' | 'delete' | 'reload'; version?: Version };
+type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'delete' | 'reload'; version?: Version };
 type LoadError = { code: string; message: string };
 type Notice = { tone: 'success' | 'error' | 'info'; message: string; retrySave?: boolean };
 type CompareState = { a: string; b: string; before: string; after: string; loading: boolean };
@@ -47,11 +47,13 @@ type CompareState = { a: string; b: string; before: string; after: string; loadi
 const FROZEN = new Set(['apply', 'restore', 'recover', 'delete']);
 const nextStrength = (value: string) => (value === 'light' ? 'balanced' : 'strong');
 const lowerStrength = (value: string) => (value === 'strong' ? 'balanced' : 'light');
+const PANEL_IDS = ['writing', 'studio'];
+const noopSubscribe = () => () => {};
 const layoutStorage: LayoutStorage = {
   getItem: (key) => { try { return typeof window === 'undefined' ? null : window.localStorage.getItem(key); } catch { return null; } },
   setItem: (key, value) => { try { window.localStorage.setItem(key, value); } catch { return; } },
 };
-const separatorClass = 'relative w-3 shrink-0 outline-none before:absolute before:inset-y-4 before:left-1/2 before:w-0.5 before:-translate-x-1/2 before:rounded-full before:bg-transparent before:transition-colors hover:before:bg-brand-300 focus-visible:before:bg-brand-400 data-[separator=hover]:before:bg-brand-300 data-[separator=focus]:before:bg-brand-400 data-[separator=active]:before:bg-brand-500';
+const separatorClass = 'w-3 shrink-0 cursor-col-resize outline-none';
 
 export default function Workspace() {
   const { id } = useParams<{ id: string }>();
@@ -95,6 +97,8 @@ export default function Workspace() {
   const [quality, setQuality] = useState<(Quality & { stamp: number }) | null>(null);
   const [qualityState, setQualityState] = useState({ loading: false, error: '' });
   const [lastRequest, setLastRequest] = useState<GenerateRequest | null>(null);
+  const [customizeRequest, setCustomizeRequest] = useState(0);
+  const [leaving, setLeaving] = useState<{ href: string; saving: boolean } | null>(null);
 
   const current = useRef<Doc | null>(null);
   const owner = useRef('');
@@ -115,8 +119,10 @@ export default function Workspace() {
   const englishRef = useRef(english);
   const contentRef = useRef<JSONContent | null>(null);
   const rightPanel = usePanelRef();
-  const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: ['writing', 'studio'] });
+  const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
+  const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
   latest.current = { title, settings };
+  const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null;
   termsRef.current = terms.map((term) => term.term);
   protectedLabel.current = t('Dilindungi: tidak akan diubah AI', 'Protected: AI will not change this');
   englishRef.current = english;
@@ -175,11 +181,11 @@ export default function Workspace() {
   useEffect(() => () => {
     // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
     const base = current.current; const content = contentRef.current;
-    if (!base || !content || (!dirty.current && !metaDirty.current)) return;
+    if (!base || !content || inFlight.current || (!dirty.current && !metaDirty.current)) return;
     void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || 'Untitled document', language: latest.current.settings.language, preferences: latest.current.settings, expectedRevision: base.revision }) }).catch(() => undefined);
   }, [id]);
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => { if (dirty.current || metaDirty.current) { event.preventDefault(); event.returnValue = ''; } };
+    const warn = (event: BeforeUnloadEvent) => { if (unsaved()) { event.preventDefault(); event.returnValue = ''; } };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
@@ -216,8 +222,8 @@ export default function Workspace() {
       setLocale(prefs.interfaceLanguage);
       localDrafts.current = prefs.localDrafts !== false; owner.current = user.id; cacheKey.current = `writing-draft:${user.id}:${id}`;
       current.current = value; setDoc(value); setTitle(value.title);
-      const base: Settings = { ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'standard', context: prefs.humanizerContext, ...(value.preferences ?? {}), language: value.language };
-      const modeParam = search.get('mode'); if (isMode(modeParam)) base.mode = modeParam;
+      const base = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, ...(value.preferences ?? {}), language: value.language });
+      const modeParam = asMode(search.get('mode')); if (modeParam) base.mode = modeParam;
       setSettings(base); latest.current = { title: value.title, settings: base };
       editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
       setText(documentText(value.content)); setSave('saved');
@@ -280,6 +286,52 @@ export default function Workspace() {
     return () => window.removeEventListener('keydown', key);
   }, []);
 
+  const flushSoon = useEffectEvent(() => { if (loaded && online && save !== 'conflict' && (dirty.current || (metaDirty.current && !preview))) void flush().catch(() => undefined); });
+  useEffect(() => {
+    if (!editor) return;
+    const onHide = () => { if (document.visibilityState === 'hidden') flushSoon(); };
+    const onBlur = () => flushSoon();
+    document.addEventListener('visibilitychange', onHide); editor.on('blur', onBlur);
+    return () => { document.removeEventListener('visibilitychange', onHide); editor.off('blur', onBlur); };
+  }, [editor]);
+
+  // Leave guard: links are intercepted here, programmatic pushes go through the navigation-guard registry.
+  const interceptLeave = useEffectEvent((href: string) => {
+    const place = { href: window.location.href, origin: window.location.origin, pathname: window.location.pathname };
+    if (!unsaved() || !leavesPath(href, place)) return false;
+    setLeaving({ href, saving: false }); return true;
+  });
+  useEffect(() => {
+    const onClick = (event: MouseEvent) => {
+      const anchor = event.target instanceof Element ? event.target.closest('a[href]') : null;
+      if (!(anchor instanceof HTMLAnchorElement)) return;
+      const href = leaveHref({ button: event.button, metaKey: event.metaKey, ctrlKey: event.ctrlKey, shiftKey: event.shiftKey, altKey: event.altKey, defaultPrevented: event.defaultPrevented, href: anchor.getAttribute('href'), target: anchor.getAttribute('target'), download: anchor.hasAttribute('download') }, { href: window.location.href, origin: window.location.origin, pathname: window.location.pathname });
+      if (href && interceptLeave(href)) { event.preventDefault(); event.stopPropagation(); }
+    };
+    const onPop = () => { if (dirty.current || metaDirty.current) flushSoon(); };
+    const release = setLeaveGuard((href) => interceptLeave(href));
+    document.addEventListener('click', onClick, true); window.addEventListener('popstate', onPop);
+    return () => { release(); document.removeEventListener('click', onClick, true); window.removeEventListener('popstate', onPop); };
+  }, []);
+
+  async function saveAndLeave() {
+    if (!leaving || leaving.saving) return;
+    const { href } = leaving;
+    setLeaving({ href, saving: true });
+    try {
+      await flush();
+      if (unsaved()) throw new ApiError('REVISION_CONFLICT', 409);
+      router.push(href);
+    } catch (caught) { setLeaving(null); if (!guard(caught)) setNotice({ tone: 'error', message: errorText(caught, english), retrySave: true }); }
+  }
+  async function discardAndLeave() {
+    if (!leaving || leaving.saving) return;
+    const { href } = leaving;
+    dirty.current = false; metaDirty.current = false;
+    await del(cacheKey.current).catch(() => undefined);
+    router.push(href);
+  }
+
   function markMetadata(nextTitle: string, nextSettings: Settings) {
     latest.current = { title: nextTitle, settings: nextSettings };
     metaDirty.current = true; metaStamp.current++; setMetaTick(metaStamp.current);
@@ -298,8 +350,9 @@ export default function Workspace() {
     current.current = { ...current.current, ...value }; setDoc(current.current);
     editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
     setText(documentText(value.content)); setSelection(null);
-    stamp.current++; setEditStamp(stamp.current); setSave('saved');
-    void del(cacheKey.current).catch(() => undefined);
+    dirty.current = false; stamp.current++; setEditStamp(stamp.current);
+    if (metaDirty.current) { setSave('dirty'); void flush().catch(() => undefined); return; }
+    setSave('saved'); void del(cacheKey.current).catch(() => undefined);
   }
 
   function resolveScope(req: GenerateRequest, full: string): { anchor?: { from: number; to: number }; source: string; pmTo?: number } | string {
@@ -320,9 +373,9 @@ export default function Workspace() {
   async function generate(req: GenerateRequest) {
     if (!editor || busy) return;
     const effective = req.override ?? latest.current.settings;
-    const conflict = effective.customized || effective.mode === 'custom' ? customConflict(effective, termsRef.current) : null;
+    const conflict = effective.customized ? customConflict(effective, termsRef.current) : null;
     openRight('assistant');
-    if (conflict) { setAiError(conflict === 'summary-detail' ? t('Ringkasan tidak bisa digabung dengan "Lebih detail". Ubah salah satunya di Sesuaikan.', 'A summary cannot be combined with "More detailed". Change one in Customize.') : t('Permintaan tambahan menyebut istilah yang dikunci. Buka kunci istilah itu dulu jika ingin mengubahnya.', 'Your additional request mentions a locked term. Unlock it first if you want it changed.')); return; }
+    if (conflict) { setAiError(conflict === 'summary-detail' ? t('Ringkasan tidak bisa digabung dengan "Lebih detail". Ubah salah satunya di Sesuaikan.', 'A summary cannot be combined with "More detailed". Change one in Customize.') : t('Catatan untuk AI menyebut istilah yang dikunci. Buka kunci istilah itu dulu jika ingin mengubahnya.', 'Your note for the AI mentions a locked term. Unlock it first if you want it changed.')); return; }
     setBusy('generate'); setAiError(''); setLastRequest(req);
     try {
       const saved = await flush();
@@ -333,10 +386,11 @@ export default function Workspace() {
       if (!resolved.source.trim()) { setAiError(t('Bagian yang dipilih masih kosong.', 'The chosen part is empty.')); return; }
       const limit = req.inlineAction ? INLINE_LIMIT : req.scope === 'document' ? AI_SCOPE_LIMIT : SELECTION_LIMIT;
       if (resolved.source.length > limit) { setAiError(req.scope === 'selection' ? t(`${numberFormat(resolved.source.length, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan.`, `${numberFormat(resolved.source.length, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection.`) : t(`Terlalu panjang untuk sekali proses (maks. ${numberFormat(limit, 'id')} karakter). Pilih paragraf atau blok sebagian teks.`, `Too long for one run (max ${numberFormat(limit, 'en')} characters). Choose a paragraph or select part of the text.`)); return; }
-      const plainList = effective.mode === 'custom' && (effective.format === 'bullets' || effective.format === 'numbered_list') && effective.length === 'same' && !effective.focus.length && !effective.extra.trim();
+      // v3 deterministic bypass: lines that are already separate become a list without an AI call.
+      const plainList = effective.customized && (effective.format === 'bullets' || effective.format === 'numbered_list') && effective.length === 'same' && !effective.focus.length && !effective.extra.trim();
       if (plainList && !req.inlineAction && req.scope !== 'paragraph' && resolved.source.split('\n').filter((line) => line.trim()).length >= 2) {
         const listType = effective.format === 'bullets' ? 'bulletList' : 'orderedList';
-        if (!editor.isActive(listType)) { const chain = editor.chain().focus(); if (req.scope === 'document') chain.selectAll(); (listType === 'bulletList' ? chain.toggleBulletList() : chain.toggleOrderedList()).run(); }
+        if (!editor.isActive(listType)) { const chain = editor.chain().focus(); if (req.scope === 'document') chain.selectAll(); (listType === 'bulletList' ? chain.toggleBulletList() : chain.toggleOrderedList()).run(); void flush().catch(() => undefined); }
         setNotice({ tone: 'success', message: t('Baris sudah terpisah, jadi langsung diformat tanpa AI.', 'The lines were already separate, so they were formatted without AI.') });
         return;
       }
@@ -386,7 +440,7 @@ export default function Workspace() {
   function insertAlternative() {
     if (!preview || !editor || preview.stamp !== stamp.current || preview.pmTo === undefined) return;
     editor.chain().focus().insertContentAt(preview.pmTo, ` ${previewText(preview, alternative)}`).run();
-    void discard();
+    void flush().catch(() => undefined); void discard();
   }
 
   async function lockSelection() {
@@ -410,7 +464,7 @@ export default function Workspace() {
     switch (command) {
       case 'lock': void lockSelection(); return;
       case 'unlock': { const term = terms.find((item) => item.term === selection.text.trim()); if (term) void unlock(term); return; }
-      case 'custom': { const next = { ...base, mode: 'custom' as const }; setSettings(next); markMetadata(title, next); setScope('selection'); openRight('assistant'); return; }
+      case 'customize': setScope('selection'); openRight('assistant'); setCustomizeRequest((value) => value + 1); return;
       case 'humanize': void generate({ scope: 'selection', override: { ...base, mode: 'humanize', context: base.mode === 'academic' ? 'academic' : base.mode === 'professional' ? 'professional' : base.context } }); return;
       case 'academic': void generate({ scope: 'selection', override: { ...base, mode: 'academic' } }); return;
       default:
@@ -441,6 +495,15 @@ export default function Workspace() {
   });
   useEffect(() => { runInitialCompare(); }, [loaded]);
 
+  async function pasteClipboard() {
+    if (!editor) return;
+    try {
+      const value = (await navigator.clipboard.readText()).trim();
+      if (!value) return;
+      editor.chain().focus().insertContent(value.split(/\n+/).map((line) => ({ type: 'paragraph', content: line.trim() ? [{ type: 'text', text: line }] : [] }))).run();
+    } catch { setNotice({ tone: 'error', message: t('Browser tidak mengizinkan akses clipboard. Tempel dengan Ctrl+V.', 'The browser blocked clipboard access. Paste with Ctrl+V.') }); }
+  }
+
   function openRight(tab: StudioTab) { setRightTab(tab); setPanelOpen(true); rightPanel.current?.expand(); }
   function closeRight() { setPanelOpen(false); rightPanel.current?.collapse(); }
   function openAnalytics() { openRight('info'); requestAnimationFrame(() => document.getElementById(ANALYTICS_SECTION_ID)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); }
@@ -454,7 +517,7 @@ export default function Workspace() {
     await run('duplicate', async () => {
       const content = (await request<{ content: JSONContent }>(`/api/documents/${id}/versions/${version.id}`)).content;
       const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: settings }, newKey());
-      router.push(`/notebooks/${copy.id}`);
+      guardedPush(router, `/notebooks/${copy.id}`);
     });
   }
 
@@ -468,7 +531,7 @@ export default function Workspace() {
       const source = anchor ? full.slice(anchor.from, anchor.to) : full;
       const language = resolveLanguage(latest.current.settings, source);
       if (!language) throw new Error('language');
-      const result = await request<Quality>('/api/ai/analyze-quality', 'POST', { documentId: id, expectedRevision: saved.revision, source: { text: source, ...(anchor ? { anchor } : {}) }, language, context: settings.mode === 'custom' ? 'standard' : settings.mode }, newKey());
+      const result = await request<Quality>('/api/ai/analyze-quality', 'POST', { documentId: id, expectedRevision: saved.revision, source: { text: source, ...(anchor ? { anchor } : {}) }, language, context: settings.mode }, newKey());
       setQuality({ ...result, stamp: stamp.current }); setQualityState({ loading: false, error: '' });
     } catch (caught) {
       if (guard(caught)) return;
@@ -480,11 +543,7 @@ export default function Workspace() {
     if (!dialog || !editor) return;
     const active = dialog;
     await run(active.kind, async () => {
-      if (active.kind === 'link') {
-        const href = field.trim();
-        if (href && !/^https?:\/\/\S+$/i.test(href)) throw new ApiError('INVALID_LINK', 400);
-        if (href) editor.chain().focus().extendMarkRange('link').setLink({ href }).run(); else editor.chain().focus().extendMarkRange('link').unsetLink().run();
-      } else if (active.kind === 'delete') {
+      if (active.kind === 'delete') {
         await request(`/api/documents/${id}`, 'DELETE', {}, newKey()); await del(cacheKey.current).catch(() => undefined);
         dirty.current = false; metaDirty.current = false; router.push('/notebooks'); return;
       } else if (active.kind === 'reload') {
@@ -521,8 +580,9 @@ export default function Workspace() {
       }
       if (mode === 'discard') { await del(cacheKey.current).catch(() => undefined); setRecovery(null); return; }
       editor.commands.setContent(draft.content, { emitUpdate: false }); contentRef.current = draft.content;
-      setText(documentText(draft.content)); setTitle(draft.title); setSettings(draft.settings);
-      dirty.current = true; stamp.current++; setEditStamp(stamp.current); markMetadata(draft.title, draft.settings); setRecovery(null);
+      const restored = normalizeSettings(draft.settings); setText(documentText(draft.content)); setTitle(draft.title); setSettings(restored);
+      dirty.current = true; stamp.current++; setEditStamp(stamp.current); markMetadata(draft.title, restored); setRecovery(null);
+      void flush().catch(() => undefined);
     });
   }
 
@@ -571,7 +631,7 @@ export default function Workspace() {
     <AssistantPanel
       settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
       busy={busy !== '' || !loaded} generating={busy === 'generate'} hasPreview={!!preview}
-      onGenerate={() => void generate({ scope })}
+      onGenerate={() => void generate({ scope })} customizeRequest={customizeRequest}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
     >
       {preview && (
@@ -611,23 +671,34 @@ export default function Workspace() {
     <main aria-label={t('Tulisan', 'Writing')} className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-white">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line pl-4 pr-3">
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink-900">{t('Tulisan', 'Writing')}</h2>
+        {editor && !compare && (
+          <span className="flex shrink-0 items-center">
+            <IconButton size="sm" icon={Undo2} label={t('Urungkan', 'Undo')} disabled={!loaded || frozen || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()} />
+            <IconButton size="sm" icon={Redo2} label={t('Ulangi', 'Redo')} disabled={!loaded || frozen || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()} />
+          </span>
+        )}
         <span className="hidden shrink-0 rounded-md bg-paper-deep px-2 py-0.5 text-xs text-ink-600 tabular-nums sm:inline"><b className="font-semibold text-ink-800">{numberFormat(words, locale)}</b> {t('kata', 'words')}</span>
         <SaveStatus state={loaded ? save : 'loading'} />
       </header>
       {compare ? (
-        <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''}
+        <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''} applying={busy === 'apply'}
           onChange={(a, b) => void openCompare(a, b)} onExit={exitCompare}
           onRestore={(versionId) => { const version = versions.find((item) => item.id === versionId); if (version) setDialog({ kind: 'restore', version }); }}
           onApplyPreview={preview && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
-      ) : editor && (
-        <div className="shrink-0 border-b border-line px-2 py-1.5 sm:px-3">
-          <FormatToolbar editor={editor} disabled={!loaded || frozen || !!recovery} onLink={() => { setField(String(editor.getAttributes('link').href ?? '')); setDialog({ kind: 'link' }); }} />
-        </div>
-      )}
-      <div className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto bg-paper/50 px-3 py-6 sm:px-8 sm:py-8 ${compare ? 'hidden' : ''}`}>
-        <article className="editor-prose relative mx-auto min-h-full max-w-[760px] rounded-lg bg-white px-6 py-10 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-14px_rgb(0_0_0/0.12)] ring-1 ring-line sm:px-14 sm:py-14">
+      ) : null}
+      <div className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-10 sm:py-8 ${compare ? 'hidden' : ''}`}>
+        <article className="editor-plain relative mx-auto min-h-full max-w-[760px]">
           {!loaded && <LoadingBlock label={t('Memuat notebook…', 'Loading notebook…')} />}
-          {loaded && !text.trim() && <p aria-hidden="true" className="pointer-events-none absolute left-6 top-10 font-serif text-lg text-ink-300 sm:left-14 sm:top-14">{t('Mulai menulis atau tempel teks di sini…', 'Start writing or paste text here…')}</p>}
+          {loaded && !text.trim() && (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
+              <p aria-hidden="true" className="text-[16px] leading-[1.75] text-ink-400">{t('Tulis atau tempel teks yang terasa seperti tulisan AI…', 'Write or paste text that sounds AI-written…')}</p>
+              {!frozen && !recovery && (
+                <button type="button" onClick={() => void pasteClipboard()} className={`pointer-events-auto mt-4 inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold ${raisedGreen} ${pressGreen}`}>
+                  <ClipboardPaste size={15} aria-hidden="true" />{t('Tempel teks', 'Paste text')}
+                </button>
+              )}
+            </div>
+          )}
           <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
           {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} chars={selection?.text.length ?? 0} onCommand={selectionCommand} />}
         </article>
@@ -652,7 +723,7 @@ export default function Workspace() {
       {aiError && busy !== 'generate' && <Toast tone="error" onDismiss={() => setAiError('')} dismissLabel={t('Tutup', 'Dismiss')} actions={<Button size="sm" icon={RefreshCw} onClick={() => void generate(lastRequest ?? { scope })}>{t('Coba lagi', 'Retry')}</Button>}>{aiError}</Toast>}
 
       <div className="flex min-h-0 flex-1 px-3 pb-3">
-        {narrow ? writing : (
+        {narrow || !mounted ? writing : (
           <Group orientation="horizontal" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged} className="min-w-0 flex-1">
             <Panel id="writing" defaultSize="62%" minSize="45%">{writing}</Panel>
             <Separator aria-label={t('Ubah lebar panel Studio', 'Resize Studio panel')} className={separatorClass} />
@@ -691,12 +762,6 @@ export default function Workspace() {
           <p><b className="text-ink-900">{versionLabel(dialog.version, t)}</b> {t('akan menjadi tulisan aktif. Tulisan saat ini disimpan dulu, dan semua riwayat tetap ada.', 'will become the active text. Your current text is saved first, and all history is kept.')}</p>
         </ConfirmDialog>
       )}
-      {dialog?.kind === 'link' && (
-        <ConfirmDialog title={t('Atur tautan', 'Edit link')} description={t('Kosongkan untuk menghapus tautan.', 'Leave empty to remove the link.')} confirmLabel={t('Terapkan', 'Apply')} busy={busy === 'link'} disabled={!!field.trim() && !/^https?:\/\/\S+$/i.test(field.trim())} onClose={() => setDialog(null)} onConfirm={() => void confirmDialog()}>
-          <input autoFocus type="url" aria-label="URL" className={inputClass} value={field} maxLength={2048} onChange={(event) => setField(event.target.value)} placeholder="https://" />
-          {field.trim() && !/^https?:\/\/\S+$/i.test(field.trim()) && <p className="mt-1.5 text-xs text-red-600">{t('Tautan harus diawali https:// atau http://', 'Links must start with https:// or http://')}</p>}
-        </ConfirmDialog>
-      )}
       {dialog?.kind === 'delete' && (
         <ConfirmDialog title={t('Hapus notebook ini?', 'Delete this notebook?')} tone="danger" confirmLabel={t('Hapus permanen', 'Delete permanently')} busy={busy === 'delete'} onClose={() => setDialog(null)} onConfirm={() => void confirmDialog()}>
           <p>{t('Notebook, semua versi, dan pratinjaunya akan dihapus. Tindakan ini tidak bisa dibatalkan.', 'The notebook, all versions, and previews will be deleted. This cannot be undone.')}</p>
@@ -706,6 +771,16 @@ export default function Workspace() {
         <ConfirmDialog title={t('Muat salinan server?', 'Load the server copy?')} confirmLabel={t('Muat ulang', 'Reload')} tone="danger" onClose={() => setDialog(null)} onConfirm={() => void confirmDialog()}>
           <p>{localDrafts.current ? t('Tulisanmu di layar ini tersimpan sebagai salinan pemulihan dan akan ditawarkan setelah dimuat ulang.', 'Your on-screen text is kept as a recovery copy and will be offered after reloading.') : t('Salinan pemulihan lokal nonaktif. Perubahan yang belum tersimpan akan hilang.', 'Local recovery is off. Unsaved changes will be lost.')}</p>
         </ConfirmDialog>
+      )}
+      {leaving && (
+        <Modal size="sm" title={t('Perubahan belum tersimpan', 'Unsaved changes')} description={t('Kamu punya perubahan yang belum tersimpan di notebook ini.', 'You have unsaved changes in this notebook.')} busy={leaving.saving} onClose={() => setLeaving(null)}
+          footer={<>
+            <button type="button" disabled={leaving.saving} onClick={() => void discardAndLeave()} className="mr-auto inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" />{t('Buang perubahan', 'Discard changes')}</button>
+            <Button disabled={leaving.saving} onClick={() => setLeaving(null)}>{t('Batal', 'Cancel')}</Button>
+            <button type="button" disabled={leaving.saving} aria-busy={leaving.saving || undefined} onClick={() => void saveAndLeave()} className={`inline-flex h-10 items-center gap-2 rounded-full px-5 text-sm font-semibold disabled:opacity-80 ${raisedGreen} ${pressGreen}`}>
+              {leaving.saving ? <Spinner size={16} /> : <Save size={16} aria-hidden="true" />}{t('Simpan & keluar', 'Save & leave')}
+            </button>
+          </>} />
       )}
       {recovery && (
         <Modal title={t('Ada tulisan yang belum tersimpan', 'Unsaved writing found')} description={`${t('Dari perangkat ini', 'From this device')} · ${dateTime(recovery.updatedAt, locale)}`} busy={busy === 'recover'} dismissible={false} onClose={() => undefined} size="lg"

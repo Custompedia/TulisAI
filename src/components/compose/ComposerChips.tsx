@@ -1,18 +1,34 @@
 'use client';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
-import { useLocale } from '@/lib/client/locale';
 
-export const CHIP = 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-line-strong bg-white px-3 text-[12.5px] text-ink-800 transition-colors hover:border-ink-300 hover:text-ink-900 disabled:opacity-50';
-const PANEL = 'absolute top-full z-40 mt-1.5 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-12px_rgb(31_32_29/0.22)] animate-fade-up';
+export const CHIP = 'inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line-strong bg-white px-3 text-[12.5px] text-ink-800 transition-colors hover:border-ink-300 hover:text-ink-900 disabled:opacity-50';
+const PANEL = 'fixed z-50 max-w-[calc(100vw-2rem)] rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-12px_rgb(31_32_29/0.22)] animate-fade-up';
+const GUTTER = 16;
 
-type Option<T extends string> = { value: T; label: string; disabled?: boolean };
+type Option<T extends string> = { value: T; label: string; short?: string; hint?: string; disabled?: boolean };
 
-export function ChipPopover({ label, value, disabled, width = 'w-60', align = 'start', ghost = false, children }: { label: string; value?: string; disabled?: boolean; width?: string; align?: 'start' | 'end'; ghost?: boolean; children: (close: () => void) => React.ReactNode }) {
+// Fixed-position panel so chips inside a horizontally scrolling row are never clipped.
+export function ChipPopover({ label, value, disabled, width = 'w-60', align = 'start', ghost = false, prefix, children }: { label: string; value?: string; disabled?: boolean; width?: string; align?: 'start' | 'end'; ghost?: boolean; prefix?: string; children: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    if (!open) { setPosition(null); return; }
+    const place = () => {
+      const anchor = button.current?.getBoundingClientRect(); const box = panel.current?.getBoundingClientRect(); if (!anchor || !box) return;
+      const preferred = align === 'end' ? anchor.right - box.width : anchor.left;
+      setPosition({ top: anchor.bottom + 6, left: Math.max(GUTTER, Math.min(preferred, window.innerWidth - GUTTER - box.width)) });
+    };
+    place();
+    const close = () => setOpen(false);
+    window.addEventListener('resize', close); window.addEventListener('scroll', close, true);
+    return () => { window.removeEventListener('resize', close); window.removeEventListener('scroll', close, true); };
+  }, [open, align]);
 
   useEffect(() => {
     if (!open) return;
@@ -24,29 +40,39 @@ export function ChipPopover({ label, value, disabled, width = 'w-60', align = 's
 
   const close = () => { setOpen(false); button.current?.focus(); };
   return (
-    <div ref={root} className="relative">
+    <div ref={root} className="shrink-0">
       <button ref={button} type="button" aria-haspopup="true" aria-expanded={open} aria-controls={open ? id : undefined} disabled={disabled} onClick={() => setOpen(!open)}
-        className={ghost ? `inline-flex h-8 items-center gap-1 rounded-full px-2.5 text-[12.5px] font-medium text-ink-600 transition-colors hover:bg-paper-deep hover:text-ink-900 disabled:opacity-50 ${open ? 'bg-paper-deep text-ink-900' : ''}` : `${CHIP} ${open ? 'border-ink-300 text-ink-900' : ''}`}>
+        className={ghost ? `inline-flex h-8 items-center gap-1 whitespace-nowrap rounded-full px-2.5 text-[12.5px] font-medium text-ink-600 transition-colors hover:bg-paper-deep hover:text-ink-900 disabled:opacity-50 ${open ? 'bg-paper-deep text-ink-900' : ''}` : `${CHIP} ${open ? 'border-ink-300 text-ink-900' : ''}`}>
         {!ghost && <span className="font-medium">{label}</span>}
-        {value && <span className={ghost ? '' : 'max-w-32 truncate text-ink-500'}>{value}</span>}
+        {ghost && prefix && <span className="text-ink-400">{prefix}:</span>}
+        {!ghost && value && <span aria-hidden="true" className="text-ink-300">·</span>}
+        {value && <span className={ghost ? '' : 'max-w-28 truncate text-ink-500'}>{value}</span>}
         <ChevronDown size={13} aria-hidden="true" className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
-      {open && <div id={id} role="dialog" aria-label={label} className={`${PANEL} ${width} ${align === 'end' ? 'right-0' : 'left-0'}`}>{children(close)}</div>}
+      {open && (
+        <div ref={panel} id={id} role="dialog" aria-label={label} style={position ?? { top: 0, left: 0, visibility: 'hidden' }} className={`${PANEL} ${width}`}>{children(close)}</div>
+      )}
     </div>
   );
 }
 
-export function ChipSelect<T extends string>({ label, value, options, onChange, disabled, ghost, align, width = 'w-44' }: { label: string; value: T; options: Array<Option<T>>; onChange: (value: T) => void; disabled?: boolean; ghost?: boolean; align?: 'start' | 'end'; width?: string }) {
+export function ChipSelect<T extends string>({ label, title, value, options, onChange, disabled, ghost, prefix, align, width }: { label: string; title?: string; value: T; options: Array<Option<T>>; onChange: (value: T) => void; disabled?: boolean; ghost?: boolean; prefix?: string; align?: 'start' | 'end'; width?: string }) {
+  const current = options.find((option) => option.value === value);
   return (
-    <ChipPopover label={label} value={options.find((option) => option.value === value)?.label} disabled={disabled} ghost={ghost} align={align} width={width}>
+    <ChipPopover label={label} value={current?.short ?? current?.label} disabled={disabled} ghost={ghost} prefix={prefix} align={align} width={width ?? (options.some((option) => option.hint) ? 'w-72' : 'w-44')}>
       {(close) => (
-        <div role="listbox" aria-label={label}>
+        <div role="listbox" aria-label={title ?? label}>
+          {title && <p className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400">{title}</p>}
           {options.map((option) => {
             const selected = option.value === value;
             return (
               <button key={option.value} type="button" role="option" aria-selected={selected} disabled={option.disabled} onClick={() => { onChange(option.value); close(); }}
-                className={`flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] transition-colors disabled:opacity-40 ${selected ? 'bg-brand-50 font-medium text-ink-900' : 'text-ink-700 hover:bg-paper-deep'}`}>
-                <span className="min-w-0 flex-1 truncate">{option.label}</span>{selected && <Check size={14} aria-hidden="true" className="shrink-0 text-brand-700" />}
+                className={`flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] transition-colors disabled:opacity-40 ${selected ? 'bg-brand-50 font-medium text-ink-900' : 'text-ink-700 hover:bg-paper-deep'}`}>
+                <span className="min-w-0 flex-1">
+                  <span className="block">{option.label}</span>
+                  {option.hint && <span className="mt-0.5 block text-[12px] font-normal leading-snug text-ink-500">{option.hint}</span>}
+                </span>
+                {selected && <Check size={14} aria-hidden="true" className="mt-0.5 shrink-0 self-start text-brand-700" />}
               </button>
             );
           })}
@@ -56,23 +82,21 @@ export function ChipSelect<T extends string>({ label, value, options, onChange, 
   );
 }
 
-export function ChipText({ label, value, placeholder, maxLength, onChange, disabled }: { label: string; value: string; placeholder: string; maxLength: number; onChange: (value: string) => void; disabled?: boolean }) {
-  const { t } = useLocale();
+// One non-wrapping row that scrolls sideways and fades its right edge while more chips are hidden.
+export function ChipRow({ center = false, children }: { center?: boolean; children: React.ReactNode }) {
+  const row = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const node = row.current; if (!node) return;
+    const update = () => setMore(node.scrollLeft + node.clientWidth < node.scrollWidth - 1);
+    update();
+    const observer = new ResizeObserver(update); observer.observe(node); for (const child of node.children) observer.observe(child);
+    node.addEventListener('scroll', update, { passive: true });
+    return () => { observer.disconnect(); node.removeEventListener('scroll', update); };
+  }, [children]);
   return (
-    <ChipPopover label={label} value={value || t('Opsional', 'Optional')} disabled={disabled} width="w-64">
-      {(close) => (
-        <form className="space-y-2 p-1.5" onSubmit={(event) => { event.preventDefault(); close(); }}>
-          <input autoFocus aria-label={label} value={value} maxLength={maxLength} placeholder={placeholder} onChange={(event) => onChange(event.target.value)}
-            className="h-9 w-full rounded-lg border border-line-strong bg-white px-3 text-[13px] text-ink-900 placeholder:text-ink-400 focus:border-brand-400 focus:outline-none focus:ring-3 focus:ring-brand-100" />
-          <div className="flex items-center justify-between text-xs text-ink-500">
-            <span>{value.length}/{maxLength}</span>
-            <span className="flex gap-1">
-              {value && <button type="button" onClick={() => onChange('')} className="rounded-lg px-2.5 py-1.5 font-semibold text-ink-600 hover:bg-paper">{t('Hapus', 'Clear')}</button>}
-              <button type="submit" className="rounded-lg bg-brand-50 px-2.5 py-1.5 font-semibold text-brand-800 hover:bg-brand-100">{t('Selesai', 'Done')}</button>
-            </span>
-          </div>
-        </form>
-      )}
-    </ChipPopover>
+    <div ref={row} className={`scrollbar-none flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto ${center ? '' : 'flex-1'} ${more ? '[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]' : ''}`}>
+      {children}
+    </div>
   );
 }

@@ -1,19 +1,22 @@
-export type Mode = 'standard' | 'academic' | 'humanize' | 'professional' | 'creative' | 'simplify' | 'custom';
+export type Mode = 'standard' | 'academic' | 'humanize' | 'professional' | 'creative' | 'simplify';
 export type WritingLanguage = 'auto' | 'id' | 'en';
 export type Strength = 'light' | 'balanced' | 'strong';
 export type Format = 'paragraph' | 'bullets' | 'numbered_list' | 'table' | 'short_summary';
 export type Length = 'shorter' | 'same' | 'more_detailed';
 export type Focus = 'clarity' | 'naturalness' | 'formality' | 'persuasiveness' | 'remove_repetition';
+export type Recipient = 'atasan' | 'klien' | 'rekan' | 'vendor' | 'umum';
+export type SimplifyFor = 'anak_sekolah' | 'umum' | 'klien' | 'pemula';
+export type Audience = 'general_public' | 'lecturer' | 'professional' | 'client';
 
 export type Settings = {
   mode: Mode; language: WritingLanguage; strength: Strength; academic: string; context: string; preservation: string;
-  documentType: string; creativeGoal: string; readingLevel: string; audience: string; format: string; length: string;
+  recipient: Recipient; simplifyFor: SimplifyFor; audience: Audience; format: string; length: string;
   focus: string[]; extra: string; customized: boolean;
 };
 
 export const defaults: Settings = {
-  mode: 'standard', language: 'auto', strength: 'balanced', academic: 'thesis', context: 'general', preservation: 'balanced',
-  documentType: 'email', creativeGoal: '', readingLevel: '', audience: 'general_public', format: 'paragraph', length: 'same',
+  mode: 'humanize', language: 'auto', strength: 'balanced', academic: 'thesis', context: 'general', preservation: 'balanced',
+  recipient: 'umum', simplifyFor: 'umum', audience: 'general_public', format: 'paragraph', length: 'same',
   focus: [], extra: '', customized: false,
 };
 
@@ -24,29 +27,55 @@ export const SELECTION_LIMIT = 5_000;
 export const INLINE_LIMIT = 600;
 export const MIN_WORDS = 3;
 
+export const RECIPIENTS: Recipient[] = ['atasan', 'klien', 'rekan', 'vendor', 'umum'];
+export const SIMPLIFY_FOR: SimplifyFor[] = ['anak_sekolah', 'umum', 'klien', 'pemula'];
+export const AUDIENCES: Audience[] = ['general_public', 'lecturer', 'professional', 'client'];
+const STRENGTHS: Strength[] = ['light', 'balanced', 'strong'];
+const LANGUAGES: WritingLanguage[] = ['auto', 'id', 'en'];
+
 export const promptFor: Record<Mode, string> = {
   standard: 'P01_STANDARD_REWRITE', academic: 'P02_ACADEMIC', humanize: 'P03_HUMANIZER', professional: 'P04_PROFESSIONAL',
-  creative: 'P05_CREATIVE', simplify: 'P06_SIMPLIFY', custom: 'P08_CUSTOM_TRANSFORM',
+  creative: 'P05_CREATIVE', simplify: 'P06_SIMPLIFY',
 };
-
-export const modeFromPrompt = (promptId: string | null | undefined): Mode | null =>
-  (Object.entries(promptFor).find(([, id]) => id === promptId)?.[0] as Mode | undefined) ?? null;
+export const LEGACY_CUSTOM_PROMPT = 'P08_CUSTOM_TRANSFORM';
 
 export const isMode = (value: unknown): value is Mode => typeof value === 'string' && Object.hasOwn(promptFor, value);
+// Legacy 'custom' mode is shown and run as Parafrase.
+export const asMode = (value: unknown): Mode | null => (value === 'custom' ? 'standard' : isMode(value) ? value : null);
 
-export function runtimeControls(settings: Settings, language: 'id' | 'en', inlineAction?: string) {
-  const audience = settings.audience.trim() || 'general_public';
-  const custom = { format: settings.format, length: settings.length, audience, focus: settings.focus, extra_request: settings.extra.trim() || null };
+export const modeFromPrompt = (promptId: string | null | undefined): Mode | null =>
+  promptId === LEGACY_CUSTOM_PROMPT ? 'standard' : (Object.entries(promptFor).find(([, id]) => id === promptId)?.[0] as Mode | undefined) ?? null;
+
+const oneOf = <T extends string>(allowed: readonly T[], value: unknown, fallback: T): T => (allowed as readonly unknown[]).includes(value) ? value as T : fallback;
+const str = (value: unknown, fallback: string) => (typeof value === 'string' ? value : fallback);
+
+// Builds clean settings from stored or legacy preferences; unknown keys are dropped.
+export function normalizeSettings(raw: Record<string, unknown> | null | undefined): Settings {
+  const value = raw ?? {};
+  const legacyCustom = value.mode === 'custom';
   return {
-    language, strength: settings.strength, academic_context: settings.academic, humanizer_context: settings.context,
-    preservation: settings.preservation, audience, document_type: settings.documentType,
-    creative_goal: settings.creativeGoal || (language === 'id' ? 'Ekspresif dan menarik' : 'Expressive and engaging'),
-    creativity_strength: settings.strength, target_audience: audience, reading_level: settings.readingLevel || null,
-    length: settings.length, output_format: settings.format === 'short_summary' ? 'summary' : settings.format,
-    ...(settings.mode === 'custom' ? custom : {}),
-    ...(settings.customized ? { custom_request: custom } : {}),
-    ...(inlineAction ? { action: inlineAction, active_mode: settings.mode === 'custom' ? 'standard' : settings.mode } : {}),
+    mode: asMode(value.mode) ?? defaults.mode, language: oneOf(LANGUAGES, value.language, defaults.language), strength: oneOf(STRENGTHS, value.strength, defaults.strength),
+    academic: str(value.academic, defaults.academic), context: str(value.context, defaults.context), preservation: str(value.preservation, defaults.preservation),
+    recipient: oneOf(RECIPIENTS, value.recipient, defaults.recipient), simplifyFor: oneOf(SIMPLIFY_FOR, value.simplifyFor, defaults.simplifyFor),
+    audience: oneOf(AUDIENCES, value.audience, defaults.audience), format: str(value.format, defaults.format), length: str(value.length, defaults.length),
+    focus: Array.isArray(value.focus) ? value.focus.filter((item): item is string => typeof item === 'string').slice(0, FOCUS_LIMIT) : [],
+    extra: str(value.extra, '').slice(0, EXTRA_LIMIT), customized: legacyCustom || value.customized === true,
   };
+}
+
+// Sends exactly the controls the selected prompt uses; the request block only when Sesuaikan was applied.
+export function runtimeControls(settings: Settings, language: 'id' | 'en', inlineAction?: string): Record<string, unknown> {
+  if (inlineAction) return { language, action: inlineAction };
+  const controls: Record<Mode, Record<string, unknown>> = {
+    standard: { strength: settings.strength },
+    academic: { academic_context: settings.academic },
+    humanize: { strength: settings.strength, humanizer_context: settings.context, preservation: settings.preservation },
+    professional: { audience: settings.recipient },
+    creative: { creativity_strength: settings.strength },
+    simplify: { target_audience: settings.simplifyFor },
+  };
+  const request = { format: settings.format, length: settings.length, audience: oneOf(AUDIENCES, settings.audience, 'general_public'), focus: settings.focus.slice(0, FOCUS_LIMIT), extra_request: settings.extra.trim().slice(0, EXTRA_LIMIT) || null };
+  return { language, ...controls[settings.mode], ...(settings.customized ? { custom_request: request } : {}) };
 }
 
 const ID_WORDS = new Set(['yang', 'dan', 'untuk', 'dengan', 'pada', 'ini', 'adalah', 'dalam', 'tidak', 'saya', 'kami', 'tersebut', 'akan', 'dari', 'itu', 'bahwa', 'juga', 'atau', 'sebagai', 'karena']);

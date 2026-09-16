@@ -21,15 +21,15 @@ async function dto(row: DocumentRow): Promise<DocumentDTO> { return { id: row.id
 export async function createDocument(ownerId: string, input: DocumentCreateInput): Promise<DocumentDTO> {
   const documentId = id(); const versionId = id(); const created = now(); const content = checkedContent(input.content ?? plainTextDocument("")); const body = snapshot(content); const object = await putImmutableSnapshot(documentId, versionId, body);
   await runtime().DB.batch([
-    runtime().DB.prepare("INSERT INTO documents (id,owner_id,title,language,preferences_json,revision,body_json,storage_mode,original_version_id,created_at,updated_at) VALUES (?,?,?,?,?,0,?,'d1',?,?,?)").bind(documentId, ownerId, input.title, input.language, JSON.stringify(input.preferences ?? {}), body, versionId, created, created),
+    runtime().DB.prepare("INSERT INTO documents (id,owner_id,title,language,preferences_json,revision,body_json,storage_mode,original_version_id,color,icon,created_at,updated_at) VALUES (?,?,?,?,?,0,?,'d1',?,?,?,?,?)").bind(documentId, ownerId, input.title, input.language, JSON.stringify(input.preferences ?? {}), body, versionId, input.color ?? null, input.icon ?? null, created, created),
     runtime().DB.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at) VALUES (?,?,?,'original',0,'Original',?,?,?)").bind(versionId, documentId, ownerId, object.key, object.hash, created)
   ]);
-  return { id: documentId, title: input.title, language: input.language, preferences: input.preferences ?? {}, revision: 0, color: null, icon: null, content, createdAt: new Date(created).toISOString(), updatedAt: new Date(created).toISOString() };
+  return { id: documentId, title: input.title, language: input.language, preferences: input.preferences ?? {}, revision: 0, color: input.color ?? null, icon: input.icon ?? null, content, createdAt: new Date(created).toISOString(), updatedAt: new Date(created).toISOString() };
 }
 
 export async function getDocument(ownerId: string, documentId: string) { return dto(await rowForOwner(documentId, ownerId)); }
 export async function listDocuments(ownerId: string, cursor?: string, limit = 20) {
-  const bounded = Math.min(Math.max(limit, 1), 50); const args: unknown[] = [ownerId]; let where = "owner_id=?";
+  const bounded = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 50) : 20; const args: unknown[] = [ownerId]; let where = "owner_id=?";
   if (cursor) { const [updatedAt, cursorId] = cursor.split(":"); if (!updatedAt || !cursorId || !/^\d+$/.test(updatedAt)) throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); where += " AND (updated_at < ? OR (updated_at = ? AND id < ?))"; args.push(Number(updatedAt), Number(updatedAt), cursorId); }
   args.push(bounded + 1); const rows = await runtime().DB.prepare(`SELECT id,title,language,revision,color,icon,created_at,updated_at,json_extract(preferences_json,'$.mode') AS mode FROM documents WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT ?`).bind(...args).all<Omit<DocumentRow, "body_json" | "body_r2_key" | "preferences_json"> & { mode: string | null }>(); const results = rows.results ?? []; const page = results.slice(0, bounded); const last = page.at(-1); return { items: page.map((row) => ({ id: row.id, title: row.title, language: row.language, revision: row.revision, mode: typeof row.mode === "string" ? row.mode : null, color: row.color ?? null, icon: row.icon ?? null, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() })), nextCursor: results.length > bounded && last ? `${last.updated_at}:${last.id}` : null };
 }

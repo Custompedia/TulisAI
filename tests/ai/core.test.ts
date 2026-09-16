@@ -29,9 +29,17 @@ describe("enum mapping", () => {
     expect(normalizeRuntime("P02_ACADEMIC", { ...base, academic_context: "general_academic" })).toMatchObject({ academic_context: "umum" });
     expect(normalizeRuntime("P03_HUMANIZER", { ...base, strength: "light", humanizer_context: "professional", preservation: "conservative" })).toMatchObject({ humanizer_context: "profesional", strength: "light" });
     expect(normalizeRuntime("P05_CREATIVE", { ...base, strength: "strong" })).toMatchObject({ creativity_strength: "berani" });
-    expect(normalizeRuntime("P04_PROFESSIONAL", { ...base, audience: "client" })).toMatchObject({ audience: "klien" });
+    for (const recipient of ["atasan", "klien", "rekan", "vendor", "umum"]) expect(normalizeRuntime("P04_PROFESSIONAL", { ...base, audience: recipient })).toMatchObject({ audience: recipient });
+    expect(normalizeRuntime("P04_PROFESSIONAL", { ...base, recipient: "vendor" })).toMatchObject({ audience: "vendor" });
+    expect(normalizeRuntime("P04_PROFESSIONAL", { ...base, audience: "client" })).toMatchObject({ audience: "umum" });
     expect(normalizeRuntime("P04_PROFESSIONAL", { ...base, audience: "manajer proyek" })).toMatchObject({ audience: "umum" });
-    expect(normalizeRuntime("P06_SIMPLIFY", { ...base, audience: "general_public" })).toMatchObject({ audience: "umum" });
+    expect(normalizeRuntime("P04_PROFESSIONAL", base)).toMatchObject({ audience: "umum" });
+    const simplify = { anak_sekolah: "anak sekolah", umum: "umum", klien: "klien", pemula: "pemula" };
+    for (const [key, audience] of Object.entries(simplify)) expect(normalizeRuntime("P06_SIMPLIFY", { ...base, target_audience: key })).toMatchObject({ audience });
+    expect(normalizeRuntime("P06_SIMPLIFY", { ...base, simplifyFor: "anak_sekolah" })).toMatchObject({ audience: "anak sekolah" });
+    expect(normalizeRuntime("P06_SIMPLIFY", { ...base, target_audience: "general_public" })).toMatchObject({ audience: "umum" });
+    expect(normalizeRuntime("P05_CREATIVE", { ...base, creativity_strength: "balanced" })).toMatchObject({ creativity_strength: "sedang" });
+    expect(normalizeRuntime("P03_HUMANIZER", { ...base, strength: "light", humanizer_context: "general", preservation: "flexible" })).toMatchObject({ preservation: "flexible" });
     const intents = { alternatives: "alternatif", paraphrase: "alternatif", shorter: "lebih singkat", clearer: "lebih jelas", formal: "lebih formal", natural: "lebih natural" };
     for (const [action, intent] of Object.entries(intents)) expect(normalizeRuntime("P07_INLINE_ALTERNATIVES", { ...base, selectedText: "teks", action })).toMatchObject({ intent, n: 3 });
     expect(normalizeRuntime("P09_QUALITY_EVALUATION", { ...base, mode: "academic" })).toMatchObject({ mode: "akademik" });
@@ -68,6 +76,23 @@ describe("message assembly", () => {
     expect(buildUserMessage("P09_QUALITY_EVALUATION", p09)).toBe("<input>\nSome text.\n</input>");
     const p10 = normalizeRuntime("P10_REPAIR", { language: "id", failedOutput: "Total item.", originalScope: "Total 4 item.", requiredProtectedTerms: [], requiredProtectedCitations: [] });
     expect(buildUserMessage("P10_REPAIR", p10)).toBe("<violations>\nrequired: 4 | appeared instead: (missing)\n</violations>\n<failed_output>\nTotal item.\n</failed_output>\n<original>\nTotal 4 item.\n</original>");
+  });
+  it("substitutes every variable in every composed system message", () => {
+    const common = { language: "id" as const, sourceText: "Teks", selectedText: "teks", protectedTerms: [], protectedCitations: [] };
+    const inputs: Record<(typeof promptIds)[number], Record<string, unknown>> = {
+      P01_STANDARD_REWRITE: { strength: "light" }, P02_ACADEMIC: { academic_context: "journal" }, P03_HUMANIZER: { strength: "strong", humanizer_context: "academic", preservation: "conservative" },
+      P04_PROFESSIONAL: { audience: "atasan" }, P05_CREATIVE: { creativity_strength: "strong" }, P06_SIMPLIFY: { target_audience: "anak_sekolah" }, P07_INLINE_ALTERNATIVES: { action: "alternatives" },
+      P08_CUSTOM_TRANSFORM: { format: "table", length: "shorter", audience: "client", focus: ["clarity"], extra_request: "Singkat" }, P09_QUALITY_EVALUATION: { mode: "academic" },
+      P10_REPAIR: { failedOutput: "Teks", originalScope: "Teks", requiredProtectedTerms: [], requiredProtectedCitations: [] },
+    };
+    for (const id of promptIds) {
+      const system = buildSystemMessage(id, normalizeRuntime(id, { ...common, ...inputs[id] }));
+      expect(system, id).not.toContain("{{");
+      const custom = normalizeRuntime(id, { ...common, ...inputs[id], custom_request: { format: "bullets", length: "more_detailed", audience: "lecturer", focus: ["clarity"], extra_request: "Catatan" } });
+      expect(buildSystemMessage(id, custom), id).not.toContain("{{");
+    }
+    expect(buildSystemMessage("P07_INLINE_ALTERNATIVES", normalizeRuntime("P07_INLINE_ALTERNATIVES", { ...common, action: "paraphrase" }))).toContain("produce 3 replacement options");
+    expect(buildSystemMessage("P06_SIMPLIFY", normalizeRuntime("P06_SIMPLIFY", { ...common, target_audience: "anak_sekolah" }))).toContain("so a reader in anak sekolah understands");
   });
   it("adds the control block only for customised requests", () => {
     const plain = normalizeRuntime("P02_ACADEMIC", { ...controls, sourceText: "Teks", academicContext: "journal" });

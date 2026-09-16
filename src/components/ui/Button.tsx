@@ -2,17 +2,21 @@ import { forwardRef } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import { Spinner } from './Spinner';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'dark' | 'light';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'light';
 type Size = 'sm' | 'md' | 'lg';
 
+export const raisedGreen = 'bg-brand-800 text-white';
+// Flat hover/press for the green button.
+export const pressGreen = 'hover:bg-brand-900 active:bg-brand-900';
 export const raisedBlack = 'border border-white/50 bg-[linear-gradient(180deg,#6b6b6b_-20.63%,#000_34.92%)] text-white shadow-raised';
+// Small white pill for secondary inline actions.
+export const pillButton = 'inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-white px-2.5 text-xs font-medium text-ink-700 transition-colors hover:border-line-strong hover:bg-paper hover:text-ink-900 disabled:pointer-events-none disabled:opacity-50';
 const base = 'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap font-semibold transition-[color,background-color,border-color,transform] disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2';
 const variants: Record<Variant, string> = {
   primary: `rounded-full ${raisedBlack} hover:-translate-y-px disabled:hover:translate-y-0 focus-visible:outline-brand-600`,
   secondary: 'rounded-lg border border-line bg-white text-ink-800 hover:border-line-strong hover:bg-paper',
   ghost: 'rounded-lg text-ink-600 hover:bg-ink-100/70 hover:text-ink-900',
   danger: 'rounded-lg bg-red-600 text-white hover:bg-red-700 focus-visible:outline-red-500',
-  dark: 'rounded-lg bg-ink-900 text-white hover:bg-ink-800',
   light: 'rounded-lg bg-white text-ink-900 hover:bg-ink-50',
 };
 const sizes: Record<Size, string> = { sm: 'h-8 px-3 text-[13px]', md: 'h-10 px-4 text-sm', lg: 'h-12 px-6 text-[15px]' };

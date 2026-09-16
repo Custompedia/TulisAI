@@ -7,39 +7,38 @@ import { errorText, newKey, request } from '@/lib/client/api';
 import { plainTextDocument } from '@/lib/editor/document';
 import { countWords } from '@/lib/editor/metrics';
 import { numberFormat } from '@/lib/client/format';
-import { AI_SCOPE_LIMIT, defaults, detectLanguage, MIN_WORDS, modeFromPrompt, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
+import { AI_SCOPE_LIMIT, defaults, detectLanguage, LEGACY_CUSTOM_PROMPT, MIN_WORDS, modeFromPrompt, normalizeSettings, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
 import { useSessionGuard, useShell } from '@/components/app/AppShell';
 import { COMPOSER_FOCUS_EVENT } from '@/components/app/Sidebar';
-import { raisedBlack } from '@/components/ui/Button';
+import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { Toast } from '@/components/ui/Toast';
 import { CustomizePanel } from '@/components/writing/WritingControls';
-import { academicOptions, contextOptions, documentTypeOptions, modeChipLabel, modeIcon, modeLabel, modeToneClass, preservationOptions, strengthOptions } from '@/components/writing/modes';
-import { CHIP, ChipSelect, ChipText } from './ComposerChips';
+import { academicOptions, contextOptions, creativityOptions, humanizeStrengthOptions, languageOptions, modeIcon, modeLabel, modeToneClass, preservationOptions, recipientOptions, simplifyForOptions, strengthOptions } from '@/components/writing/modes';
+import { CHIP, ChipRow, ChipSelect } from './ComposerChips';
 
 const DRAFT_KEY = 'composer-draft';
 const MIN_HEIGHT = 96;
 const MAX_HEIGHT = 260;
-const PRIMARY: Mode[] = ['standard', 'humanize', 'academic', 'professional'];
-const MORE: Mode[] = ['creative', 'simplify', 'custom'];
+const PRIMARY: Mode[] = ['humanize', 'standard', 'academic', 'professional'];
+const MORE: Mode[] = ['creative', 'simplify'];
 
 type T = (id: string, en: string) => string;
 
 const placeholderFor = (mode: Mode | null, t: T) => mode === null ? t('Tulis, tempel, atau mulai dengan memilih aksi di bawah', 'Write, paste, or start with an action below') : {
   standard: t('Tulis atau tempel teks untuk diparafrase', 'Write or paste text to paraphrase'),
   academic: t('Tulis atau tempel teks untuk dirapikan secara akademik', 'Write or paste text to polish academically'),
-  humanize: t('Tulis atau tempel teks agar terasa lebih natural', 'Write or paste text to make it more natural'),
+  humanize: t('Tempel teks yang terasa seperti tulisan AI…', 'Paste text that reads like AI writing…'),
   professional: t('Tulis atau tempel teks agar lebih profesional', 'Write or paste text to make it more professional'),
   creative: t('Tulis atau tempel teks agar lebih kreatif', 'Write or paste text to make it more creative'),
   simplify: t('Tulis atau tempel teks agar lebih mudah dipahami', 'Write or paste text to make it easier to read'),
-  custom: t('Tulis atau tempel teks, lalu atur hasilnya lewat Sesuaikan', 'Write or paste text, then shape the result with Customize'),
 }[mode];
 
 const sendLabelFor = (mode: Mode | null, t: T) => mode === null ? t('Perbaiki teks', 'Improve text') : {
-  standard: t('Parafrase teks', 'Paraphrase text'), academic: t('Rapikan akademik', 'Polish academically'), humanize: t('Buat lebih natural', 'Make it natural'),
-  professional: t('Buat profesional', 'Make it professional'), creative: t('Buat kreatif', 'Make it creative'), simplify: t('Sederhanakan', 'Simplify text'), custom: t('Terapkan', 'Apply'),
+  standard: t('Parafrase teks', 'Paraphrase text'), academic: t('Rapikan akademik', 'Polish academically'), humanize: t('Buat terasa manusiawi', 'Make it read human'),
+  professional: t('Buat profesional', 'Make it professional'), creative: t('Buat kreatif', 'Make it creative'), simplify: t('Sederhanakan', 'Simplify text'),
 }[mode];
 
 export function Composer() {
@@ -48,10 +47,10 @@ export function Composer() {
   const guard = useSessionGuard();
   const { settings: prefs, usage } = useShell();
   const textarea = useRef<HTMLTextAreaElement>(null);
-  const baseMode = modeFromPrompt(prefs.defaultMode) ?? 'standard';
+  const baseMode = modeFromPrompt(prefs.defaultMode) ?? 'humanize';
   const [text, setText] = useState('');
   const [picked, setPicked] = useState(false);
-  const [settings, setSettings] = useState<Settings>(() => ({ ...defaults, mode: baseMode, language: prefs.writingLanguage, context: prefs.humanizerContext }));
+  const [settings, setSettings] = useState<Settings>(() => normalizeSettings({ ...defaults, mode: prefs.defaultMode === LEGACY_CUSTOM_PROMPT ? 'custom' : baseMode, language: prefs.writingLanguage, context: prefs.humanizerContext }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
@@ -83,7 +82,7 @@ export function Composer() {
   const sendLabel = tooLong ? t('Buka sebagai notebook', 'Open as notebook') : sendLabelFor(activeMode, t);
   const status = busy ? { warn: false, text: t('Membuat notebook…', 'Creating notebook…') }
     : outOfQuota ? { warn: true, text: t('Batas AI bulan ini habis.', 'This month’s AI limit is used up.') }
-    : needsLanguage ? { warn: true, text: t('Bahasa belum terdeteksi. Pilih ID atau EN.', 'Language unclear. Choose ID or EN.') }
+    : needsLanguage ? { warn: true, text: t('Bahasa belum terdeteksi. Pilih Indonesia atau English.', 'Language unclear. Choose Indonesia or English.') }
     : tooLong ? { warn: true, text: t(`Lebih dari ${numberFormat(AI_SCOPE_LIMIT, locale)} karakter, dibuka sebagai notebook.`, `Over ${numberFormat(AI_SCOPE_LIMIT, 'en')} characters, opens as a notebook.`) }
     : words > 0 && !ready ? { warn: false, text: t(`Minimal ${MIN_WORDS} kata`, `At least ${MIN_WORDS} words`) }
     : words > 0 ? { warn: false, text: `${numberFormat(words, locale)} ${t('kata', 'words')}` } : null;
@@ -115,20 +114,16 @@ export function Composer() {
   }
 
   const modeControls: Record<Mode, React.ReactNode> = {
-    standard: <ChipSelect label={t('Kekuatan', 'Strength')} value={settings.strength} options={strengthOptions(t)} disabled={busy} onChange={(value) => set('strength', value)} />,
-    academic: <ChipSelect label={t('Konteks', 'Context')} value={settings.academic} options={academicOptions(t)} disabled={busy} onChange={(value) => set('academic', value)} />,
+    standard: <ChipSelect label={t('Kekuatan', 'Strength')} title={t('Kekuatan perubahan', 'Change strength')} value={settings.strength} options={strengthOptions(t)} disabled={busy} onChange={(value) => set('strength', value)} />,
+    academic: <ChipSelect label={t('Konteks', 'Context')} title={t('Konteks akademik', 'Academic context')} value={settings.academic} options={academicOptions(t)} disabled={busy} onChange={(value) => set('academic', value)} />,
     humanize: <>
-      <ChipSelect label={t('Konteks', 'Context')} value={settings.context} options={contextOptions(t)} disabled={busy} onChange={(value) => set('context', value)} />
-      <ChipSelect label={t('Kekuatan', 'Strength')} value={settings.strength} options={strengthOptions(t)} disabled={busy} onChange={(value) => set('strength', value)} />
-      <ChipSelect label={t('Makna', 'Meaning')} value={settings.preservation} options={preservationOptions(t)} disabled={busy} onChange={(value) => set('preservation', value)} />
+      <ChipSelect label="Register" title={t('Register tulisan', 'Writing register')} value={settings.context} options={contextOptions(t)} disabled={busy} onChange={(value) => set('context', value)} />
+      <ChipSelect label={t('Kekuatan', 'Strength')} title={t('Kekuatan humanize', 'Humanize strength')} value={settings.strength} options={humanizeStrengthOptions(t)} disabled={busy} onChange={(value) => set('strength', value)} />
+      <ChipSelect label={t('Batas', 'Limit')} title={t('Batas perubahan', 'Change limit')} value={settings.preservation} options={preservationOptions(t)} disabled={busy} onChange={(value) => set('preservation', value)} />
     </>,
-    professional: <ChipSelect label={t('Jenis', 'Type')} value={settings.documentType} options={documentTypeOptions(t)} disabled={busy} onChange={(value) => set('documentType', value)} />,
-    creative: <>
-      <ChipSelect label={t('Kreativitas', 'Creativity')} value={settings.strength} options={strengthOptions(t)} disabled={busy} onChange={(value) => set('strength', value)} />
-      <ChipText label={t('Gaya', 'Style')} value={settings.creativeGoal} maxLength={200} placeholder={t('Mis. caption Instagram yang hangat', 'E.g. a warm Instagram caption')} disabled={busy} onChange={(value) => set('creativeGoal', value)} />
-    </>,
-    simplify: <ChipText label={t('Pembaca', 'Reader')} value={settings.readingLevel} maxLength={100} placeholder={t('Mis. siswa SMA', 'E.g. high-school student')} disabled={busy} onChange={(value) => set('readingLevel', value)} />,
-    custom: null,
+    professional: <ChipSelect label={t('Untuk', 'To')} title={t('Ditujukan untuk', 'Addressed to')} value={settings.recipient} options={recipientOptions(t)} disabled={busy} onChange={(value) => set('recipient', value)} />,
+    creative: <ChipSelect label={t('Kreativitas', 'Creativity')} title={t('Tingkat kreativitas', 'Creativity level')} value={settings.strength} options={creativityOptions(t)} disabled={busy} onChange={(value) => set('strength', value)} />,
+    simplify: <ChipSelect label={t('Untuk', 'For')} title={t('Untuk siapa', 'Written for')} value={settings.simplifyFor} options={simplifyForOptions(t)} disabled={busy} onChange={(value) => set('simplifyFor', value)} />,
   };
 
   const tone = modeToneClass(settings.mode);
@@ -153,48 +148,52 @@ export function Composer() {
                 { label: t('Tempel', 'Paste'), icon: ClipboardPaste, onSelect: () => void paste() },
                 { label: t('Hapus teks', 'Clear text'), icon: Trash2, tone: 'danger', disabled: !text, onSelect: () => setConfirmClear(true) },
               ]} />
-            <ChipSelect<WritingLanguage> ghost width="w-28" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(value) => set('language', value)}
-              options={[{ value: 'auto', label: t('Auto', 'Auto') }, { value: 'id', label: 'ID' }, { value: 'en', label: 'EN' }]} />
+            <ChipSelect<WritingLanguage> ghost prefix={t('Bahasa', 'Language')} label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(value) => set('language', value)}
+              options={languageOptions(t)} />
             <span role="status" className={`ml-1 inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs ${status?.warn ? 'font-medium text-amber-700' : 'text-ink-500'}`}>
               {status?.warn && <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />}<span className="truncate">{status?.text}</span>
             </span>
             <button type="button" onClick={() => void create()} disabled={!canSend} aria-label={busy ? t('Membuat notebook…', 'Creating notebook…') : sendLabel}
-              key={canSend ? 'ready' : 'idle'} title={sendLabel} className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-[transform,box-shadow,background-color,color] duration-200 ${canSend ? `${raisedBlack} animate-pop ring-4 ring-brand-200 shadow-[0_8px_18px_-6px_rgb(0_0_0/0.55)] hover:-translate-y-0.5 hover:ring-brand-300` : 'scale-90 bg-paper-deep text-ink-300'}`}>
+              key={canSend ? 'ready' : 'idle'} title={sendLabel} className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-colors ${canSend ? `${raisedGreen} ${pressGreen}` : 'bg-paper-deep text-ink-300'}`}>
               {busy ? <Spinner size={15} /> : <ArrowRight size={17} aria-hidden="true" />}
             </button>
           </div>
         </div>
 
-        <div className={`flex flex-wrap items-center gap-2 px-2 py-2.5 ${picked ? 'justify-start' : 'justify-center'}`}>
+        <div className={`flex flex-nowrap items-center gap-2 px-2 py-2.5 ${picked ? '' : 'justify-center'}`}>
           {picked ? (
             <>
-              <span className={`inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1 pr-0.5 text-[12.5px] font-medium ${tone.edge} ${tone.ink}`}>
-                <span className={`grid h-6 w-6 place-items-center rounded-full ${tone.fill}`}><ModeIcon size={13} aria-hidden="true" /></span>
-                {modeLabel(settings.mode, t)}
-                <button type="button" onClick={unpick} disabled={busy} aria-label={t('Hapus pilihan mode', 'Clear mode')} className="grid h-6 w-6 place-items-center rounded-full transition-colors hover:bg-paper-deep disabled:opacity-50"><X size={13} aria-hidden="true" /></button>
-              </span>
-              {modeControls[settings.mode]}
+              <ChipRow>
+                <span className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-white pl-1 pr-0.5 text-[12.5px] font-medium ${tone.edge} ${tone.ink}`}>
+                  <span className={`grid h-6 w-6 place-items-center rounded-full ${tone.fill}`}><ModeIcon size={13} aria-hidden="true" /></span>
+                  {modeLabel(settings.mode, t)}
+                  <button type="button" onClick={unpick} disabled={busy} aria-label={t('Hapus pilihan mode', 'Clear mode')} className="grid h-6 w-6 place-items-center rounded-full transition-colors hover:bg-paper-deep disabled:opacity-50"><X size={13} aria-hidden="true" /></button>
+                </span>
+                {modeControls[settings.mode]}
+              </ChipRow>
               <button type="button" disabled={busy} aria-expanded={customizing} aria-controls="composer-customize" onClick={() => setCustomizing(!customizing)}
-                className={`${CHIP} font-medium sm:ml-auto ${customizing || settings.customized ? 'border-brand-400 bg-white text-brand-800' : ''}`}>
+                className={`${CHIP} font-medium ${customizing || settings.customized ? 'border-brand-400 bg-white text-brand-800' : ''}`}>
                 <SlidersHorizontal size={15} aria-hidden="true" />{t('Sesuaikan', 'Customize')}
                 {settings.customized && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" aria-label={t('aktif', 'on')} />}
                 <ChevronDown size={14} aria-hidden="true" className={`transition-transform ${customizing ? 'rotate-180' : ''}`} />
               </button>
             </>
           ) : (
-            <>
+            <ChipRow center>
               {PRIMARY.map((mode) => {
                 const Icon = modeIcon[mode]; const chipTone = modeToneClass(mode);
                 return (
                   <button key={mode} type="button" disabled={busy} onClick={() => pick(mode)} className={`${CHIP} pl-1 font-medium`}>
-                    <span className={`grid h-6 w-6 place-items-center rounded-full ${chipTone.fill} ${chipTone.ink}`}><Icon size={13} aria-hidden="true" /></span>{modeChipLabel(mode, t)}
+                    <span className={`grid h-6 w-6 place-items-center rounded-full ${chipTone.fill} ${chipTone.ink}`}><Icon size={13} aria-hidden="true" /></span>{modeLabel(mode, t)}
                   </button>
                 );
               })}
-              <Menu label={t('Mode lainnya', 'More modes')} align="start" disabled={busy} triggerClassName={`${CHIP} font-medium`}
-                trigger={<><Plus size={16} aria-hidden="true" />{t('Lainnya', 'More')}</>}
-                items={MORE.map((mode) => ({ label: modeLabel(mode, t), icon: modeIcon[mode], onSelect: () => pick(mode) }))} />
-            </>
+            </ChipRow>
+          )}
+          {!picked && (
+            <Menu label={t('Mode lainnya', 'More modes')} align="end" disabled={busy} className="shrink-0" triggerClassName={`${CHIP} font-medium`}
+              trigger={<><Plus size={16} aria-hidden="true" />{t('Lainnya', 'More')}</>}
+              items={MORE.map((mode) => ({ label: modeLabel(mode, t), icon: modeIcon[mode], onSelect: () => pick(mode) }))} />
           )}
         </div>
         {picked && customizing && (
