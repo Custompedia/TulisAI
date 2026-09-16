@@ -9,9 +9,9 @@ export type Draft = { owner: string; revision: number; content: JSONContent; tit
 export type Scope = 'selection' | 'paragraph' | 'document';
 export type SelectionRange = { from: number; to: number; text: string; pmTo: number };
 export type SaveState = 'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'offline' | 'conflict' | 'local-unavailable';
-export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'paraphrase';
+export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'paraphrase' | 'formal' | 'natural';
 
-export type PreviewOutput = { transformed_text?: string; humanized_text?: string; alternatives?: Array<{ text: string }>; warnings?: string[]; change_categories?: string[] };
+export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean };
 export type Preview = {
   id: string; output: PreviewOutput; expiresAt: string; source: string; stamp: number; anchor?: { from: number; to: number };
   settings: Settings; scope: Scope; revision: number; inlineAction?: InlineAction; pmTo?: number;
@@ -23,7 +23,11 @@ export const WORKING = 'working';
 export const PREVIEW = 'preview';
 export const SOURCE = 'source';
 
-export type Quality = { dimensions: Record<'clarity' | 'naturalness' | 'formality' | 'academic_fit', { score: number | null; reason: string }>; warnings: string[]; analyzedRevision: number };
+export type QualityDimension = 'clarity' | 'academic_fit' | 'naturalness' | 'formality';
+export type QualityBand = 'rendah' | 'sedang' | 'tinggi' | 'tidak_berlaku';
+export type QualityItem = { value: QualityBand; reason: string };
+// Accepts the v3 flat shape and a `dimensions` wrapper.
+export type Quality = Partial<Record<QualityDimension, QualityItem>> & { dimensions?: Partial<Record<QualityDimension, QualityItem>>; warnings?: string[]; analyzedRevision?: number };
 
 export const previewText = (preview: Preview, alternative = 0) =>
-  preview.output.alternatives?.[alternative]?.text ?? preview.output.transformed_text ?? preview.output.humanized_text ?? '';
+  preview.output.alternatives?.[alternative]?.text ?? preview.output.transformed_text ?? '';

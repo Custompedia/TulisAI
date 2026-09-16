@@ -7,7 +7,7 @@ import { ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { GoogleIcon } from '@/components/ui/GoogleIcon';
 import { Logo } from '@/components/ui/Logo';
 import { Spinner } from '@/components/ui/Spinner';
-import { Alert } from '@/components/ui/Alert';
+import { Toast } from '@/components/ui/Toast';
 import type { AuthErrors, AuthField } from '@/lib/auth/form';
 import styles from './AuthView.module.css';
 
@@ -46,7 +46,7 @@ export function AuthView({ register = false, values, remember, busy, error, fiel
       <section className={styles.card} aria-labelledby="auth-title">
         <div className={styles.formPanel}>
           <div className={styles.heading}><div className={styles.brand}><Logo compact /></div><h1 id="auth-title">{register ? 'Create your account' : 'Welcome back'}</h1><p>{register ? 'A workspace for your words.' : next ? 'Sign in to pick up where you left off.' : 'Sign in to your writing workspace.'}</p></div>
-          {error && <Alert tone="error" className={styles.error}>{error}</Alert>}
+          {error && <Toast tone="error">{error}</Toast>}
           <form onSubmit={onSubmit} noValidate aria-label={register ? 'Create account with email' : 'Sign in with email'} aria-busy={busy === 'form'}>
             <fieldset disabled={busy !== null} className={styles.fields}>
               <div className={styles.inputGrid}>
@@ -67,7 +67,7 @@ export function AuthView({ register = false, values, remember, busy, error, fiel
                   </div>;
                 })}
               </div>
-              {!register && <label className={styles.remember}><input type="checkbox" checked={remember} onChange={event => onRemember(event.target.checked)} />Keep me signed in</label>}
+              {!register && <div className={styles.rememberRow}><label className={styles.remember}><input type="checkbox" checked={remember} onChange={event => onRemember(event.target.checked)} />Keep me signed in</label><Link href="/forgot-password" className={styles.forgot}>Forgot password?</Link></div>}
               <button type="submit" className={styles.submit} disabled={busy !== null}>{busy === 'form' ? <><Spinner size={17} />{register ? 'Creating account…' : 'Signing in…'}</> : <>{register ? 'Create account' : 'Sign in'}<ArrowRight size={16} aria-hidden="true" /></>}</button>
             </fieldset>
           </form>

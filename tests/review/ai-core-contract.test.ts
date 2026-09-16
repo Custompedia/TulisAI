@@ -23,13 +23,12 @@ describe("AI core runtime contract", () => {
     expect(Object.values(runtime).every((value) => value !== undefined)).toBe(true);
   });
 
-  it("accepts backend snake_case controls while keeping custom request fields", () => {
-    const runtime = normalizeRuntime("P08_CUSTOM_TRANSFORM", {
-      source_text: "Teks", language: "id", format: "bullets", length: "same", audience: "umum",
-      focus: ["clarity"], extra_request: "Pertahankan istilah", protected_terms: ["API"], protected_citations: [],
-      custom_request: { format: "bullets" },
+  it("accepts backend snake_case custom controls as a v3 request", () => {
+    const runtime = normalizeRuntime("P01_STANDARD_REWRITE", {
+      source_text: "Teks", language: "id", strength: "light", protected_terms: ["API"], protected_citations: [],
+      custom_request: { format: "bullets", length: "same", audience: "client", focus: ["clarity"], extra_request: "Pertahankan istilah" },
     });
-    expect(runtime).toMatchObject({ source_text: "Teks", format: "bullets", extra_request: "Pertahankan istilah", protected_terms: ["API"], custom_request: { format: "bullets" } });
+    expect(runtime).toMatchObject({ source_text: "Teks", strength: "light", protected_terms: ["API"], request: { format: "poin", length: "sama", audience: "klien", focus: ["clarity"], additional_instruction: "Pertahankan istilah" } });
   });
 });
 

@@ -78,3 +78,12 @@
   .signup { padding-block: 13px; }
 }
 @media (prefers-reduced-motion: reduce) { .page *, .page *::before, .page *::after { transition: none !important; animation: none !important; } }
+.forgot { align-self: flex-end; margin-top: -8px; font-size: 12px; font-weight: 600; color: #35462a; }
+.forgot:hover { text-decoration: underline; text-underline-offset: 3px; }
+.rememberRow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.rememberRow .forgot { margin-top: 0; }
+.notice { display: flex; gap: 12px; align-items: flex-start; border: 1px solid #dfe6d6; border-radius: 10px; background: #f4f7f0; padding: 14px; font-size: 13px; line-height: 1.55; color: #3a4630; }
+.notice svg { flex: 0 0 auto; margin-top: 1px; color: #5d7350; }
+.noticeError { border-color: #f0d6d1; background: #fdf6f4; color: #7c3326; }
+.noticeError svg { color: #a74838; }
+.stack { display: flex; flex-direction: column; gap: 16px; }

@@ -5,6 +5,7 @@ import { safeAuthNext } from '@/lib/auth/form';
 
 vi.mock('next/image', () => ({ default: ({ src, alt }: { src: string; alt: string }) => createElement('img', { src, alt }) }));
 vi.mock('next/link', () => ({ default: ({ children, ...props }: { children: React.ReactNode; href: string }) => createElement('a', props, children) }));
+vi.mock('@/components/ui/Toast', () => ({ Toast: ({ children }: { children: React.ReactNode }) => createElement('div', { role: 'alert', 'data-toast': '' }, children) }));
 import { AuthView } from '@/components/auth/AuthView';
 
 function render(overrides: Partial<ComponentProps<typeof AuthView>> = {}) {
@@ -27,7 +28,8 @@ describe('login presentation', () => {
     expect(html).toContain('href="/register"');
     expect(html).toContain('href="/"');
     expect(html).not.toContain('role="dialog"');
-    expect(html).not.toMatch(/>ID<|>EN<|Forgot password|Username or email/);
+    expect(html).toContain('href="/forgot-password"');
+    expect(html).not.toMatch(/>ID<|>EN<|Username or email/);
   });
 
   it.each(['form', 'google'] as const)('locks all authentication controls while %s is pending', busy => {
@@ -43,7 +45,7 @@ describe('login presentation', () => {
     expect(html).toContain('aria-describedby="password-error"');
     expect(html.match(/aria-invalid="true"/g)).toHaveLength(2);
     expect(html).toContain('role="alert"');
-    expect(html).toContain('Google sign-in is unavailable.');
+    expect(html).toContain('<div role="alert" data-toast="">Google sign-in is unavailable.');
   });
 
   it('retains the protected destination when switching to registration', () => {
@@ -60,6 +62,7 @@ describe('registration presentation', () => {
     expect(html).toContain('href="/login"');
     expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Continue with Google'));
     expect(html).not.toContain('Keep me signed in');
+    expect(html).not.toContain('/forgot-password');
   });
 });
 

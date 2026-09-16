@@ -17,8 +17,11 @@ export const defaults: Settings = {
   focus: [], extra: '', customized: false,
 };
 
-export const EXTRA_LIMIT = 300;
+export const EXTRA_LIMIT = 200;
+export const FOCUS_LIMIT = 3;
 export const AI_SCOPE_LIMIT = 20_000;
+export const SELECTION_LIMIT = 5_000;
+export const INLINE_LIMIT = 600;
 export const MIN_WORDS = 3;
 
 export const promptFor: Record<Mode, string> = {

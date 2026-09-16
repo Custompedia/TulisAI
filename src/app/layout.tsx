@@ -8,7 +8,7 @@ export const metadata: Metadata = {
   description: 'Ruang kerja menulis berbahasa Indonesia: parafrase, akademik, humanize, dengan pratinjau, kunci istilah, dan riwayat versi.',
 };
 
-export const viewport: Viewport = { themeColor: '#0a1024', width: 'device-width', initialScale: 1 };
+export const viewport: Viewport = { themeColor: '#faf9f6', width: 'device-width', initialScale: 1 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (

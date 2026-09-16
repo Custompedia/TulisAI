@@ -110,6 +110,7 @@ Hasil sama persis dideteksi lokal; jangan menambahkan field wajib `no_change_nee
 | C08 | Blueprint memakai contoh R2 working/current.json; revision safety perlu pointer yang tidak rusak oleh race | Catat perbaikan storage aplikasi: object per revision + conditional metadata commit; bukan fitur baru | M01-F03 |
 | C09 | Blueprint mensyaratkan Playwright; AGENTS.md melarang browser tanpa permintaan | Utamakan build/typecheck dan integration; browser/E2E belum dijalankan tanpa permintaan, keterbatasan bukti wajib dilaporkan | M09-Q03 |
 | C11 | Ringkasan/shorter v1 tidak memberi ambang numerik essential meaning | Jangan mengimpor ambang v3; ikuti prioritas protected content/makna dan warning pada §9 v1, gunakan fixture kondisi/caveat dan review manusia; jangan menyatakan validator literal membuktikan kualitas ringkasan | M06-W06/W07, M09-Q02 |
+| C12 | Prompt source switched from final v1 to `systemprompt.md` v3 on user request, 2026-09-16; supersedes C02, C06, C11 and §3 v1 lock | Selesai: prompts/schemas/validators v3 di server | M05, M06, M07 |
 | C10 | Final brand, kuota, retensi dan kebijakan provider belum diputuskan | Nama kerja tidak menghambat core; retensi sudah disetujui; default operasional 100 attempts/bulan dan 10/menit terdokumentasi; privacy provider harus diverifikasi sebelum AI publik | M00-P04, M03-D05, M05-A04, M10-R01 |
 
 Deterministic validation menjamin pemeriksaan literal/struktur yang didefinisikan, bukan bukti lengkap bahwa makna, grammar atau relasi sitasi-klaim benar; kualitas ini dinilai melalui fixture dan review hasil v1.

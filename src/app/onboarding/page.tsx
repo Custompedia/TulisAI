@@ -6,7 +6,7 @@ import { useLocale } from '@/lib/client/locale';
 import { errorText, isUnauthenticated, newKey, request } from '@/lib/client/api';
 import { Logo } from '@/components/ui/Logo';
 import { Button } from '@/components/ui/Button';
-import { Alert } from '@/components/ui/Alert';
+import { Toast } from '@/components/ui/Toast';
 import { LoadingBlock } from '@/components/ui/Spinner';
 
 type UseCase = 'academic' | 'professional' | 'general';
@@ -77,7 +77,7 @@ export default function OnboardingPage() {
               </div>
             </fieldset>
 
-            {error && <Alert tone="error" className="mt-5">{error}</Alert>}
+            {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Toast>}
             <div className="mt-8 flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
               <Button variant="ghost" loading={busy === 'skip'} disabled={busy !== null} onClick={() => void finish(true)}>{t('Lewati dulu', 'Skip for now')}</Button>
               <Button variant="primary" size="lg" iconRight={ArrowRight} loading={busy === 'continue'} disabled={busy !== null} onClick={() => void finish(false)}>{t('Lanjutkan', 'Continue')}</Button>

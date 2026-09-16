@@ -19,7 +19,8 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
   const result = previewText(preview, alternative);
   const parts = useDiff(preview.source, result);
-  const unchanged = result.trim() === preview.source.trim();
+  const unchanged = !!preview.output.no_change_needed || result.trim() === preview.source.trim();
+  const exceeds = !!preview.output.exceeds_preservation && !unchanged;
   const alternatives = preview.output.alternatives;
   const humanize = preview.settings.mode === 'humanize';
   const scopeLabel = { selection: t('Teks terpilih', 'Selection'), paragraph: t('Paragraf', 'Paragraph'), document: t('Seluruh dokumen', 'Entire document') }[preview.scope];
@@ -31,13 +32,19 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
 
   return (
     <section aria-label={t('Pratinjau hasil', 'Result preview')} className="animate-fade-up overflow-hidden rounded-xl border border-brand-200 bg-white">
-      <header className="flex items-center gap-2 border-b border-brand-100 bg-brand-50/70 px-3.5 py-2.5">
+      <header className="flex items-center gap-2 border-b border-brand-100 bg-brand-50 px-3.5 py-2.5">
         <Eye size={15} className="text-brand-700" aria-hidden="true" />
         <p className="flex-1 text-[13px] font-semibold text-brand-900">{t('Pratinjau', 'Preview')} <span className="font-normal text-brand-700">· {t('belum diterapkan', 'not applied')}</span></p>
         <span className="rounded-md bg-white px-2 py-0.5 text-[11px] font-semibold text-ink-600 ring-1 ring-brand-100">{scopeLabel}</span>
       </header>
 
       <div className="space-y-3 p-3.5">
+        {exceeds && (
+          <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900">
+            <p className="flex gap-2"><TriangleAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />{t('Hasil ini mengubah lebih banyak dari batas yang kamu pilih.', 'This result changes more than your chosen limit.')}</p>
+            <Button size="sm" className="mt-2" icon={Minus} disabled={busy || (preview.settings.strength === 'light' && preview.settings.preservation === 'conservative')} onClick={onReduce}>{t('Kurangi Perubahan', 'Reduce Changes')}</Button>
+          </div>
+        )}
         {stale && <p role="alert" className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-[13px] text-amber-900"><TriangleAlert size={15} className="mt-0.5 shrink-0" />{t('Tulisan berubah sejak hasil dibuat. Buat ulang agar editan terbarumu aman.', 'The text changed after this result was made. Regenerate to keep your latest edits safe.')}</p>}
 
         {alternatives ? (
@@ -47,7 +54,8 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
               {alternatives.map((option, index) => (
                 <label key={index} className={`flex cursor-pointer gap-2.5 rounded-lg border px-3 py-2.5 text-sm leading-relaxed transition-colors ${alternative === index ? 'border-brand-500 bg-brand-50/60' : 'border-line hover:border-ink-300'}`}>
                   <input type="radio" name="alternative" checked={alternative === index} onChange={() => onAlternative(index)} className="mt-1 accent-brand-600" />
-                  <span className="font-serif text-[15px] text-ink-900">{option.text}</span>
+                  <span className="min-w-0 flex-1 font-serif text-[15px] text-ink-900">{option.text}</span>
+                  {option.variation_level && <span className="h-fit shrink-0 rounded bg-paper-deep px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-ink-500">{option.variation_level.replace(/_/g, ' ')}</span>}
                 </label>
               ))}
             </div>
@@ -93,7 +101,7 @@ export function PreviewCard({ preview, alternative, onAlternative, stale, busy, 
           <Button size="sm" variant="ghost" icon={RefreshCw} disabled={busy} onClick={onRetry}>{t('Coba alternatif lain', 'Try another')}</Button>
           {alternatives && <Button size="sm" variant="ghost" icon={TextCursorInput} disabled={busy || stale} onClick={onInsert}>{t('Sisipkan sebagai alternatif', 'Insert as alternative')}</Button>}
           {humanize && !alternatives && <Button size="sm" variant="ghost" icon={Feather} disabled={busy} onClick={onStronger}>{t('Lebih natural', 'More natural')}</Button>}
-          {humanize && !alternatives && <Button size="sm" variant="ghost" icon={Minus} disabled={busy} onClick={onReduce}>{t('Kurangi perubahan', 'Reduce changes')}</Button>}
+          {humanize && !alternatives && !exceeds && !unchanged && <Button size="sm" variant="ghost" icon={Minus} disabled={busy} onClick={onReduce}>{t('Kurangi perubahan', 'Reduce changes')}</Button>}
         </div>
       </footer>
     </section>

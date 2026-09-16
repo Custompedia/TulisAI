@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { customConflict, defaults, detectLanguage, modeFromPrompt, runtimeControls } from "../../src/lib/writing/settings";
+import { AI_SCOPE_LIMIT, customConflict, defaults, detectLanguage, EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, modeFromPrompt, runtimeControls, SELECTION_LIMIT } from "../../src/lib/writing/settings";
 import { countSentences, repeatedWords, wordDelta } from "../../src/lib/editor/metrics";
 
 describe("writing settings", () => {
@@ -16,6 +16,9 @@ describe("writing settings", () => {
   it("falls back to a general audience when a custom audience is blank", () => {
     expect(runtimeControls({ ...defaults, audience: " ", customized: true }, "id").custom_request).toMatchObject({ audience: "general_public" });
     expect(modeFromPrompt("P03_HUMANIZER")).toBe("humanize");
+  });
+  it("exposes the v3 cost-safe limits", () => {
+    expect({ EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, AI_SCOPE_LIMIT }).toEqual({ EXTRA_LIMIT: 200, FOCUS_LIMIT: 3, INLINE_LIMIT: 600, SELECTION_LIMIT: 5_000, AI_SCOPE_LIMIT: 20_000 });
   });
 });
 

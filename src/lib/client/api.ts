@@ -19,6 +19,29 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, k
   return result?.data as T;
 }
 
+// Better Auth endpoints answer with { code, message } instead of the project envelope.
+export async function authRequest<T>(path: string, body: unknown): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/auth${path}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw new ApiError('NETWORK_ERROR', 0);
+  }
+  const result = (await response.json().catch(() => null)) as (T & { code?: unknown; message?: unknown; error?: { code?: unknown } }) | null;
+  if (!response.ok) throw new ApiError(authErrorCode(result, response.status), response.status);
+  return result as T;
+}
+
+export function authErrorCode(result: { code?: unknown; message?: unknown; error?: { code?: unknown } } | null, status: number): string {
+  if (status === 429) return 'RATE_LIMITED';
+  if (typeof result?.code === 'string' && result.code) return result.code;
+  if (typeof result?.error?.code === 'string' && result.error.code) return result.error.code;
+  if (result?.message === 'Email is the same') return 'EMAIL_THE_SAME';
+  if (status === 401) return 'UNAUTHENTICATED';
+  if (status === 503) return 'SERVICE_UNAVAILABLE';
+  return 'REQUEST_FAILED';
+}
+
 export const newKey = () => crypto.randomUUID();
 export const isUnauthenticated = (error: unknown) => error instanceof ApiError && error.status === 401;
 
@@ -28,6 +51,23 @@ export function errorText(error: unknown, english: boolean): string {
   switch (true) {
     case code === 'UNAUTHENTICATED': return t('Sesi berakhir. Masuk kembali untuk melanjutkan.', 'Your session expired. Sign in again to continue.');
     case code === 'NETWORK_ERROR': return t('Koneksi terputus. Periksa internet lalu coba lagi.', 'Connection lost. Check your internet and try again.');
+    case code === 'INVALID_PASSWORD': return t('Password saat ini salah.', 'Your current password is incorrect.');
+    case code === 'PASSWORD_TOO_SHORT': return t('Password minimal 10 karakter.', 'Password must be at least 10 characters.');
+    case code === 'PASSWORD_TOO_LONG': return t('Password maksimal 128 karakter.', 'Password must be at most 128 characters.');
+    case code === 'SESSION_NOT_FRESH' || code === 'SESSION_EXPIRED': return t('Masuk ulang dulu demi keamanan, lalu coba lagi.', 'Sign in again for security, then try again.');
+    case code === 'USERNAME_IS_ALREADY_TAKEN': return t('Username ini sudah dipakai. Coba yang lain.', 'This username is already taken. Try another.');
+    case code === 'USERNAME_TOO_SHORT': return t('Username minimal 3 karakter.', 'Username must be at least 3 characters.');
+    case code === 'USERNAME_TOO_LONG': return t('Username maksimal 30 karakter.', 'Username must be at most 30 characters.');
+    case code === 'INVALID_USERNAME': return t('Username hanya boleh huruf kecil, angka, titik, atau underscore.', 'Usernames may only use lowercase letters, numbers, periods, or underscores.');
+    case code === 'INVALID_NAME': return t('Nama harus 1–100 karakter.', 'Name must be 1–100 characters.');
+    case code === 'PASSWORD_ALREADY_SET': return t('Akun ini sudah punya password.', 'This account already has a password.');
+    case code === 'EMAIL_THE_SAME': return t('Email baru sama dengan email saat ini.', 'The new email is the same as your current email.');
+    case code === 'INVALID_EMAIL': return t('Alamat email tidak valid.', 'The email address is invalid.');
+    case code === 'INVALID_TOKEN' || code === 'TOKEN_EXPIRED': return t('Link tidak valid atau sudah kedaluwarsa. Minta link baru.', 'The link is invalid or has expired. Request a new one.');
+    case code === 'CREDENTIAL_ACCOUNT_NOT_FOUND': return t('Akun ini belum punya password.', 'This account does not have a password yet.');
+    case code === 'EMAIL_CONFIGURATION_REQUIRED': return t('Pengiriman email belum dikonfigurasi. Hubungi admin.', 'Email delivery is not configured yet. Contact the administrator.');
+    case code === 'EMAIL_SEND_FAILED': return t('Email gagal dikirim. Coba lagi sebentar lagi.', 'The email could not be sent. Try again shortly.');
+    case code === 'SERVICE_UNAVAILABLE': return t('Layanan akun sedang tidak tersedia. Coba lagi nanti.', 'Account services are temporarily unavailable. Try again later.');
     case code === 'REVISION_CONFLICT' || code === 'SOURCE_MISMATCH': return t('Dokumen berubah di tempat lain. Tulisanmu tetap aman; muat ulang atau simpan sebagai salinan.', 'The document changed elsewhere. Your writing is safe; reload or save a copy.');
     case code.includes('CONFIGURATION'): return t('Layanan AI belum dikonfigurasi. Tulisanmu tetap tersedia.', 'The AI service is not configured yet. Your writing is still available.');
     case code === 'QUOTA_EXCEEDED': return t('Batas pemakaian AI bulan ini tercapai. Coba lagi nanti.', 'You have reached this month’s AI limit. Try again later.');

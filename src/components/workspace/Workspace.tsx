@@ -8,42 +8,65 @@ import TextAlign from '@tiptap/extension-text-align';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import type { JSONContent } from '@tiptap/core';
 import { del, get, set } from 'idb-keyval';
-import { CopyPlus, LockKeyhole, RefreshCw, RotateCcw } from 'lucide-react';
+import { Bot, ChartNoAxesColumn, CopyPlus, History, PanelLeftOpen, PanelRightClose, RefreshCw, RotateCcw, X, type LucideIcon } from 'lucide-react';
+import { Group, Panel, Separator, useDefaultLayout, usePanelRef, type LayoutStorage } from 'react-resizable-panels';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/document';
-import { changePercentage, countCharacters, countWords, readingMinutes } from '@/lib/editor/metrics';
-import { AI_SCOPE_LIMIT, customConflict, defaults, detectLanguage, isMode, modeFromPrompt, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
+import { countWords } from '@/lib/editor/metrics';
+import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, customConflict, defaults, detectLanguage, isMode, modeFromPrompt, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { useSessionGuard, type UserSettings } from '@/components/app/AppShell';
 import { Alert } from '@/components/ui/Alert';
-import { Button, buttonClass } from '@/components/ui/Button';
+import { Toast } from '@/components/ui/Toast';
+import { Button, buttonClass, IconButton } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { LoadingBlock } from '@/components/ui/Spinner';
-import { AnalyticsDrawer } from './AnalyticsDrawer';
+import { AnalyticsPanel } from './AnalyticsPanel';
 import { AssistantPanel } from './AssistantPanel';
 import { CompareView } from './CompareView';
 import { documentLimits } from './document-limits';
 import { FormatToolbar } from './FormatToolbar';
-import { HistoryDrawer } from './HistoryDrawer';
+import { HistoryPanel } from './HistoryPanel';
 import { PreviewCard } from './PreviewCard';
+import { ProjectPanel } from './ProjectPanel';
 import { protectionExtension } from './protection';
 import { SelectionMenu, type SelectionCommand } from './SelectionMenu';
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Term, type Version } from './types';
-import { VersionTimeline } from './VersionTimeline';
 import { versionLabel } from './versions';
 import { WorkspaceHeader } from './WorkspaceHeader';
-import { WorkspaceRail } from './WorkspaceRail';
 
 type GenerateRequest = { scope: Scope; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; pmTo?: number };
 type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'link' | 'delete' | 'reload'; version?: Version };
 type Notice = { tone: 'success' | 'error' | 'info'; message: string; retrySave?: boolean };
 type CompareState = { a: string; b: string; before: string; after: string; loading: boolean };
+type RightTab = 'assistant' | 'history' | 'analytics';
 
 const FROZEN = new Set(['apply', 'restore', 'recover', 'delete']);
 const nextStrength = (value: string) => (value === 'light' ? 'balanced' : 'strong');
 const lowerStrength = (value: string) => (value === 'strong' ? 'balanced' : 'light');
+const layoutStorage: LayoutStorage = {
+  getItem: (key) => { try { return typeof window === 'undefined' ? null : window.localStorage.getItem(key); } catch { return null; } },
+  setItem: (key, value) => { try { window.localStorage.setItem(key, value); } catch { return; } },
+};
+const separatorClass = 'relative w-1.5 shrink-0 bg-transparent outline-none transition-colors before:absolute before:inset-y-0 before:left-1/2 before:w-px before:-translate-x-1/2 before:bg-line hover:bg-brand-100 data-[separator=hover]:bg-brand-100 data-[separator=focus]:bg-brand-200 data-[separator=active]:bg-brand-400 data-[separator=active]:before:bg-transparent';
+
+function TabStrip({ tabs, active, open, onPick }: { tabs: Array<{ id: RightTab; icon: LucideIcon; label: string }>; active: RightTab; open: boolean; onPick: (tab: RightTab) => void }) {
+  return (
+    <nav role="tablist" aria-orientation="vertical" className="flex w-12 shrink-0 flex-col items-center gap-1 border-l border-line bg-white py-2">
+      {tabs.map(({ id, icon: Icon, label }) => {
+        const selected = open && active === id;
+        return (
+          <button key={id} type="button" role="tab" aria-selected={selected} aria-label={label} title={label} onClick={() => onPick(id)}
+            className={`grid h-10 w-10 place-items-center rounded-lg transition-colors ${selected ? 'bg-brand-50 text-brand-800 ring-1 ring-brand-100' : 'text-ink-500 hover:bg-paper-deep hover:text-ink-900'}`}>
+            <Icon size={18} aria-hidden="true" />
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
 
 export default function Workspace() {
   const { id } = useParams<{ id: string }>();
@@ -68,7 +91,9 @@ export default function Workspace() {
   const [aiError, setAiError] = useState('');
   const [narrow, setNarrow] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
-  const [timelineOpen, setTimelineOpen] = useState(true);
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [rightTab, setRightTab] = useState<RightTab>('assistant');
+  const [versionsError, setVersionsError] = useState('');
   const [versions, setVersions] = useState<Version[]>([]);
   const [versionCursor, setVersionCursor] = useState<string | null>(null);
   const [loadingVersions, setLoadingVersions] = useState(false);
@@ -77,7 +102,6 @@ export default function Workspace() {
   const [alternative, setAlternative] = useState(0);
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [scope, setScope] = useState<Scope>('document');
-  const [drawer, setDrawer] = useState<'history' | 'analytics' | null>(null);
   const [compare, setCompare] = useState<CompareState | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [field, setField] = useState('');
@@ -105,6 +129,9 @@ export default function Workspace() {
   const protectedLabel = useRef('');
   const englishRef = useRef(english);
   const contentRef = useRef<JSONContent | null>(null);
+  const leftPanel = usePanelRef();
+  const rightPanel = usePanelRef();
+  const layout = useDefaultLayout({ id: 'workspace-layout', storage: layoutStorage, panelIds: ['project', 'canvas', 'assistant'] });
   latest.current = { title, settings };
   termsRef.current = terms.map((term) => term.term);
   protectedLabel.current = t('Dilindungi: tidak akan diubah AI', 'Protected: AI will not change this');
@@ -151,7 +178,7 @@ export default function Workspace() {
   useEffect(() => { editor?.view.dispatch(editor.state.tr.setMeta('refreshProtection', true)); }, [editor, terms]);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1023px)');
-    const apply = () => { setNarrow(media.matches); setPanelOpen(!media.matches); };
+    const apply = () => { setNarrow(media.matches); if (media.matches) { setPanelOpen(false); setLeftOpen(false); } };
     apply(); media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
   }, []);
@@ -172,6 +199,12 @@ export default function Workspace() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
+  useEffect(() => {
+    if (!narrow) return;
+    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { setPanelOpen(false); setLeftOpen(false); } };
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [narrow]);
   useEffect(() => { if (notice?.tone !== 'success') return; const timer = setTimeout(() => setNotice(null), 4000); return () => clearTimeout(timer); }, [notice]);
 
   const syncUrl = useCallback((params: Record<string, string | null>) => {
@@ -182,7 +215,7 @@ export default function Workspace() {
 
   const loadVersions = useCallback(async (next?: string) => {
     const page = await request<{ items: Version[]; nextCursor: string | null }>(`/api/documents/${id}/versions?limit=20${next ? `&cursor=${encodeURIComponent(next)}` : ''}`);
-    setVersions((existing) => (next ? [...existing, ...page.items] : page.items)); setVersionCursor(page.nextCursor);
+    setVersions((existing) => (next ? [...existing, ...page.items] : page.items)); setVersionCursor(page.nextCursor); setVersionsError('');
   }, [id]);
   const loadTerms = useCallback(async () => { setTerms(await request<Term[]>(`/api/documents/${id}/locks`)); }, [id]);
   const versionText = useCallback(async (versionId: string) => {
@@ -208,7 +241,7 @@ export default function Workspace() {
       if (value.originalVersionId) versionText(value.originalVersionId).then(setOriginal).catch(() => setOriginal(null));
       const draft = await get<Draft>(cacheKey.current).catch(() => undefined);
       if (isLive() && localDrafts.current && draft?.owner === user.id && (JSON.stringify(draft.content) !== JSON.stringify(value.content) || draft.title !== value.title)) setRecovery(draft);
-      const panelParam = search.get('panel'); if (panelParam === 'history' || panelParam === 'analytics') setDrawer(panelParam);
+      const panelParam = search.get('panel'); if (panelParam === 'history' || panelParam === 'analytics') { openRight(panelParam); syncUrl({ panel: null }); }
       if (isLive()) { initializing.current = false; setLoaded(true); }
     } catch (caught) { if (isLive() && !guard(caught)) setLoadError(errorText(caught, english)); }
   });
@@ -304,7 +337,7 @@ export default function Workspace() {
     if (!editor || busy) return;
     const effective = req.override ?? latest.current.settings;
     const conflict = effective.customized || effective.mode === 'custom' ? customConflict(effective, termsRef.current) : null;
-    setPanelOpen(true);
+    openRight('assistant');
     if (conflict) { setAiError(conflict === 'summary-detail' ? t('Ringkasan tidak bisa digabung dengan "Lebih detail". Ubah salah satunya di Sesuaikan.', 'A summary cannot be combined with "More detailed". Change one in Customize.') : t('Permintaan tambahan menyebut istilah yang dikunci. Buka kunci istilah itu dulu jika ingin mengubahnya.', 'Your additional request mentions a locked term. Unlock it first if you want it changed.')); return; }
     setBusy('generate'); setAiError(''); setLastRequest(req);
     try {
@@ -314,7 +347,8 @@ export default function Workspace() {
       const resolved = resolveScope(req, full);
       if (typeof resolved === 'string') { setAiError(resolved); return; }
       if (!resolved.source.trim()) { setAiError(t('Bagian yang dipilih masih kosong.', 'The chosen part is empty.')); return; }
-      if (resolved.source.length > AI_SCOPE_LIMIT) { setAiError(t(`Terlalu panjang untuk sekali proses (maks. ${numberFormat(AI_SCOPE_LIMIT, 'id')} karakter). Pilih paragraf atau blok sebagian teks.`, `Too long for one run (max ${numberFormat(AI_SCOPE_LIMIT, 'en')} characters). Choose a paragraph or select part of the text.`)); return; }
+      const limit = req.inlineAction ? INLINE_LIMIT : req.scope === 'document' ? AI_SCOPE_LIMIT : SELECTION_LIMIT;
+      if (resolved.source.length > limit) { setAiError(req.scope === 'selection' ? t(`${numberFormat(resolved.source.length, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan.`, `${numberFormat(resolved.source.length, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection.`) : t(`Terlalu panjang untuk sekali proses (maks. ${numberFormat(limit, 'id')} karakter). Pilih paragraf atau blok sebagian teks.`, `Too long for one run (max ${numberFormat(limit, 'en')} characters). Choose a paragraph or select part of the text.`)); return; }
       const plainList = effective.mode === 'custom' && (effective.format === 'bullets' || effective.format === 'numbered_list') && effective.length === 'same' && !effective.focus.length && !effective.extra.trim();
       if (plainList && !req.inlineAction && req.scope !== 'paragraph' && resolved.source.split('\n').filter((line) => line.trim()).length >= 2) {
         const listType = effective.format === 'bullets' ? 'bulletList' : 'orderedList';
@@ -334,7 +368,7 @@ export default function Workspace() {
       }, newKey());
       setPreview({ ...result, source: resolved.source, stamp: captured, anchor: resolved.anchor, settings: effective, scope: req.anchor ? (req.scope === 'document' ? 'document' : req.scope) : req.scope, revision: saved.revision, inlineAction: req.inlineAction, pmTo: resolved.pmTo });
       setAlternative(0);
-    } catch (caught) { if (!guard(caught)) setAiError(errorText(caught, english)); }
+    } catch (caught) { if (!guard(caught)) setAiError(errorText(caught instanceof ApiError && caught.code.toUpperCase() === 'SCOPE_TOO_LARGE' ? new ApiError('SCOPE_TOO_LARGE', caught.status) : caught, english)); }
     finally { setBusy(''); }
   }
 
@@ -392,24 +426,24 @@ export default function Workspace() {
     switch (command) {
       case 'lock': void lockSelection(); return;
       case 'unlock': { const term = terms.find((item) => item.term === selection.text.trim()); if (term) void unlock(term); return; }
-      case 'custom': { const next = { ...base, mode: 'custom' as const }; setSettings(next); markMetadata(title, next); setScope('selection'); setPanelOpen(true); return; }
+      case 'custom': { const next = { ...base, mode: 'custom' as const }; setSettings(next); markMetadata(title, next); setScope('selection'); openRight('assistant'); return; }
       case 'humanize': void generate({ scope: 'selection', override: { ...base, mode: 'humanize', context: base.mode === 'academic' ? 'academic' : base.mode === 'professional' ? 'professional' : base.context } }); return;
       case 'academic': void generate({ scope: 'selection', override: { ...base, mode: 'academic' } }); return;
       default:
+        if (selection.text.length > INLINE_LIMIT) { openRight('assistant'); setAiError(t(`${numberFormat(selection.text.length, 'id')}/${numberFormat(INLINE_LIMIT, 'id')} karakter — persingkat pilihan.`, `${numberFormat(selection.text.length, 'en')}/${numberFormat(INLINE_LIMIT, 'en')} characters — shorten the selection.`)); return; }
         if (!multi) { void generate({ scope: 'selection', inlineAction: command }); return; }
-        if (command === 'alternatives') { setPanelOpen(true); setAiError(t('Alternatif hanya untuk kata, frasa, atau satu kalimat. Pilih bagian yang lebih kecil.', 'Alternatives work on a word, phrase, or single sentence. Select a smaller part.')); return; }
-        void generate({ scope: 'selection', override: command === 'clearer' ? { ...base, mode: 'simplify' } : command === 'shorter' ? { ...base, mode: 'standard', customized: true, length: 'shorter' } : { ...base, mode: 'standard' } });
+        if (command === 'alternatives') { openRight('assistant'); setAiError(t('Alternatif hanya untuk kata, frasa, atau satu kalimat. Pilih bagian yang lebih kecil.', 'Alternatives work on a word, phrase, or single sentence. Select a smaller part.')); return; }
+        void generate({ scope: 'selection', override: command === 'clearer' ? { ...base, mode: 'simplify' } : command === 'shorter' ? { ...base, mode: 'standard', customized: true, length: 'shorter' } : command === 'formal' ? { ...base, mode: 'professional' } : command === 'natural' ? { ...base, mode: 'humanize' } : { ...base, mode: 'standard' } });
     }
   }
 
   async function openCompare(a: string, b: string) {
-    setDrawer(null);
     setCompare({ a, b, before: '', after: '', loading: true });
     const resolve = async (side: string) => side === WORKING ? documentText(editor?.getJSON() ?? plainTextDocument('')) : side === PREVIEW ? (preview ? previewText(preview, alternative) : '') : side === SOURCE ? (preview?.source ?? '') : versionText(side);
     try {
       const [before, after] = await Promise.all([resolve(a), resolve(b)]);
       setCompare({ a, b, before, after, loading: false });
-      syncUrl({ panel: null, compare: [a, b].some((side) => side === PREVIEW || side === SOURCE) ? null : `${a}:${b}` });
+      syncUrl({ compare: [a, b].some((side) => side === PREVIEW || side === SOURCE) ? null : `${a}:${b}` });
     } catch (caught) { setCompare(null); if (!guard(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); }
   }
   function exitCompare() { setCompare(null); syncUrl({ compare: null }); }
@@ -423,14 +457,22 @@ export default function Workspace() {
   });
   useEffect(() => { runInitialCompare(); }, [loaded]);
 
-  function openDrawer(kind: 'history' | 'analytics') { setDrawer(kind); syncUrl({ panel: kind, compare: null }); setCompare(null); }
-  function closeDrawer() { setDrawer(null); syncUrl({ panel: null }); }
+  function openRight(tab: RightTab) { setRightTab(tab); setPanelOpen(true); rightPanel.current?.expand(); }
+  function closeRight() { setPanelOpen(false); rightPanel.current?.collapse(); }
+  function toggleRight() { if (panelOpen) closeRight(); else openRight(rightTab); }
+  function pickTab(tab: RightTab) { if (panelOpen && rightTab === tab && !narrow) closeRight(); else openRight(tab); }
+  function toggleLeft() { if (leftOpen) { setLeftOpen(false); leftPanel.current?.collapse(); } else { setLeftOpen(true); leftPanel.current?.expand(); } }
+  function loadMoreVersions() {
+    if (!versionCursor || loadingVersions) return;
+    setLoadingVersions(true); setVersionsError('');
+    void loadVersions(versionCursor).catch((caught) => { if (!guard(caught)) setVersionsError(errorText(caught, english)); }).finally(() => setLoadingVersions(false));
+  }
 
   async function duplicateVersion(version: Version) {
     await run('duplicate', async () => {
       const content = (await request<{ content: JSONContent }>(`/api/documents/${id}/versions/${version.id}`)).content;
       const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: settings }, newKey());
-      router.push(`/documents/${copy.id}`);
+      router.push(`/projects/${copy.id}`);
     });
   }
 
@@ -462,7 +504,7 @@ export default function Workspace() {
         if (href) editor.chain().focus().extendMarkRange('link').setLink({ href }).run(); else editor.chain().focus().extendMarkRange('link').unsetLink().run();
       } else if (active.kind === 'delete') {
         await request(`/api/documents/${id}`, 'DELETE', {}, newKey()); await del(cacheKey.current).catch(() => undefined);
-        dirty.current = false; metaDirty.current = false; router.push('/documents'); return;
+        dirty.current = false; metaDirty.current = false; router.push('/projects'); return;
       } else if (active.kind === 'reload') {
         window.location.reload(); return;
       } else if (active.kind === 'rename' && active.version) {
@@ -493,7 +535,7 @@ export default function Workspace() {
     await run('recover', async () => {
       if (mode === 'copy') {
         const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: draft.settings }, newKey());
-        await del(cacheKey.current).catch(() => undefined); setRecovery(null); router.push(`/documents/${copy.id}`); return;
+        await del(cacheKey.current).catch(() => undefined); setRecovery(null); router.push(`/projects/${copy.id}`); return;
       }
       if (mode === 'discard') { await del(cacheKey.current).catch(() => undefined); setRecovery(null); return; }
       editor.commands.setContent(draft.content, { emitUpdate: false }); contentRef.current = draft.content;
@@ -506,7 +548,7 @@ export default function Workspace() {
     if (!editor) return;
     await run('copy', async () => {
       const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: settings }, newKey());
-      dirty.current = false; metaDirty.current = false; await del(cacheKey.current).catch(() => undefined); router.push(`/documents/${copy.id}`);
+      dirty.current = false; metaDirty.current = false; await del(cacheKey.current).catch(() => undefined); router.push(`/projects/${copy.id}`);
     });
   }
 
@@ -524,24 +566,25 @@ export default function Workspace() {
 
   if (loadError) {
     return (
-      <main className="grid min-h-dvh place-items-center bg-paper px-4">
-        <div className="w-full max-w-md"><Alert tone="error" title={t('Dokumen tidak bisa dibuka', 'The document could not be opened')} actions={<><Button size="sm" icon={RefreshCw} onClick={() => window.location.reload()}>{t('Muat ulang', 'Reload')}</Button><Link href="/documents" className={buttonClass('secondary', 'sm')}>{t('Ke daftar dokumen', 'Go to documents')}</Link></>}>{loadError}</Alert></div>
+      <main className="grid flex-1 place-items-center bg-paper px-4">
+        <div className="w-full max-w-md"><Alert tone="error" title={t('Dokumen tidak bisa dibuka', 'The document could not be opened')} actions={<><Button size="sm" icon={RefreshCw} onClick={() => window.location.reload()}>{t('Muat ulang', 'Reload')}</Button><Link href="/projects" className={buttonClass('secondary', 'sm')}>{t('Ke daftar proyek', 'Go to projects')}</Link></>}>{loadError}</Alert></div>
       </main>
     );
   }
 
   const words = countWords(text);
-  const panel = (
+  const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
+  const assistant = (
     <AssistantPanel
-      settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} detected={detected}
-      busy={busy !== '' || !loaded} generating={busy === 'generate'} aiError={aiError} onRetry={() => void generate(lastRequest ?? { scope })} onDismissError={() => setAiError('')}
-      onGenerate={() => void generate({ scope })} onClose={() => setPanelOpen(false)} terms={terms} text={text} onUnlock={(term) => void unlock(term)}
+      settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
+      busy={busy !== '' || !loaded} generating={busy === 'generate'}
+      onGenerate={() => void generate({ scope })}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
     >
       {preview && (
         <PreviewCard
           preview={preview} alternative={alternative} onAlternative={setAlternative} stale={stale} busy={busy !== ''} applying={busy === 'apply'}
-          onApply={() => void apply()} onCompare={() => void openCompare(SOURCE, PREVIEW)} onDiscard={() => void discard()}
+          onApply={() => void apply()} onCompare={() => { closeOnNarrow(); void openCompare(SOURCE, PREVIEW); }} onDiscard={() => void discard()}
           onRetry={() => void generate(lastRequest ? { ...lastRequest, override: preview.settings, anchor: preview.anchor, pmTo: preview.pmTo } : { scope })} onInsert={insertAlternative}
           onStronger={() => void generate({ scope: preview.scope, anchor: preview.anchor, pmTo: preview.pmTo, inlineAction: preview.inlineAction, override: { ...preview.settings, strength: nextStrength(preview.settings.strength) as Settings['strength'], preservation: preview.settings.strength === 'strong' ? 'flexible' : preview.settings.preservation } })}
           onReduce={() => void generate({ scope: preview.scope, anchor: preview.anchor, pmTo: preview.pmTo, override: { ...preview.settings, strength: lowerStrength(preview.settings.strength) as Settings['strength'], preservation: 'conservative' } })}
@@ -550,75 +593,126 @@ export default function Workspace() {
     </AssistantPanel>
   );
 
-  return (
-    <div className="flex h-dvh overflow-hidden bg-paper">
-      <WorkspaceRail currentId={id} />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <WorkspaceHeader
-          title={title} onTitle={(value) => { setTitle(value); markMetadata(value, settings); }} mode={settings.mode} language={settings.language} save={loaded ? save : 'loading'} disabled={!loaded || frozen}
-          panelOpen={panelOpen} onOpenPanel={() => setPanelOpen(true)} onCompare={() => (compare ? exitCompare() : defaultCompare())} onHistory={() => openDrawer('history')} onAnalytics={() => openDrawer('analytics')}
-          onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} onDelete={() => setDialog({ kind: 'delete' })} comparing={!!compare}
-        />
-
-        {(notice || save === 'conflict') && (
-          <div className="space-y-2 border-b border-line bg-white px-4 py-2.5">
-            {save === 'conflict' && (
-              <Alert tone="warning" title={t('Dokumen berubah di tempat lain', 'The document changed elsewhere')} actions={<><Button size="sm" icon={CopyPlus} loading={busy === 'copy'} onClick={() => void copyAsNew()}>{t('Simpan tulisanku sebagai dokumen baru', 'Save my text as a new document')}</Button><Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => setDialog({ kind: 'reload' })}>{t('Muat salinan server', 'Load server copy')}</Button></>}>
-                {t('Perubahanmu belum ditimpa dan masih ada di layar ini.', 'Nothing was overwritten; your changes are still on this screen.')}
-              </Alert>
-            )}
-            {notice && <Alert tone={notice.tone} onDismiss={() => setNotice(null)} dismissLabel={t('Tutup', 'Dismiss')} actions={notice.retrySave ? <Button size="sm" icon={RefreshCw} onClick={() => { setNotice(null); setSave('dirty'); void flush().catch(() => undefined); }}>{t('Coba simpan lagi', 'Retry saving')}</Button> : undefined}>{notice.message}</Alert>}
+  const tabs: Array<{ id: RightTab; icon: LucideIcon; label: string }> = [
+    { id: 'assistant', icon: Bot, label: t('Asisten AI', 'AI assistant') }, { id: 'history', icon: History, label: t('Riwayat', 'History') }, { id: 'analytics', icon: ChartNoAxesColumn, label: t('Analisis', 'Analytics') },
+  ];
+  const activeTab = tabs.find((tab) => tab.id === rightTab) ?? { id: 'assistant', icon: Bot, label: t('Asisten AI', 'AI assistant') };
+  const TabIcon = activeTab.icon;
+  const rightContent = (
+    <section aria-label={activeTab.label} className="flex h-full min-w-0 flex-col bg-white">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line pl-4 pr-2">
+        <TabIcon size={16} className="shrink-0 text-brand-700" aria-hidden="true" />
+        <h2 className="flex-1 truncate text-sm font-semibold text-ink-900">{activeTab.label}</h2>
+        <IconButton size="sm" icon={narrow ? X : PanelRightClose} label={t('Tutup panel', 'Close panel')} onClick={closeRight} />
+      </header>
+      <div role="tabpanel" aria-label={activeTab.label} className="min-h-0 flex-1">
+        {rightTab === 'assistant' ? assistant : rightTab === 'history' ? (
+          <HistoryPanel
+            versions={versions} currentRevision={doc?.revision ?? null} originalId={doc?.originalVersionId ?? null} loading={!loaded} hasMore={!!versionCursor} loadingMore={loadingVersions} error={versionsError}
+            busy={busy !== ''} canSave={loaded && !frozen} onLoadMore={loadMoreVersions} onRetry={loadMoreVersions} onSave={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} loadText={versionText}
+            onCompare={(version) => { closeOnNarrow(); void openCompare(version.id, WORKING); }} onRestore={(version) => setDialog({ kind: 'restore', version })}
+            onRename={(version) => { setField(version.label ?? ''); setDialog({ kind: 'rename', version }); }} onDuplicate={(version) => void duplicateVersion(version)}
+          />
+        ) : (
+          <div className="scrollbar-thin h-full overflow-y-auto">
+            <AnalyticsPanel text={text} original={original} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} quality={quality} stale={!!quality && quality.stamp !== editStamp}
+              loading={qualityState.loading} error={qualityState.error} onAnalyze={() => void analyze()}
+              blockedReason={!loaded ? t('Dokumen masih dimuat.', 'The document is still loading.') : !text.trim() ? t('Dokumen masih kosong.', 'The document is empty.') : (selection?.text ?? text).length > AI_SCOPE_LIMIT ? t('Terlalu panjang untuk dianalisis sekaligus. Blok sebagian teks terlebih dahulu.', 'Too long to analyse at once. Select part of the text first.') : null} />
           </div>
         )}
+      </div>
+    </section>
+  );
 
-        <div className="flex min-h-0 flex-1">
-          <main className="flex min-w-0 flex-1 flex-col">
-            {compare && (
-              <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''}
-                onChange={(a, b) => void openCompare(a, b)} onExit={exitCompare}
-                onRestore={(versionId) => { const version = versions.find((item) => item.id === versionId); if (version) setDialog({ kind: 'restore', version }); }}
-                onApplyPreview={preview && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
-            )}
-            <div className={compare ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
-              {editor && <div className="flex justify-center px-3 pt-3 sm:px-6"><div className="w-full max-w-[816px]"><FormatToolbar editor={editor} disabled={!loaded || frozen || !!recovery} onLink={() => { setField(String(editor.getAttributes('link').href ?? '')); setDialog({ kind: 'link' }); }} /></div></div>}
-              <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
-                <article className="editor-prose relative mx-auto min-h-full max-w-[816px] rounded-md bg-white px-6 py-10 shadow-[0_1px_3px_rgb(10_16_36/0.06),0_8px_24px_-12px_rgb(10_16_36/0.12)] ring-1 ring-line sm:px-16 sm:py-16">
-                  {!loaded && <LoadingBlock label={t('Memuat dokumen…', 'Loading document…')} />}
-                  {loaded && !text.trim() && <p aria-hidden="true" className="pointer-events-none absolute left-6 top-10 font-serif text-lg text-ink-300 sm:left-16 sm:top-16">{t('Mulai menulis atau tempel teks di sini…', 'Start writing or paste text here…')}</p>}
-                  <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
-                  {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} onCommand={selectionCommand} />}
-                </article>
-              </div>
-              <footer className="flex h-9 shrink-0 items-center gap-4 border-t border-line bg-white px-4 text-xs text-ink-500">
-                <span><b className="font-semibold text-ink-800">{numberFormat(words, locale)}</b> {t('kata', 'words')}</span>
-                <span className="hidden sm:inline">{numberFormat(countCharacters(text), locale)} {t('karakter', 'characters')}</span>
-                <span>≈ {readingMinutes(text)} {t('mnt baca', 'min read')}</span>
-                {original !== null && versions.some((version) => version.kind !== 'original') && <span className="hidden md:inline">{changePercentage(original, text)}% {t('berubah dari Original', 'changed from Original')}</span>}
-                {terms.length > 0 && <span className="ml-auto inline-flex items-center gap-1 text-amber-700"><LockKeyhole size={12} aria-hidden="true" />{terms.length} {t('istilah dikunci', 'locked')}</span>}
-              </footer>
-            </div>
-            <VersionTimeline versions={versions} open={timelineOpen} onToggle={() => setTimelineOpen(!timelineOpen)} onPick={(version) => void openCompare(version.id, WORKING)} onHistory={() => openDrawer('history')} onSave={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} disabled={!loaded || frozen} dirty={save !== 'saved'} />
-          </main>
+  const leftContent = (
+    <section aria-label={t('Proyek', 'Project')} className="flex h-full min-w-0 flex-col bg-white">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line pl-4 pr-2">
+        <h2 className="flex-1 truncate text-sm font-semibold text-ink-900">{t('Proyek', 'Project')}</h2>
+        <IconButton size="sm" icon={X} label={t('Tutup panel Proyek', 'Close project panel')} onClick={toggleLeft} />
+      </header>
+      <div className="min-h-0 flex-1">
+        <ProjectPanel editor={editor} loaded={loaded} navigable={!compare} text={text} original={original} hasChanges={versions.some((version) => version.kind !== 'original')} terms={terms} busy={busy !== ''}
+          onUnlock={(term) => void unlock(term)} onNavigate={() => { if (narrow) setLeftOpen(false); }} />
+      </div>
+    </section>
+  );
 
-          {panelOpen && (narrow ? (
-            <>
-              <div className="fixed inset-0 z-40 bg-ink-950/40" aria-hidden="true" onClick={() => setPanelOpen(false)} />
-              <aside aria-label={t('Asisten AI', 'AI assistant')} className="fixed inset-y-0 right-0 z-50 w-full max-w-sm bg-white shadow-2xl animate-slide-in">{panel}</aside>
-            </>
-          ) : <aside aria-label={t('Asisten AI', 'AI assistant')} className="w-[360px] shrink-0 border-l border-line bg-white">{panel}</aside>)}
+  const center = (
+    <main className="flex h-full min-w-0 flex-col">
+      {compare && (
+        <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''}
+          onChange={(a, b) => void openCompare(a, b)} onExit={exitCompare}
+          onRestore={(versionId) => { const version = versions.find((item) => item.id === versionId); if (version) setDialog({ kind: 'restore', version }); }}
+          onApplyPreview={preview && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
+      )}
+      <div className={compare ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}>
+        {editor && <div className="flex shrink-0 justify-center px-3 pt-3 sm:px-6"><div className="w-full max-w-[816px]"><FormatToolbar editor={editor} disabled={!loaded || frozen || !!recovery} onLink={() => { setField(String(editor.getAttributes('link').href ?? '')); setDialog({ kind: 'link' }); }} /></div></div>}
+        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-3 py-5 sm:px-6">
+          <article className="editor-prose relative mx-auto min-h-full max-w-[816px] rounded-md bg-white px-6 py-10 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-14px_rgb(0_0_0/0.12)] ring-1 ring-line sm:px-16 sm:py-16">
+            {!loaded && <LoadingBlock label={t('Memuat dokumen…', 'Loading document…')} />}
+            {loaded && !text.trim() && <p aria-hidden="true" className="pointer-events-none absolute left-6 top-10 font-serif text-lg text-ink-300 sm:left-16 sm:top-16">{t('Mulai menulis atau tempel teks di sini…', 'Start writing or paste text here…')}</p>}
+            <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
+            {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} chars={selection?.text.length ?? 0} onCommand={selectionCommand} />}
+          </article>
         </div>
       </div>
+    </main>
+  );
 
-      {drawer === 'history' && (
-        <HistoryDrawer versions={versions} hasMore={!!versionCursor} loadingMore={loadingVersions} busy={busy !== ''} onClose={closeDrawer}
-          onLoadMore={() => { if (!versionCursor) return; setLoadingVersions(true); void loadVersions(versionCursor).catch((caught) => setNotice({ tone: 'error', message: errorText(caught, english) })).finally(() => setLoadingVersions(false)); }}
-          onCompare={(version) => void openCompare(version.id, WORKING)} onRestore={(version) => setDialog({ kind: 'restore', version })}
-          onRename={(version) => { setField(version.label ?? ''); setDialog({ kind: 'rename', version }); }} onDuplicate={(version) => void duplicateVersion(version)} />
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-paper">
+      <WorkspaceHeader
+        title={title} onTitle={(value) => { setTitle(value); markMetadata(value, settings); }} mode={settings.mode} words={words} save={loaded ? save : 'loading'} disabled={!loaded || frozen} comparing={!!compare}
+        leftOpen={leftOpen} rightOpen={panelOpen} onToggleLeft={toggleLeft} onToggleRight={toggleRight} onMode={() => openRight('assistant')}
+        onCompare={() => (compare ? exitCompare() : defaultCompare())} onHistory={() => openRight('history')} onAnalytics={() => openRight('analytics')}
+        onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} onDelete={() => setDialog({ kind: 'delete' })}
+      />
+
+      {save === 'conflict' && (
+        <Toast tone="warning" title={t('Dokumen berubah di tempat lain', 'The document changed elsewhere')} actions={<><Button size="sm" icon={CopyPlus} loading={busy === 'copy'} onClick={() => void copyAsNew()}>{t('Simpan sebagai proyek baru', 'Save as a new project')}</Button><Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => setDialog({ kind: 'reload' })}>{t('Muat salinan server', 'Load server copy')}</Button></>}>
+          {t('Perubahanmu belum ditimpa dan masih ada di layar ini.', 'Nothing was overwritten; your changes are still on this screen.')}
+        </Toast>
       )}
-      {drawer === 'analytics' && (
-        <AnalyticsDrawer text={text} original={original} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} quality={quality} stale={!!quality && quality.stamp !== editStamp}
-          loading={qualityState.loading} error={qualityState.error} onAnalyze={() => void analyze()} onClose={closeDrawer}
-          blockedReason={!text.trim() ? t('Dokumen masih kosong.', 'The document is empty.') : (selection?.text ?? text).length > AI_SCOPE_LIMIT ? t('Terlalu panjang untuk dianalisis sekaligus. Blok sebagian teks terlebih dahulu.', 'Too long to analyse at once. Select part of the text first.') : null} />
+      {notice && <Toast tone={notice.tone} onDismiss={() => setNotice(null)} dismissLabel={t('Tutup', 'Dismiss')} actions={notice.retrySave ? <Button size="sm" icon={RefreshCw} onClick={() => { setNotice(null); setSave('dirty'); void flush().catch(() => undefined); }}>{t('Coba simpan lagi', 'Retry saving')}</Button> : undefined}>{notice.message}</Toast>}
+      {aiError && busy !== 'generate' && <Toast tone="error" onDismiss={() => setAiError('')} dismissLabel={t('Tutup', 'Dismiss')} actions={<Button size="sm" icon={RefreshCw} onClick={() => void generate(lastRequest ?? { scope })}>{t('Coba lagi', 'Retry')}</Button>}>{aiError}</Toast>}
+
+      {narrow ? (
+        <div className="flex min-h-0 flex-1">{center}</div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <Group orientation="horizontal" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged} className="min-w-0 flex-1">
+            <Panel id="project" panelRef={leftPanel} defaultSize="20%" minSize="14%" maxSize="28%" collapsible collapsedSize="40px" onResize={(size) => setLeftOpen(size.inPixels > 48)}>
+              {leftOpen ? leftContent : (
+                <div className="flex h-full flex-col items-center bg-white py-2">
+                  <IconButton size="sm" icon={PanelLeftOpen} label={t('Buka panel Proyek', 'Open project panel')} onClick={toggleLeft} />
+                </div>
+              )}
+            </Panel>
+            <Separator aria-label={t('Ubah lebar panel Proyek', 'Resize project panel')} className={separatorClass} />
+            <Panel id="canvas" minSize="40%">{center}</Panel>
+            <Separator aria-label={t('Ubah lebar panel Asisten', 'Resize assistant panel')} className={separatorClass} />
+            <Panel id="assistant" panelRef={rightPanel} defaultSize="28%" minSize="22%" maxSize="40%" collapsible collapsedSize="0%" onResize={(size) => setPanelOpen(size.inPixels > 1)}>
+              {panelOpen && rightContent}
+            </Panel>
+          </Group>
+          <TabStrip tabs={tabs} active={rightTab} open={panelOpen} onPick={pickTab} />
+        </div>
+      )}
+
+      {narrow && leftOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-ink-900/30" aria-hidden="true" onClick={() => setLeftOpen(false)} />
+          <aside className="fixed inset-y-0 left-0 z-50 w-full max-w-xs border-r border-line bg-white shadow-2xl">{leftContent}</aside>
+        </>
+      )}
+      {narrow && panelOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-ink-900/30" aria-hidden="true" onClick={() => setPanelOpen(false)} />
+          <aside aria-label={activeTab.label} className="fixed inset-y-0 right-0 z-50 flex w-full max-w-md bg-white shadow-2xl animate-slide-in">
+            <div className="min-w-0 flex-1">{rightContent}</div>
+            <TabStrip tabs={tabs} active={rightTab} open={panelOpen} onPick={pickTab} />
+          </aside>
+        </>
       )}
 
       {dialog?.kind === 'checkpoint' && (

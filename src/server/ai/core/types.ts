@@ -6,28 +6,23 @@ export const promptIds = [
 ] as const;
 export type PromptId = (typeof promptIds)[number];
 
+// Trusted runtime controls; camelCase or snake_case UI values are mapped to v3 enums by normalizeRuntime.
 export type RuntimeInput = {
-  sourceText?: string;
-  selectedText?: string;
-  contextBefore?: string | null;
-  contextAfter?: string | null;
-  language?: "id" | "en";
-  strength?: "light" | "balanced" | "strong";
-  protectedTerms?: string[];
-  protectedCitations?: string[];
-  academicContext?: string; audience?: string | null; length?: string; humanizerContext?: string;
-  preservation?: string; documentType?: string; creativeGoal?: string; creativityStrength?: string;
-  targetAudience?: string; readingLevel?: string | null; outputFormat?: string; action?: string;
-  activeMode?: string; format?: string; focus?: string[]; extraRequest?: string | null;
-  failedOutput?: string; originalScope?: string; requiredProtectedTerms?: string[]; requiredProtectedCitations?: string[];
-  customRequest?: Record<string, unknown>;
-  context?: string; requested_dimensions?: string[]; rubric?: Record<string, string>;
+  [key: string]: unknown;
+  sourceText?: string; selectedText?: string; contextBefore?: string | null; contextAfter?: string | null;
+  language?: "id" | "en"; strength?: string; protectedTerms?: string[]; protectedCitations?: string[];
   protected_terms?: string[]; protected_citations?: string[];
-  required_protected_terms?: string[]; required_protected_citations?: string[];
-  source_text?: string; selected_text?: string; context_before?: string | null; context_after?: string | null;
-  academic_context?: string; humanizer_context?: string; document_type?: string; creative_goal?: string; creativity_strength?: string;
-  target_audience?: string; reading_level?: string | null; output_format?: string; active_mode?: string; extra_request?: string | null;
-  failed_output?: string; original_scope?: string; custom_request?: Record<string, unknown>;
+  requiredProtectedTerms?: string[]; requiredProtectedCitations?: string[]; required_protected_terms?: string[]; required_protected_citations?: string[];
+  failedOutput?: string; originalScope?: string; failed_output?: string; original_scope?: string;
+  preservation?: string; request?: ControlRequest; custom_request?: Record<string, unknown>;
+};
+
+export type ControlRequest = {
+  format: "paragraf" | "poin" | "bernomor" | "tabel" | "ringkasan";
+  length?: "lebih singkat" | "sama" | "lebih detail";
+  audience?: "dosen" | "profesional" | "klien" | "umum";
+  focus: string[];
+  additional_instruction: string;
 };
 
 export type AIResponse = Record<string, unknown>;
@@ -52,6 +47,7 @@ export type ProviderResult = {
 export type PromptDefinition = {
   id: PromptId;
   systemPrompt: string;
+  reasoningEffort: "none" | "low";
   outputSchema: z.ZodType<AIResponse>;
   responseFormat: Record<string, unknown>;
 };

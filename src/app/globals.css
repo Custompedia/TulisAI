@@ -4,33 +4,42 @@
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-serif: "Source Serif 4", Georgia, "Times New Roman", serif;
 
-  --color-paper: #f7f5f0;
-  --color-paper-deep: #efebe3;
-  --color-line: #e5e1d8;
-  --color-line-strong: #d3cdc0;
+  --color-paper: #faf9f6;
+  --color-paper-deep: #f3f2ec;
+  --color-line: #e8e9e1;
+  --color-line-strong: #d8dacf;
 
-  --color-ink-50: #f3f5fa;
-  --color-ink-100: #e4e8f2;
-  --color-ink-200: #c9d1e3;
-  --color-ink-300: #9daac6;
-  --color-ink-400: #6b7a9e;
-  --color-ink-500: #4a5878;
-  --color-ink-600: #36425e;
-  --color-ink-700: #27314a;
-  --color-ink-800: #1a2238;
-  --color-ink-900: #111831;
-  --color-ink-950: #0a1024;
+  --color-ink-50: #f6f6f3;
+  --color-ink-100: #ecece7;
+  --color-ink-200: #dcdcd5;
+  --color-ink-300: #b9bab1;
+  --color-ink-400: #95968d;
+  --color-ink-500: #73746c;
+  --color-ink-600: #5b5c55;
+  --color-ink-700: #474842;
+  --color-ink-800: #393a35;
+  --color-ink-900: #30312d;
+  --color-ink-950: #1f201d;
 
-  --color-brand-50: #eef3ff;
-  --color-brand-100: #dce6ff;
-  --color-brand-200: #bacbff;
-  --color-brand-300: #8da9fb;
-  --color-brand-400: #5c7ff3;
-  --color-brand-500: #3561e6;
-  --color-brand-600: #2449cc;
-  --color-brand-700: #1d3aa6;
-  --color-brand-800: #1c3385;
-  --color-brand-900: #1c2f6a;
+  --color-brand-50: #eef2e9;
+  --color-brand-100: #e3e9dc;
+  --color-brand-200: #cdd7c1;
+  --color-brand-300: #aebb9f;
+  --color-brand-400: #879a76;
+  --color-brand-500: #718661;
+  --color-brand-600: #5d7350;
+  --color-brand-700: #4f6642;
+  --color-brand-800: #425b34;
+  --color-brand-900: #34472a;
+
+  --color-mode-green-ink: #48632e; --color-mode-green-fill: #e0edcf; --color-mode-green-edge: #c5d8ad; --color-mode-green-light: #f2f8eb;
+  --color-mode-blue-ink: #355987; --color-mode-blue-fill: #dae8fc; --color-mode-blue-edge: #b7ccea; --color-mode-blue-light: #eff5ff;
+  --color-mode-orange-ink: #925a31; --color-mode-orange-fill: #fbe2cf; --color-mode-orange-edge: #e9c5a6; --color-mode-orange-light: #fff5eb;
+  --color-mode-slate-ink: #3e617a; --color-mode-slate-fill: #dce8ef; --color-mode-slate-edge: #b9ccd9; --color-mode-slate-light: #f0f5f8;
+  --color-mode-pink-ink: #8b4960; --color-mode-pink-fill: #f6dce2; --color-mode-pink-edge: #dfb5c1; --color-mode-pink-light: #fff0f1;
+  --color-mode-gold-ink: #856522; --color-mode-gold-fill: #f7e9ba; --color-mode-gold-edge: #decc8f; --color-mode-gold-light: #fff9e5;
+
+  --shadow-raised: 0 4px 20px rgb(0 0 0 / 20%), inset 0 -4px 10px #000, inset 0 4px 4px rgb(255 255 255 / 20%);
 
   --animate-fade-up: fade-up 0.5s ease-out both;
   --animate-slide-in: slide-in 0.22s ease-out both;
@@ -42,10 +51,10 @@
   html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
   body { @apply bg-paper text-ink-900 font-sans antialiased; }
   ::selection { background: var(--color-brand-100); color: var(--color-ink-950); }
-  :focus-visible { outline: 2px solid var(--color-brand-500); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid #647954; outline-offset: 2px; }
   button, [role="button"] { cursor: pointer; }
   button:disabled { cursor: not-allowed; }
-  dialog::backdrop { background: rgb(10 16 36 / 0.55); }
+  dialog::backdrop { background: rgb(31 32 29 / 0.45); }
 }
 
 /* Editor canvas */

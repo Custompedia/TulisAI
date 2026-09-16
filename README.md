@@ -16,9 +16,10 @@ pnpm dev
 | `/` | Landing: hero watercolor, berbahasa Inggris, demo editor interaktif dengan contoh statis, fitur, cara kerja, mode, FAQ |
 | `/login`, `/register` | Masuk/daftar username-email + Google (opsional) |
 | `/onboarding` | Preferensi pertama: bahasa + kebutuhan utama (bisa dilewati) |
-| `/app` | Dashboard: composer Quick Start + dokumen terbaru |
-| `/documents`, `/documents/new` | Semua dokumen (hapus terkonfirmasi) dan dokumen baru |
-| `/documents/:id` | Workspace: editor, toolbar format, menu seleksi, panel AI, linimasa versi, `?panel=history`, `?panel=analytics`, `?compare=a:b` |
+| `/app` | Beranda: kartu prompt dengan chip mode, membuat proyek lalu membuka kanvas (`?autoGenerate=1`), plus proyek terbaru |
+| `/projects` | Semua proyek (kartu folder, cari, ganti nama, hapus terkonfirmasi, muat lebih banyak) |
+| `/projects/:id` | Workspace proyek: editor, toolbar format, menu seleksi, panel AI, riwayat versi, `?compare=a:b` |
+| `/documents`, `/documents/new`, `/documents/:id` | Redirect ke `/projects`, `/app`, `/projects/:id` |
 | `/settings` | Profil, preferensi, privasi & data, pemakaian AI, hapus akun |
 
 AI tetap nonaktif sampai `AI_PUBLIC_ENABLED=true` dan `OPENROUTER_API_KEY` diisi. P09 (analisis kualitas) hanya berjalan saat diminta.

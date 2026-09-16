@@ -59,9 +59,15 @@ Endpoint Better Auth berada di bawah `/api/auth`:
 
 Username dinormalisasi menjadi lowercase tanpa spasi di tepi, wajib 3--30 karakter, diawali dan diakhiri huruf/angka, dan hanya menerima huruf kecil, angka, titik, atau underscore. Indeks unik D1 menjamin username tidak dapat diduplikasi tanpa membedakan kapital. Password wajib 10--128 karakter dan hash dikelola Better Auth; password tidak pernah disimpan sebagai teks biasa. Akun Google boleh memiliki username kosong; login Google tetap tersedia untuk akun tersebut.
 
-Tidak ada flow reset password karena belum ada layanan email. Jangan menampilkan CTA reset sampai pengirim email dan proses verifikasinya tersedia.
+Reset password (`/forgot-password` → email → `/reset-password`, token 1 jam), ganti password, dan ganti email (link verifikasi ke email baru, lalu redirect ke `/settings?email=changed#profil`) memakai Cloudflare Email Service. Akun Google tanpa password dapat menambah password lewat `POST /api/account/password`.
 
-Better Auth menyimpan pembatasan brute-force di tabel D1 `rate_limit`: maksimal 10 permintaan per menit untuk `/sign-in/username` dan `/sign-in/email`, serta 5 per menit untuk `/sign-up/email`. Key memakai `cf-connecting-ip`, sehingga header tersebut hanya boleh diteruskan oleh Cloudflare Worker. Endpoint auth mengembalikan JSON 503 bila `BETTER_AUTH_SECRET` atau `BETTER_AUTH_URL` belum diisi.
+## Email (Cloudflare Email Service)
+
+1. Onboarding Email Service di dashboard Cloudflare (Compute → Email Service) dan verifikasi domain pengirim (DNS SPF/DKIM dibuat otomatis bila domain ada di Cloudflare).
+2. Binding `send_email` bernama `EMAIL` sudah ada di `wrangler.jsonc`. Ganti var `EMAIL_FROM` (`no-reply@REPLACE_WITH_VERIFIED_DOMAIN`) dengan alamat di domain terverifikasi, lalu jalankan `pnpm cf:types`.
+3. Tanpa binding atau dengan `EMAIL_FROM` placeholder, endpoint email mengembalikan `EMAIL_CONFIGURATION_REQUIRED` (503) dan UI menampilkan "Pengiriman email belum dikonfigurasi". Saat `pnpm dev`, email disimulasikan secara lokal oleh Miniflare.
+
+Better Auth menyimpan pembatasan brute-force di tabel D1 `rate_limit`: maksimal 10 permintaan per menit untuk `/sign-in/username` dan `/sign-in/email`, 5 per menit untuk `/sign-up/email` dan `/change-password`, serta 3 per menit untuk `/request-password-reset` dan `/change-email`. Key memakai `cf-connecting-ip`, sehingga header tersebut hanya boleh diteruskan oleh Cloudflare Worker. Endpoint auth mengembalikan JSON 503 bila `BETTER_AUTH_SECRET` atau `BETTER_AUTH_URL` belum diisi.
 
 Untuk Google, isi `GOOGLE_CLIENT_ID` dan `GOOGLE_CLIENT_SECRET`, lalu set `BETTER_AUTH_URL` ke origin dev yang digunakan. Callback Better Auth berada di:
 

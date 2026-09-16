@@ -112,7 +112,7 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     await expect(generatePreview('owner-a','key',input(doc))).rejects.toThrow();expect(transport).not.toHaveBeenCalled();
   });
   it('returns validated preview then atomically applies exactly once',async()=>{
-    enable();const doc=await create();const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:['clarity'],warnings:[]}));vi.stubGlobal('fetch',transport);
+    enable();const doc=await create();const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:['clarity'],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
     const preview=await generatePreview('owner-a','key',input(doc));
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Sumber asli.');
     const reused=await generatePreview('owner-a','key',input(doc));expect(reused.id).toBe(preview.id);expect(transport).toHaveBeenCalledTimes(1);
@@ -126,23 +126,45 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     const first=generatePreview('owner-a','same',input(doc));
     await vi.waitFor(()=>expect(transport).toHaveBeenCalledTimes(1));
     await expect(generatePreview('owner-a','same',input(doc))).rejects.toMatchObject({code:'IDEMPOTENCY_PENDING'});
-    resolve!(response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[]}));await first;expect(transport).toHaveBeenCalledTimes(1);
+    resolve!(response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));await first;expect(transport).toHaveBeenCalledTimes(1);
   });
   it('repairs a single protected violation once then applies normalized output',async()=>{
     enable();const doc=await createDocument('owner-a',{title:'Numbers',language:'id',content:content('Kami memiliki 10 unit.')});
-    const transport=vi.fn().mockResolvedValueOnce(response({transformed_text:'Kami memiliki unit.',change_categories:[],warnings:[]})).mockResolvedValueOnce(response({corrected_text:'Terdapat 10 unit milik kami.'}));vi.stubGlobal('fetch',transport);
+    const transport=vi.fn().mockResolvedValueOnce(response({transformed_text:'Kami memiliki unit.',change_categories:[],warnings:[],no_change_needed:false})).mockResolvedValueOnce(response({corrected_text:'Terdapat 10 unit milik kami.',unrepairable_spans:[]}));vi.stubGlobal('fetch',transport);
     const preview=await generatePreview('owner-a','repair',input(doc,'Kami memiliki 10 unit.'));
     expect(transport).toHaveBeenCalledTimes(2);expect(preview.output.transformed_text).toBe('Terdapat 10 unit milik kami.');
     await applyPreview('owner-a',preview.id,0);expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Terdapat 10 unit milik kami.');
   });
   it('rejects unsafe P07 without a repair or document changes',async()=>{
     enable();const doc=await createDocument('owner-a',{title:'Numbers',language:'id',content:content('Ada 10 unit.')});
-    const transport=vi.fn(async()=>response({alternatives:[{text:'Ada unit.'},{text:'Unit tersedia.'},{text:'Terdapat unit.'}],warnings:[]}));vi.stubGlobal('fetch',transport);
+    const transport=vi.fn(async()=>response({alternatives:[{text:'Ada unit.',variation_level:'leksikal'},{text:'Unit tersedia.',variation_level:'struktur'},{text:'Terdapat unit.',variation_level:'register'}],warnings:[]}));vi.stubGlobal('fetch',transport);
     await expect(generatePreview('owner-a','inline',{...input(doc,'Ada 10 unit.'),promptId:'P07_INLINE_ALTERNATIVES',source:{text:'Ada 10 unit.',anchor:{from:0,to:12}},runtime:runtimeControls(defaults,'id','alternatives')})).rejects.toMatchObject({code:'AI_OUTPUT_REJECTED'});
     expect(transport).toHaveBeenCalledTimes(1);expect((await getDocument('owner-a',doc.id)).revision).toBe(0);
   });
+  it('records v3 runtime metadata and flags P03 output above the preservation ceiling',async()=>{
+    enable();const doc=await createDocument('owner-a',{title:'Human',language:'id',content:content('Kami menyiapkan laporan ini dengan teliti.')});
+    const transport=vi.fn(async()=>response({transformed_text:'Laporan ini kami susun secara cermat.',change_categories:['struktur kalimat'],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
+    const preview=await generatePreview('owner-a','human',{...input(doc,'Kami menyiapkan laporan ini dengan teliti.'),promptId:'P03_HUMANIZER',runtime:runtimeControls({...defaults,mode:'humanize',preservation:'conservative'},'id')});
+    expect(preview.output).toMatchObject({transformed_text:'Laporan ini kami susun secara cermat.',exceeds_preservation:true});expect(preview.output).not.toHaveProperty('humanized_text');
+    const body=JSON.parse((transport.mock.calls[0] as unknown as [string,{body:string}])[1].body);expect(body.reasoning).toEqual({effort:'low'});expect(body.messages[0].content).not.toContain('Kami menyiapkan');
+    const row=db.prepare('SELECT prompt_version,runtime_json FROM transformations WHERE id=?').get(preview.id) as {prompt_version:string;runtime_json:string};
+    expect(row.prompt_version).toBe('v3');expect(JSON.parse(row.runtime_json)).toMatchObject({prompt_version:'v3',reasoning_effort:'low',humanizer_context:'umum',preservation:'conservative'});
+  });
+  it('rejects a dishonest no_change_needed flag with 422',async()=>{
+    enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan yang sepenuhnya berbeda.',change_categories:[],warnings:[],no_change_needed:true})));
+    await expect(generatePreview('owner-a','honesty',input(doc))).rejects.toMatchObject({code:'AI_OUTPUT_REJECTED',status:422});
+  });
+  it('enforces inline, selection and document scope limits with 422 before any AI call',async()=>{
+    enable();const transport=vi.fn();vi.stubGlobal('fetch',transport);
+    const inline='a'.repeat(601);const selection='b'.repeat(5_001);const whole='c '.repeat(10_001);
+    const doc=await createDocument('owner-a',{title:'Long',language:'id',content:content(inline)});
+    await expect(generatePreview('owner-a','inline-limit',{...input(doc,inline),promptId:'P07_INLINE_ALTERNATIVES',source:{text:inline,anchor:{from:0,to:601}},runtime:runtimeControls(defaults,'id','shorter')})).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:600}});
+    await expect(generatePreview('owner-a','selection-limit',{...input(doc,selection),source:{text:selection,anchor:{from:0,to:5_001}}})).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:5_000}});
+    await expect(generatePreview('owner-a','document-limit',input(doc,whole))).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:20_000}});
+    expect(transport).not.toHaveBeenCalled();expect(db.prepare('SELECT COUNT(1) AS n FROM usage_ledger').get()).toMatchObject({n:0});
+  });
   it('rejects stale Apply and discard never mutates the source',async()=>{
-    enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[]})));
+    enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false})));
     const preview=await generatePreview('owner-a','stale',input(doc));await autosaveDocument('owner-a',doc.id,0,content('Ketikan terbaru.'));
     await expect(applyPreview('owner-a',preview.id,0)).rejects.toMatchObject({code:'REVISION_CONFLICT'});await discardPreview('owner-a',preview.id);
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Ketikan terbaru.');expect((await listVersions('owner-a',doc.id)).items).toHaveLength(1);
@@ -150,13 +172,13 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
   it('preserves typed source in history when applying to a document created empty',async()=>{
     enable();const doc=await createDocument('owner-a',{title:'Blank',language:'id',content:{type:'doc',content:[{type:'paragraph'}]}});
     const typed=await autosaveDocument('owner-a',doc.id,0,content('Kami menyiapkan tulisan.'));
-    vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan sedang kami siapkan.',change_categories:[],warnings:[]})));
+    vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan sedang kami siapkan.',change_categories:[],warnings:[],no_change_needed:false})));
     const preview=await generatePreview('owner-a','first-typed',input(typed,'Kami menyiapkan tulisan.'));await applyPreview('owner-a',preview.id,typed.revision);
     const versions=(await listVersions('owner-a',doc.id)).items;expect(versions).toHaveLength(3);
     const baseline=versions.find(version=>version.revision===typed.revision)!;expect(documentText((await getVersion('owner-a',doc.id,baseline.id)).content)).toBe('Kami menyiapkan tulisan.');
   });
   it('atomically rejects Apply when the expected lock set changed',async()=>{
-    enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[]})));
+    enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false})));
     const preview=await generatePreview('owner-a','lock-race',input(doc));
     db.prepare("INSERT INTO locked_terms (id,document_id,owner_id,term,created_at) VALUES ('new-lock',?,'owner-a','Sumber',1)").run(doc.id);
     await expect(saveDocument('owner-a',doc.id,0,{content:content('Tulisan awal.')},'ai_apply',null,{previewId:preview.id,expectedLockIds:[]})).rejects.toMatchObject({code:'REVISION_CONFLICT'});
@@ -164,7 +186,7 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     expect(db.prepare('SELECT status FROM transformations WHERE id=?').get(preview.id)).toMatchObject({status:'preview'});
   });
   it('rejects whitespace-only provider output without repair',async()=>{
-    enable();const doc=await create();const transport=vi.fn(async()=>response({transformed_text:'   ',change_categories:[],warnings:[]}));vi.stubGlobal('fetch',transport);
+    enable();const doc=await create();const transport=vi.fn(async()=>response({transformed_text:'   ',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
     await expect(generatePreview('owner-a','empty-output',input(doc))).rejects.toMatchObject({code:'AI_UNAVAILABLE'});expect(transport).toHaveBeenCalledTimes(1);
   });
   it('rejects invalid controls before reserving or calling AI',async()=>{

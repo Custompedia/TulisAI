@@ -1,7 +1,9 @@
-import Workspace from '@/components/workspace/Workspace';
+import { redirect } from 'next/navigation';
 
-// Keyed by id so every document gets fresh workspace state.
-export default async function DocumentPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DocumentRedirect({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
-  return <Workspace key={id} />;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) for (const item of [value ?? []].flat()) query.append(key, item);
+  const search = query.toString();
+  redirect(`/projects/${encodeURIComponent(id)}${search ? `?${search}` : ''}`);
 }

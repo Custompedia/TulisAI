@@ -9,6 +9,26 @@ export const modeIcon: Record<Mode, LucideIcon> = {
   standard: PenLine, academic: GraduationCap, humanize: Feather, professional: Briefcase, creative: Palette, simplify: Lightbulb, custom: SlidersHorizontal,
 };
 
+export type ModeTone = 'green' | 'blue' | 'orange' | 'slate' | 'pink' | 'gold';
+export const modeTone: Record<Mode, ModeTone> = {
+  standard: 'green', academic: 'blue', humanize: 'pink', professional: 'slate', creative: 'orange', simplify: 'gold', custom: 'slate',
+};
+// Literal class names so Tailwind can generate the mode token utilities.
+export const toneClass: Record<ModeTone, { ink: string; fill: string; edge: string; light: string; chip: string; chipActive: string }> = {
+  green: { ink: 'text-mode-green-ink', fill: 'bg-mode-green-fill', edge: 'border-mode-green-edge', light: 'bg-mode-green-light', chip: 'border-mode-green-edge bg-mode-green-light text-mode-green-ink', chipActive: 'border-mode-green-ink bg-mode-green-fill text-mode-green-ink' },
+  blue: { ink: 'text-mode-blue-ink', fill: 'bg-mode-blue-fill', edge: 'border-mode-blue-edge', light: 'bg-mode-blue-light', chip: 'border-mode-blue-edge bg-mode-blue-light text-mode-blue-ink', chipActive: 'border-mode-blue-ink bg-mode-blue-fill text-mode-blue-ink' },
+  orange: { ink: 'text-mode-orange-ink', fill: 'bg-mode-orange-fill', edge: 'border-mode-orange-edge', light: 'bg-mode-orange-light', chip: 'border-mode-orange-edge bg-mode-orange-light text-mode-orange-ink', chipActive: 'border-mode-orange-ink bg-mode-orange-fill text-mode-orange-ink' },
+  slate: { ink: 'text-mode-slate-ink', fill: 'bg-mode-slate-fill', edge: 'border-mode-slate-edge', light: 'bg-mode-slate-light', chip: 'border-mode-slate-edge bg-mode-slate-light text-mode-slate-ink', chipActive: 'border-mode-slate-ink bg-mode-slate-fill text-mode-slate-ink' },
+  pink: { ink: 'text-mode-pink-ink', fill: 'bg-mode-pink-fill', edge: 'border-mode-pink-edge', light: 'bg-mode-pink-light', chip: 'border-mode-pink-edge bg-mode-pink-light text-mode-pink-ink', chipActive: 'border-mode-pink-ink bg-mode-pink-fill text-mode-pink-ink' },
+  gold: { ink: 'text-mode-gold-ink', fill: 'bg-mode-gold-fill', edge: 'border-mode-gold-edge', light: 'bg-mode-gold-light', chip: 'border-mode-gold-edge bg-mode-gold-light text-mode-gold-ink', chipActive: 'border-mode-gold-ink bg-mode-gold-fill text-mode-gold-ink' },
+};
+export const modeToneClass = (mode: Mode) => toneClass[modeTone[mode]];
+
+// Short chip labels used on the home composer.
+export function modeChipLabel(mode: Mode, t: T) {
+  return mode === 'standard' ? t('Parafrase', 'Paraphrase') : mode === 'custom' ? t('Lainnya', 'More') : modeLabel(mode, t);
+}
+
 export function modeLabel(mode: Mode, t: T) {
   return {
     standard: t('Standar', 'Standard'), academic: t('Akademik', 'Academic'), humanize: 'Humanize', professional: t('Profesional', 'Professional'),
