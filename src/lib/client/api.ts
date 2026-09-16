@@ -19,7 +19,7 @@ export async function request<T>(path: string, method = 'GET', body?: unknown, k
   return result?.data as T;
 }
 
-// Better Auth endpoints answer with { code, message } instead of the project envelope.
+// Better Auth endpoints answer with { code, message } instead of the app envelope.
 export async function authRequest<T>(path: string, body: unknown): Promise<T> {
   let response: Response;
   try {
@@ -66,7 +66,6 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'INVALID_TOKEN' || code === 'TOKEN_EXPIRED': return t('Link tidak valid atau sudah kedaluwarsa. Minta link baru.', 'The link is invalid or has expired. Request a new one.');
     case code === 'CREDENTIAL_ACCOUNT_NOT_FOUND': return t('Akun ini belum punya password.', 'This account does not have a password yet.');
     case code === 'EMAIL_CONFIGURATION_REQUIRED': return t('Pengiriman email belum dikonfigurasi. Hubungi admin.', 'Email delivery is not configured yet. Contact the administrator.');
-    case code === 'EMAIL_SEND_FAILED': return t('Email gagal dikirim. Coba lagi sebentar lagi.', 'The email could not be sent. Try again shortly.');
     case code === 'SERVICE_UNAVAILABLE': return t('Layanan akun sedang tidak tersedia. Coba lagi nanti.', 'Account services are temporarily unavailable. Try again later.');
     case code === 'REVISION_CONFLICT' || code === 'SOURCE_MISMATCH': return t('Dokumen berubah di tempat lain. Tulisanmu tetap aman; muat ulang atau simpan sebagai salinan.', 'The document changed elsewhere. Your writing is safe; reload or save a copy.');
     case code.includes('CONFIGURATION'): return t('Layanan AI belum dikonfigurasi. Tulisanmu tetap tersedia.', 'The AI service is not configured yet. Your writing is still available.');

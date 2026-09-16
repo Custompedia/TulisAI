@@ -1,10 +1,12 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { username } from "better-auth/plugins";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzle } from "drizzle-orm/d1";
-import { ConfigurationError, runtime, requiredSetting } from "../runtime";
-import { renderEmail, sendEmail, type EmailTemplate } from "../email/send";
+import { runtime, requiredSetting } from "../runtime";
+import { emailConfigured, renderEmail, sendEmail, type EmailTemplate } from "../email/send";
+
+const EMAIL_PATHS = new Set(["/request-password-reset", "/change-email", "/send-verification-email"]);
 import * as schema from "@/db/schema";
 
 export function auth() {
@@ -53,6 +55,12 @@ export function auth() {
         "/change-email": { window: 60, max: 3 },
       },
     },
+    // Better Auth swallows sender failures, so reject email flows up front when delivery is unconfigured.
+    hooks: {
+      before: createAuthMiddleware(async (ctx) => {
+        if (EMAIL_PATHS.has(ctx.path) && !emailConfigured()) throw APIError.from("SERVICE_UNAVAILABLE", { code: "EMAIL_CONFIGURATION_REQUIRED", message: "Email delivery is not configured." });
+      }),
+    },
     databaseHooks: {
       user: {
         create: {
@@ -87,14 +95,7 @@ export function auth() {
   });
 }
 
-async function deliver(to: string, template: EmailTemplate) {
-  try { await sendEmail({ to, ...renderEmail(template) }); }
-  catch (error) {
-    if (error instanceof ConfigurationError) throw APIError.from("SERVICE_UNAVAILABLE", { code: "EMAIL_CONFIGURATION_REQUIRED", message: "Email delivery is not configured." });
-    console.error("email delivery failure", error instanceof Error ? error.name : "unknown");
-    throw APIError.from("BAD_GATEWAY", { code: "EMAIL_SEND_FAILED", message: "Email could not be sent." });
-  }
-}
+async function deliver(to: string, template: EmailTemplate) { await sendEmail({ to, ...renderEmail(template) }); }
 
 export async function requireUser(request: Request): Promise<{ id: string; email: string; name: string; image: string | null }> {
   const session = await auth().api.getSession({ headers: request.headers });

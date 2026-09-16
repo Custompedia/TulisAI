@@ -4,18 +4,17 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Gauge, Menu } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
-import { errorText, isUnauthenticated, request } from '@/lib/client/api';
+import { ApiError, errorText, isUnauthenticated, request } from '@/lib/client/api';
+import { StatusScreen, statusIcons } from '@/components/ui/StatusScreen';
 import { Logo } from '@/components/ui/Logo';
-import { Button } from '@/components/ui/Button';
 import { AccountMenu } from './AccountMenu';
 import { Sidebar, SIDEBAR_ID } from './Sidebar';
 import { LoadingBlock } from '@/components/ui/Spinner';
-import { Alert } from '@/components/ui/Alert';
 
 export type SessionUser = { id: string; name: string; email: string; image?: string | null };
 export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: 'academic' | 'professional' | 'general'; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; onboarded: boolean; updatedAt: string | null };
 export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number };
-export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; createdAt: string; updatedAt: string };
+export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
 
 type Shell = { user: SessionUser; settings: UserSettings; usage: Usage | null; recent: DocumentSummary[]; setSettings: (settings: UserSettings) => void; refresh: () => Promise<void> };
 const ShellContext = createContext<Shell | null>(null);
@@ -42,7 +41,8 @@ export function useSessionGuard() {
 
 const EXPANDED_KEY = 'sidebar-expanded';
 
-export function AppShell({ children, requireOnboarding = true, fullBleed = false }: { children: React.ReactNode; requireOnboarding?: boolean; fullBleed?: boolean }) {
+// bare: provides the session context without top bar, sidebar, or content card.
+export function AppShell({ children, requireOnboarding = true, fullBleed = false, bare = false }: { children: React.ReactNode; requireOnboarding?: boolean; fullBleed?: boolean; bare?: boolean }) {
   const { t, locale, setLocale } = useLocale();
   const router = useRouter();
   const guard = useSessionGuard();
@@ -77,12 +77,14 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
   const closeDrawer = useCallback(() => setDrawer(false), []);
 
   if (!state) {
+    if (!error) return <main className="grid min-h-dvh place-items-center bg-brand-50 px-4"><LoadingBlock label={t('Menyiapkan ruang kerja…', 'Preparing your workspace…')} /></main>;
+    const offline = error instanceof ApiError && error.code === 'NETWORK_ERROR';
     return (
-      <main className="grid min-h-dvh place-items-center bg-paper px-4">
-        {error ? (
-          <div className="w-full max-w-md"><Alert tone="error" title={t('Tidak bisa memuat akun', 'Could not load your account')} actions={<Button size="sm" onClick={() => { setError(null); void load(); }}>{t('Coba lagi', 'Retry')}</Button>}>{errorText(error, locale === 'en')}</Alert></div>
-        ) : <LoadingBlock label={t('Menyiapkan ruang kerja…', 'Preparing your workspace…')} />}
-      </main>
+      <StatusScreen kind={offline ? 'offline' : 'error'}
+        title={offline ? t('Koneksi terputus', 'You are offline') : t('Akunmu belum bisa dimuat', 'Could not load your account')}
+        description={offline ? t('Periksa koneksi internet, lalu coba lagi. Tulisan yang sudah tersimpan tetap aman.', 'Check your internet connection and try again. Saved writing is safe.') : `${errorText(error, locale === 'en')} ${t('Tulisan yang sudah tersimpan tetap aman.', 'Saved writing is safe.')}`}
+        secondary={{ label: t('Ke halaman utama', 'Go to homepage'), href: '/' }}
+        primary={{ label: t('Coba lagi', 'Try again'), icon: statusIcons.retry, onClick: async () => { setError(null); await load(); } }} />
     );
   }
 
@@ -92,12 +94,15 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
     try { localStorage.setItem(EXPANDED_KEY, next ? '1' : '0'); } catch { /* storage unavailable */ }
   };
   const shell: Shell = { ...state, setSettings: (settings) => setState((current) => (current ? { ...current, settings } : current)), refresh: load };
+  if (bare) return <ShellContext.Provider value={shell}>{children}</ShellContext.Provider>;
   return (
     <ShellContext.Provider value={shell}>
-      <div className={`bg-paper ${fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh'}`}>
+      <div className={`bg-brand-50 ${fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh'}`}>
         <TopBar menuOpen={drawer || expanded} onMenu={toggleMenu} />
         <Sidebar expanded={expanded} drawer={drawer} recent={state.recent} onCloseDrawer={closeDrawer} />
-        <div className={`min-w-0 pt-14 transition-[padding] duration-200 ${expanded ? 'md:pl-60' : 'md:pl-[72px]'} ${fullBleed ? 'flex min-h-0 flex-1 flex-col' : ''}`}>{children}</div>
+        <div className={`min-w-0 pt-14 transition-[padding] duration-200 md:pr-2 ${expanded ? 'md:pl-60' : 'md:pl-[72px]'} ${fullBleed ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
+          <div className={`bg-paper md:rounded-t-[20px] md:border md:border-b-0 md:border-line md:shadow-[0_1px_3px_rgb(31_32_29/0.06)] ${fullBleed ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-[calc(100dvh-3.5rem)]'}`}>{children}</div>
+        </div>
       </div>
     </ShellContext.Provider>
   );
@@ -109,12 +114,12 @@ function TopBar({ menuOpen, onMenu }: { menuOpen: boolean; onMenu: () => void })
   const low = usage !== null && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
 
   return (
-    <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 border-b border-line bg-white px-3 sm:px-4">
-      <button type="button" onClick={onMenu} aria-label={t('Buka/tutup navigasi', 'Toggle navigation')} aria-expanded={menuOpen} aria-controls={SIDEBAR_ID} className="grid h-9 w-9 place-items-center rounded-lg text-ink-600 hover:bg-paper-deep hover:text-ink-900"><Menu size={20} /></button>
+    <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-brand-50 px-3 sm:px-4">
+      <button type="button" onClick={onMenu} aria-label={t('Buka/tutup navigasi', 'Toggle navigation')} aria-expanded={menuOpen} aria-controls={SIDEBAR_ID} className="grid h-9 w-9 place-items-center rounded-lg text-ink-600 hover:bg-white/70 hover:text-ink-900"><Menu size={20} /></button>
       <Logo href="/app" />
       <div className="ml-auto flex items-center gap-2">
         {usage && (
-          <Link href="/settings#pemakaian" onClick={(event) => { if (window.location.pathname === '/settings') { event.preventDefault(); window.location.hash = 'pemakaian'; } }} title={t('Pemakaian AI bulan ini', 'AI usage this month')} className={`hidden h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-brand-100 bg-brand-50 text-brand-800'}`}>
+          <Link href="/settings#pemakaian" onClick={(event) => { if (window.location.pathname === '/settings') { event.preventDefault(); window.location.hash = 'pemakaian'; } }} title={t('Pemakaian AI bulan ini', 'AI usage this month')} className={`hidden h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-brand-800 hover:border-line-strong'}`}>
             <Gauge size={14} aria-hidden="true" />{usage.requestsUsed}/{usage.requestLimit} {t('AI bulan ini', 'AI this month')}
           </Link>
         )}

@@ -15,8 +15,13 @@ export function renderEmail(template: EmailTemplate): { subject: string; text: s
   return { subject: template.subject, text, html };
 }
 
+export function emailConfigured(): boolean {
+  const { EMAIL, EMAIL_FROM } = runtime();
+  return Boolean(EMAIL && EMAIL_FROM && !EMAIL_FROM.includes("REPLACE_WITH"));
+}
+
 export async function sendEmail({ to, subject, text, html }: EmailContent): Promise<void> {
   const { EMAIL, EMAIL_FROM } = runtime();
-  if (!EMAIL || !EMAIL_FROM || EMAIL_FROM.includes("REPLACE_WITH")) throw new ConfigurationError("EMAIL binding or EMAIL_FROM is not configured.");
+  if (!EMAIL || !EMAIL_FROM || !emailConfigured()) throw new ConfigurationError("EMAIL binding or EMAIL_FROM is not configured.");
   await EMAIL.send({ from: EMAIL_FROM, to, subject, text, html });
 }

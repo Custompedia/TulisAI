@@ -29,7 +29,7 @@ export type DocumentCreateInput = z.infer<typeof DocumentCreateSchema>;
 export type GenerateInput = z.infer<typeof GenerateSchema>;
 export type AnalyzeQualityInput = z.infer<typeof AnalyzeQualitySchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;
-export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
+export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
 export type VersionDTO = { id: string; documentId: string; kind: "original" | "checkpoint" | "ai_apply" | "restore"; revision: number; createdAt: string; label: string | null; promptId?: string | null; scopeType?: string | null };
 
 export function apiError(code: string, message: string, status: number, details?: unknown) {

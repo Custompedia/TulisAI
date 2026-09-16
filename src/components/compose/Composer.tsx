@@ -80,10 +80,11 @@ export function Composer() {
   const ready = words >= MIN_WORDS;
   const canSend = ready && !busy && !needsLanguage && !(outOfQuota && !tooLong);
   const activeMode = picked ? settings.mode : null;
-  const sendLabel = tooLong ? t('Buka sebagai proyek', 'Open as project') : sendLabelFor(activeMode, t);
-  const status = outOfQuota ? { warn: true, text: t('Batas AI bulan ini habis.', 'This month’s AI limit is used up.') }
+  const sendLabel = tooLong ? t('Buka sebagai notebook', 'Open as notebook') : sendLabelFor(activeMode, t);
+  const status = busy ? { warn: false, text: t('Membuat notebook…', 'Creating notebook…') }
+    : outOfQuota ? { warn: true, text: t('Batas AI bulan ini habis.', 'This month’s AI limit is used up.') }
     : needsLanguage ? { warn: true, text: t('Bahasa belum terdeteksi. Pilih ID atau EN.', 'Language unclear. Choose ID or EN.') }
-    : tooLong ? { warn: true, text: t(`Lebih dari ${numberFormat(AI_SCOPE_LIMIT, locale)} karakter, dibuka sebagai proyek.`, `Over ${numberFormat(AI_SCOPE_LIMIT, 'en')} characters, opens as a project.`) }
+    : tooLong ? { warn: true, text: t(`Lebih dari ${numberFormat(AI_SCOPE_LIMIT, locale)} karakter, dibuka sebagai notebook.`, `Over ${numberFormat(AI_SCOPE_LIMIT, 'en')} characters, opens as a notebook.`) }
     : words > 0 && !ready ? { warn: false, text: t(`Minimal ${MIN_WORDS} kata`, `At least ${MIN_WORDS} words`) }
     : words > 0 ? { warn: false, text: `${numberFormat(words, locale)} ${t('kata', 'words')}` } : null;
 
@@ -94,14 +95,14 @@ export function Composer() {
   async function create() {
     if (!canSend) return;
     setBusy(true); setError('');
-    const title = text.trim().split('\n')[0]?.slice(0, 60).trim() || t('Proyek tanpa judul', 'Untitled project');
+    const title = text.trim().split('\n')[0]?.slice(0, 60).trim() || t('Notebook tanpa judul', 'Untitled notebook');
     try {
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences: settings }, newKey());
       try {
         if (!tooLong) sessionStorage.setItem(`writing-generate:${doc.id}`, '1');
         sessionStorage.removeItem(DRAFT_KEY);
       } catch { /* storage unavailable */ }
-      router.push(`/projects/${doc.id}${tooLong ? '' : '?autoGenerate=1'}`);
+      router.push(`/notebooks/${doc.id}${tooLong ? '' : '?autoGenerate=1'}`);
     } catch (caught) {
       if (!guard(caught)) setError(errorText(caught, locale === 'en'));
       setBusy(false);
@@ -152,15 +153,14 @@ export function Composer() {
                 { label: t('Tempel', 'Paste'), icon: ClipboardPaste, onSelect: () => void paste() },
                 { label: t('Hapus teks', 'Clear text'), icon: Trash2, tone: 'danger', disabled: !text, onSelect: () => setConfirmClear(true) },
               ]} />
-            <ChipSelect<WritingLanguage> ghost label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(value) => set('language', value)}
+            <ChipSelect<WritingLanguage> ghost width="w-28" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(value) => set('language', value)}
               options={[{ value: 'auto', label: t('Auto', 'Auto') }, { value: 'id', label: 'ID' }, { value: 'en', label: 'EN' }]} />
             <span role="status" className={`ml-1 inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs ${status?.warn ? 'font-medium text-amber-700' : 'text-ink-500'}`}>
               {status?.warn && <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />}<span className="truncate">{status?.text}</span>
             </span>
-            <button type="button" onClick={() => void create()} disabled={!canSend} aria-label={sendLabel}
-              className={`inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-3 text-[14px] font-semibold transition-[transform,background-color,color] sm:px-4 ${canSend ? `${raisedBlack} hover:-translate-y-px` : 'bg-brand-50 text-brand-400'}`}>
-              <span className="hidden sm:inline">{busy ? t('Menyiapkan…', 'Preparing…') : sendLabel}</span>
-              {busy ? <Spinner size={16} /> : <ArrowRight size={17} aria-hidden="true" />}
+            <button type="button" onClick={() => void create()} disabled={!canSend} aria-label={busy ? t('Membuat notebook…', 'Creating notebook…') : sendLabel}
+              key={canSend ? 'ready' : 'idle'} title={sendLabel} className={`grid h-9 w-9 shrink-0 place-items-center rounded-full transition-[transform,box-shadow,background-color,color] duration-200 ${canSend ? `${raisedBlack} animate-pop ring-4 ring-brand-200 shadow-[0_8px_18px_-6px_rgb(0_0_0/0.55)] hover:-translate-y-0.5 hover:ring-brand-300` : 'scale-90 bg-paper-deep text-ink-300'}`}>
+              {busy ? <Spinner size={15} /> : <ArrowRight size={17} aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -168,14 +168,14 @@ export function Composer() {
         <div className={`flex flex-wrap items-center gap-2 px-2 py-2.5 ${picked ? 'justify-start' : 'justify-center'}`}>
           {picked ? (
             <>
-              <span className={`inline-flex h-9 items-center gap-1.5 rounded-full border bg-white pl-1.5 pr-1 text-[13px] font-semibold ${tone.edge} ${tone.ink}`}>
+              <span className={`inline-flex h-8 items-center gap-1.5 rounded-full border bg-white pl-1 pr-0.5 text-[12.5px] font-medium ${tone.edge} ${tone.ink}`}>
                 <span className={`grid h-6 w-6 place-items-center rounded-full ${tone.fill}`}><ModeIcon size={13} aria-hidden="true" /></span>
                 {modeLabel(settings.mode, t)}
-                <button type="button" onClick={unpick} disabled={busy} aria-label={t('Hapus pilihan mode', 'Clear mode')} className="grid h-7 w-7 place-items-center rounded-full transition-colors hover:bg-paper-deep disabled:opacity-50"><X size={15} aria-hidden="true" /></button>
+                <button type="button" onClick={unpick} disabled={busy} aria-label={t('Hapus pilihan mode', 'Clear mode')} className="grid h-6 w-6 place-items-center rounded-full transition-colors hover:bg-paper-deep disabled:opacity-50"><X size={13} aria-hidden="true" /></button>
               </span>
               {modeControls[settings.mode]}
               <button type="button" disabled={busy} aria-expanded={customizing} aria-controls="composer-customize" onClick={() => setCustomizing(!customizing)}
-                className={`${CHIP} font-semibold sm:ml-auto ${customizing || settings.customized ? 'border-brand-400 bg-white text-brand-800' : ''}`}>
+                className={`${CHIP} font-medium sm:ml-auto ${customizing || settings.customized ? 'border-brand-400 bg-white text-brand-800' : ''}`}>
                 <SlidersHorizontal size={15} aria-hidden="true" />{t('Sesuaikan', 'Customize')}
                 {settings.customized && <span className="h-1.5 w-1.5 rounded-full bg-brand-600" aria-label={t('aktif', 'on')} />}
                 <ChevronDown size={14} aria-hidden="true" className={`transition-transform ${customizing ? 'rotate-180' : ''}`} />
@@ -186,12 +186,12 @@ export function Composer() {
               {PRIMARY.map((mode) => {
                 const Icon = modeIcon[mode]; const chipTone = modeToneClass(mode);
                 return (
-                  <button key={mode} type="button" disabled={busy} onClick={() => pick(mode)} className={`${CHIP} pl-1.5 font-semibold`}>
+                  <button key={mode} type="button" disabled={busy} onClick={() => pick(mode)} className={`${CHIP} pl-1 font-medium`}>
                     <span className={`grid h-6 w-6 place-items-center rounded-full ${chipTone.fill} ${chipTone.ink}`}><Icon size={13} aria-hidden="true" /></span>{modeChipLabel(mode, t)}
                   </button>
                 );
               })}
-              <Menu label={t('Mode lainnya', 'More modes')} align="start" disabled={busy} triggerClassName={`${CHIP} font-semibold`}
+              <Menu label={t('Mode lainnya', 'More modes')} align="start" disabled={busy} triggerClassName={`${CHIP} font-medium`}
                 trigger={<><Plus size={16} aria-hidden="true" />{t('Lainnya', 'More')}</>}
                 items={MORE.map((mode) => ({ label: modeLabel(mode, t), icon: modeIcon[mode], onSelect: () => pick(mode) }))} />
             </>

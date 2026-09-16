@@ -125,25 +125,25 @@ function SettingsView() {
   const profile = account ?? { name: user.name, email: user.email, image: user.image ?? null };
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-10">
+    <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-8 sm:py-10">
       <header className="flex items-center gap-4 sm:gap-5">
-        <Avatar name={profile.name} image={profile.image} size={96} />
+        <Avatar name={profile.name} image={profile.image} size={80} />
         <div className="min-w-0">
           <h1 className="truncate text-2xl font-medium tracking-[-0.04em] text-ink-950">{profile.name}</h1>
           <p className="truncate text-sm text-ink-500">{profile.email}</p>
         </div>
       </header>
 
-      <div className="mt-6 flex flex-col gap-5 md:mt-8 md:flex-row md:items-start md:gap-8">
-        <nav aria-label={t('Bagian pengaturan', 'Settings sections')} className="-mx-4 shrink-0 overflow-x-auto border-b border-line px-4 sm:-mx-6 sm:px-6 md:sticky md:top-20 md:mx-0 md:w-52 md:overflow-visible md:border-b-0 md:px-0">
-          <ul className="flex gap-1 md:flex-col md:gap-0.5">
+      <div className="mt-6 flex flex-col gap-5 md:mt-8 md:flex-row md:items-start md:gap-10">
+        <nav aria-label={t('Bagian pengaturan', 'Settings sections')} className="-mx-4 shrink-0 overflow-x-auto px-4 sm:-mx-8 sm:px-8 md:sticky md:top-20 md:mx-0 md:w-56 md:overflow-visible md:px-0">
+          <ul className="flex gap-1 md:flex-col md:gap-1">
             {nav.map(({ id, icon: Icon, label }) => {
               const active = tab === id;
               return (
                 <li key={id} className="shrink-0">
                   <a href={`#${id}`} aria-current={active ? 'page' : undefined} onClick={(event) => { event.preventDefault(); select(id); }}
-                    className={`flex h-10 items-center gap-2.5 whitespace-nowrap border-b-2 px-3 text-sm transition-colors md:border-b-0 md:border-l-2 ${active ? 'border-brand-600 font-semibold text-brand-700 md:bg-brand-50/60' : 'border-transparent font-medium text-ink-600 hover:text-ink-900 md:hover:bg-paper-deep'}`}>
-                    <Icon size={17} aria-hidden="true" className="shrink-0" />{label}
+                    className={`flex h-9 items-center gap-2.5 whitespace-nowrap rounded-lg border px-3 text-[13.5px] transition-colors ${active ? 'border-line bg-white font-semibold text-ink-900 shadow-[0_1px_2px_rgb(31_32_29/0.06)]' : 'border-transparent font-medium text-ink-500 hover:bg-white/70 hover:text-ink-900'}`}>
+                    <Icon size={16} aria-hidden="true" className={`shrink-0 ${active ? 'text-brand-700' : ''}`} />{label}
                   </a>
                 </li>
               );
@@ -203,7 +203,7 @@ function SettingsView() {
                   <li>• {t('Pratinjau AI otomatis dibersihkan setelah 24 jam.', 'AI previews are cleared automatically after 24 hours.')}</li>
                   <li>• {t('Isi tulisan tidak dicatat di log atau analitik; penyedia AI diminta tidak menyimpan data.', 'Your text is never written to logs or analytics; the AI provider is asked not to retain data.')}</li>
                 </ul>
-                <Link href="/projects" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-brand-800 hover:text-ink-900">{t('Kelola & hapus proyek', 'Manage & delete projects')}<ArrowUpRight size={15} /></Link>
+                <Link href="/notebooks" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-brand-800 hover:text-ink-900">{t('Kelola & hapus notebook', 'Manage & delete notebooks')}<ArrowUpRight size={15} /></Link>
               </Card>
               <Card tone="danger" title={t('Hapus akun', 'Delete account')} description={t('Menghapus akun, semua dokumen, versi, dan salinan lokal secara permanen.', 'Permanently deletes your account, documents, versions, and local copies.')}>
                 <Button variant="danger" icon={Trash2} onClick={() => { setConfirmText(''); setConfirmDelete(true); }}>{t('Hapus akun saya', 'Delete my account')}</Button>

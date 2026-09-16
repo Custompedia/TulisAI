@@ -121,7 +121,7 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
       {dialog === 'set-password' && <SetPasswordDialog busy={busy} submit={submit} onClose={close} />}
       {dialog === 'reset' && <ConfirmDialog title={t(`Kirim link ke ${account.email}?`, `Send link to ${account.email}?`)} description={t('Link untuk membuat password baru berlaku 1 jam.', 'The link to create a new password is valid for 1 hour.')} confirmLabel={t('Kirim link', 'Send link')} busy={busy} onClose={close}
         onConfirm={() => void submit(() => authRequest('/request-password-reset', { email: account.email, redirectTo: '/reset-password' }), t(`Link reset password dikirim ke ${account.email}.`, `A password reset link was sent to ${account.email}.`))} />}
-      {dialog === 'sign-out' && <ConfirmDialog title={t('Keluar dari akun?', 'Log out?')} description={t('Kamu perlu masuk lagi untuk membuka proyekmu.', 'You will need to sign in again to open your projects.')} confirmLabel={t('Keluar', 'Log out')} busy={signingOut} onClose={() => setDialog(null)} onConfirm={() => void signOut()} />}
+      {dialog === 'sign-out' && <ConfirmDialog title={t('Keluar dari akun?', 'Log out?')} description={t('Kamu perlu masuk lagi untuk membuka notebook-mu.', 'You will need to sign in again to open your notebooks.')} confirmLabel={t('Keluar', 'Log out')} busy={signingOut} onClose={() => setDialog(null)} onConfirm={() => void signOut()} />}
     </>
   );
 }

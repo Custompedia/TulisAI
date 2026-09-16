@@ -2,7 +2,7 @@
 import { Info, RefreshCw, Sparkles, TriangleAlert } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
-import { changePercentage, countCharacters, countSentences, countWords, readingMinutes, repeatedWords } from '@/lib/editor/metrics';
+import { changePercentage, countSentences, countWords, readingMinutes, repeatedWords } from '@/lib/editor/metrics';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import type { Quality, QualityBand, QualityDimension } from './types';
@@ -11,16 +11,6 @@ type Props = {
   text: string; original: string | null; scopeLabel: string; quality: Quality | null; stale: boolean; loading: boolean; error: string;
   blockedReason: string | null; onAnalyze: () => void;
 };
-
-function Stat({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="rounded-lg border border-line bg-white px-3 py-2.5">
-      <p className="text-xs text-ink-500">{label}</p>
-      <p className="mt-0.5 text-lg font-semibold tracking-tight text-ink-900">{value}</p>
-      {hint && <p className="text-[11px] text-ink-400">{hint}</p>}
-    </div>
-  );
-}
 
 const BANDS: QualityBand[] = ['rendah', 'sedang', 'tinggi'];
 
@@ -39,17 +29,10 @@ export function AnalyticsPanel({ text, original, scopeLabel, quality, stale, loa
   const items = quality?.dimensions ?? quality;
 
   return (
-    <div className="space-y-6 p-4">
-      <p className="text-xs leading-relaxed text-ink-500">{t('Angka dihitung langsung di perangkatmu, tanpa AI.', 'Numbers are computed on your device, without AI.')}</p>
-      <div className="grid grid-cols-2 gap-2">
-        <Stat label={t('Kata', 'Words')} value={n(countWords(text))} />
-        <Stat label={t('Karakter', 'Characters')} value={n(countCharacters(text))} />
-        <Stat label={t('Kalimat', 'Sentences')} value={n(countSentences(text))} hint={t('perkiraan', 'approximate')} />
-        <Stat label={t('Waktu baca', 'Reading time')} value={`${readingMinutes(text)} ${t('mnt', 'min')}`} hint={t('200 kata/menit', '200 wpm')} />
-      </div>
-
+    <div className="space-y-6">
       <section>
-        <h3 className="mb-2 text-[13px] font-semibold text-ink-900">{t('Sebelum & sesudah', 'Before & after')}</h3>
+        <h3 className="mb-1 text-[13px] font-medium text-ink-900">{t('Sebelum & sesudah', 'Before & after')}</h3>
+        <p className="mb-2.5 text-xs text-ink-500">{t('Dihitung langsung di perangkatmu, tanpa AI.', 'Computed on your device, without AI.')}</p>
         {original === null ? <p className="text-[13px] text-ink-500">{t('Original belum termuat.', 'The original is not loaded.')}</p> : (
           <div className="overflow-hidden rounded-lg border border-line bg-white">
             <div className="grid grid-cols-3 bg-paper px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400"><span /><span>Original</span><span>{t('Sekarang', 'Current')}</span></div>
@@ -62,14 +45,14 @@ export function AnalyticsPanel({ text, original, scopeLabel, quality, stale, loa
       </section>
 
       <section>
-        <h3 className="mb-2 text-[13px] font-semibold text-ink-900">{t('Kata yang sering diulang', 'Frequently repeated words')}</h3>
+        <h3 className="mb-2 text-[13px] font-medium text-ink-900">{t('Kata yang sering diulang', 'Frequently repeated words')}</h3>
         {repeated.length === 0 ? <p className="text-[13px] text-ink-500">{t('Tidak ada pengulangan menonjol.', 'No notable repetition.')}</p> : (
           <ul className="flex flex-wrap gap-1.5">{repeated.map((item) => <li key={item.word} className="rounded-md bg-paper-deep px-2 py-1 text-xs text-ink-700"><b className="font-semibold">{item.word}</b> ×{item.count}</li>)}</ul>
         )}
       </section>
 
-      <section className="rounded-lg border border-line bg-white p-3.5">
-        <h3 className="flex items-center gap-2 text-[13px] font-semibold text-ink-900"><Sparkles size={15} className="text-brand-600" aria-hidden="true" />{t('Analisis Kualitas Tulisan', 'Writing Quality Analysis')}<span className="rounded bg-paper-deep px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500">{t('indikatif', 'indicative')}</span></h3>
+      <section className="rounded-xl border border-line bg-white p-4">
+        <h3 className="flex items-center gap-2 text-[13px] font-medium text-ink-900"><Sparkles size={15} className="text-brand-600" aria-hidden="true" />{t('Analisis kualitas', 'Quality analysis')}<span className="rounded bg-paper-deep px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-ink-500">{t('indikatif', 'indicative')}</span></h3>
         <p className="mt-1 text-xs leading-relaxed text-ink-500">{t('Opsional dan hanya berjalan saat kamu meminta. Hasilnya indikatif — bukan nilai akademik, deteksi AI, atau cek plagiarisme.', 'Optional and runs only when you ask. Results are indicative — not an academic grade, AI detection, or plagiarism check.')}</p>
         {loading && !quality && (
           <div role="status" className="mt-4 space-y-2"><div className="h-3 w-3/4 animate-pulse rounded bg-paper-deep" /><div className="h-3 w-full animate-pulse rounded bg-paper-deep" /><div className="h-3 w-2/3 animate-pulse rounded bg-paper-deep" /></div>
@@ -93,7 +76,7 @@ export function AnalyticsPanel({ text, original, scopeLabel, quality, stale, loa
         {error && <p role="alert" className="mt-3 text-[13px] text-red-700">{error}</p>}
         {blockedReason && <p className="mt-3 text-[13px] text-amber-800">{blockedReason}</p>}
         <Button className="mt-4 w-full" variant={quality ? 'secondary' : 'primary'} icon={quality ? RefreshCw : Sparkles} loading={loading} disabled={loading || Boolean(blockedReason)} onClick={onAnalyze}>
-          {loading ? t('Menganalisis…', 'Analysing…') : quality ? t('Analisis ulang', 'Analyse again') : t('Analisis Kualitas Tulisan', 'Analyse Writing Quality')}
+          {loading ? t('Menganalisis…', 'Analysing…') : quality ? t('Analisis ulang', 'Analyse again') : t('Analisis kualitas', 'Analyse quality')}
         </Button>
         <p className="mt-2 text-center text-[11px] text-ink-400">{loading ? <Spinner size={11} className="mr-1 inline" /> : null}{t('Bagian dianalisis', 'Analysing')}: {scopeLabel} · {t('memakai 1 kuota AI', 'uses 1 AI request')}</p>
       </section>

@@ -29,7 +29,7 @@ export function FormatToolbar({ editor, disabled, onLink }: { editor: Editor; di
   });
   const chain = () => editor.chain().focus();
   return (
-    <div role="toolbar" aria-label={t('Format teks', 'Text formatting')} className="scrollbar-thin flex items-center gap-0.5 overflow-x-auto rounded-xl border border-line bg-white px-1.5 py-1 shadow-sm">
+    <div role="toolbar" aria-label={t('Format teks', 'Text formatting')} className="scrollbar-thin flex items-center gap-0.5 overflow-x-auto">
       <Tool icon={Undo2} label={t('Urungkan', 'Undo')} disabled={disabled || !state.canUndo} onClick={() => chain().undo().run()} />
       <Tool icon={Redo2} label={t('Ulangi', 'Redo')} disabled={disabled || !state.canRedo} onClick={() => chain().redo().run()} />
       <Divider />

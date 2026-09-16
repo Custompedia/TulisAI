@@ -28,7 +28,7 @@ const env = {
   }
 } as unknown as { DB: D1Database; DOCUMENTS: R2Bucket };
 
-beforeEach(() => { db = new DatabaseSync(":memory:"); db.exec(readFileSync("migrations/0000_initial.sql", "utf8")); db.exec(readFileSync("migrations/0001_username_auth.sql", "utf8")); db.exec(readFileSync("migrations/0002_workspace_metadata.sql", "utf8")); objects.clear(); });
+beforeEach(() => { db = new DatabaseSync(":memory:"); db.exec(readFileSync("migrations/0000_initial.sql", "utf8")); db.exec(readFileSync("migrations/0001_username_auth.sql", "utf8")); db.exec(readFileSync("migrations/0002_workspace_metadata.sql", "utf8")); db.exec(readFileSync("migrations/0003_notebook_appearance.sql", "utf8")); objects.clear(); });
 afterEach(() => db.close());
 const documentRow = () => db.prepare("INSERT INTO documents (id,owner_id,title,language,created_at,updated_at) VALUES ('d','u','D','id',1,1)").run();
 

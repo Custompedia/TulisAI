@@ -5,5 +5,5 @@ export default async function DocumentRedirect({ params, searchParams }: { param
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(await searchParams)) for (const item of [value ?? []].flat()) query.append(key, item);
   const search = query.toString();
-  redirect(`/projects/${encodeURIComponent(id)}${search ? `?${search}` : ''}`);
+  redirect(`/notebooks/${encodeURIComponent(id)}${search ? `?${search}` : ''}`);
 }

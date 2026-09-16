@@ -1,8 +1,9 @@
-import { AppShell } from '@/components/app/AppShell';
-import Workspace from '@/components/workspace/Workspace';
+import { redirect } from 'next/navigation';
 
-// Keyed by id so every project gets fresh workspace state.
-export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ProjectRedirect({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
-  return <AppShell fullBleed><Workspace key={id} /></AppShell>;
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(await searchParams)) for (const item of [value ?? []].flat()) query.append(key, item);
+  const search = query.toString();
+  redirect(`/notebooks/${encodeURIComponent(id)}${search ? `?${search}` : ''}`);
 }

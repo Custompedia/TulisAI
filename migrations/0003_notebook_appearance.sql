@@ -1,0 +1,2 @@
+ALTER TABLE documents ADD COLUMN color TEXT;
+ALTER TABLE documents ADD COLUMN icon TEXT;

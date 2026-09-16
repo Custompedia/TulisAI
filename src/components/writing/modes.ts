@@ -9,7 +9,7 @@ export const modeIcon: Record<Mode, LucideIcon> = {
   standard: PenLine, academic: GraduationCap, humanize: Feather, professional: Briefcase, creative: Palette, simplify: Lightbulb, custom: SlidersHorizontal,
 };
 
-export type ModeTone = 'green' | 'blue' | 'orange' | 'slate' | 'pink' | 'gold';
+export type ModeTone = 'green' | 'blue' | 'orange' | 'slate' | 'pink' | 'gold' | 'gray';
 export const modeTone: Record<Mode, ModeTone> = {
   standard: 'green', academic: 'blue', humanize: 'pink', professional: 'slate', creative: 'orange', simplify: 'gold', custom: 'slate',
 };
@@ -21,6 +21,7 @@ export const toneClass: Record<ModeTone, { ink: string; fill: string; edge: stri
   slate: { ink: 'text-mode-slate-ink', fill: 'bg-mode-slate-fill', edge: 'border-mode-slate-edge', light: 'bg-mode-slate-light', chip: 'border-mode-slate-edge bg-mode-slate-light text-mode-slate-ink', chipActive: 'border-mode-slate-ink bg-mode-slate-fill text-mode-slate-ink' },
   pink: { ink: 'text-mode-pink-ink', fill: 'bg-mode-pink-fill', edge: 'border-mode-pink-edge', light: 'bg-mode-pink-light', chip: 'border-mode-pink-edge bg-mode-pink-light text-mode-pink-ink', chipActive: 'border-mode-pink-ink bg-mode-pink-fill text-mode-pink-ink' },
   gold: { ink: 'text-mode-gold-ink', fill: 'bg-mode-gold-fill', edge: 'border-mode-gold-edge', light: 'bg-mode-gold-light', chip: 'border-mode-gold-edge bg-mode-gold-light text-mode-gold-ink', chipActive: 'border-mode-gold-ink bg-mode-gold-fill text-mode-gold-ink' },
+  gray: { ink: 'text-mode-gray-ink', fill: 'bg-mode-gray-fill', edge: 'border-mode-gray-edge', light: 'bg-mode-gray-light', chip: 'border-mode-gray-edge bg-mode-gray-light text-mode-gray-ink', chipActive: 'border-mode-gray-ink bg-mode-gray-fill text-mode-gray-ink' },
 };
 export const modeToneClass = (mode: Mode) => toneClass[modeTone[mode]];
 
