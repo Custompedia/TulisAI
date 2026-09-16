@@ -80,7 +80,20 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'LOCK_LIMIT_REACHED': return t('Maksimal 200 istilah terkunci per dokumen.', 'A document can have at most 200 locked terms.');
     case code.includes('EXPIRED'): return t('Pratinjau kedaluwarsa. Buat hasil baru.', 'This preview expired. Generate a new one.');
     case code === 'IDEMPOTENCY_PENDING': return t('Permintaan yang sama sedang diproses.', 'The same request is already being processed.');
+    case code === 'STYLE_EXISTS': return t('Sudah ada skill dengan nama ini. Pakai nama lain.', 'A skill with this name already exists. Use another name.');
+    case code === 'STYLE_LIMIT_REACHED': return t('Skill tersimpan sudah penuh. Hapus salah satu dulu.', 'Your saved skills are full. Delete one first.');
+    case code === 'STYLE_NOT_FOUND': return t('Skill ini sudah tidak ada. Muat ulang daftar skill.', 'This skill no longer exists. Reload your skills.');
     case code === 'NOT_FOUND': return t('Data tidak ditemukan atau kamu tidak punya akses.', 'Not found, or you do not have access.');
+    case code === 'FORBIDDEN': return t('Halaman ini khusus admin.', 'This page is for admins only.');
+    case code === 'ACCOUNT_DISABLED' || code === 'BANNED_USER': return t('Akun ini dinonaktifkan. Hubungi admin.', 'This account has been disabled. Contact the administrator.');
+    case code === 'SELF_DEMOTION': return t('Kamu tidak bisa mencabut role admin milikmu sendiri.', 'You cannot remove your own admin role.');
+    case code === 'SELF_BAN' || code === 'YOU_CANNOT_BAN_YOURSELF': return t('Kamu tidak bisa menonaktifkan akunmu sendiri.', 'You cannot disable your own account.');
+    case code === 'SELF_DELETE' || code === 'YOU_CANNOT_REMOVE_YOURSELF': return t('Kamu tidak bisa menghapus akunmu sendiri dari sini.', 'You cannot delete your own account from here.');
+    case code === 'LAST_ADMIN': return t('Harus tersisa minimal satu admin aktif.', 'At least one active admin must remain.');
+    case code === 'ADMIN_DELETE': return t('Cabut role admin dulu sebelum menghapus akun ini.', 'Remove the admin role before deleting this account.');
+    case code === 'USER_ALREADY_EXISTS' || code === 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL': return t('Email ini sudah terdaftar.', 'This email is already registered.');
+    case code === 'USER_NOT_FOUND': return t('Pengguna tidak ditemukan.', 'User not found.');
+    case code === 'INVALID_CURSOR': return t('Halaman tidak valid. Muat ulang daftar.', 'Invalid page. Reload the list.');
     case code === 'INVALID_DOCUMENT': return t('Format dokumen belum didukung.', 'This document format is not supported.');
     default: return t('Tindakan belum berhasil. Coba lagi.', 'The action did not finish. Please try again.');
   }

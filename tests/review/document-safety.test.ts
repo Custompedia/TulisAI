@@ -29,7 +29,7 @@ class Statement {
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  db.exec(readFileSync('migrations/0000_initial.sql', 'utf8')); db.exec(readFileSync('migrations/0001_username_auth.sql', 'utf8')); db.exec(readFileSync('migrations/0002_workspace_metadata.sql', 'utf8')); db.exec(readFileSync('migrations/0003_notebook_appearance.sql', 'utf8'));
+  db.exec(readFileSync('migrations/0000_initial.sql', 'utf8')); db.exec(readFileSync('migrations/0001_username_auth.sql', 'utf8')); db.exec(readFileSync('migrations/0002_workspace_metadata.sql', 'utf8')); db.exec(readFileSync('migrations/0003_notebook_appearance.sql', 'utf8')); db.exec(readFileSync('migrations/0005_user_role.sql', 'utf8')); db.exec(readFileSync('migrations/0006_admin_panel.sql', 'utf8')); db.exec(readFileSync('migrations/0007_usage_created_index.sql', 'utf8'));
   objects = new Map(); objectReads = 0;
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => {
@@ -119,6 +119,15 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     await applyPreview('owner-a',preview.id,0);await applyPreview('owner-a',preview.id,0);
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Tulisan awal.');expect((await listVersions('owner-a',doc.id)).items).toHaveLength(2);
     expect(db.prepare('SELECT input_tokens FROM usage_ledger').get()).toMatchObject({input_tokens:12});
+  });
+  it('enforces the monthly cap for users and lifts it for admins',async()=>{
+    enable();state.env.AI_MONTHLY_REQUEST_LIMIT='1';const doc=await create();
+    const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
+    await generatePreview('owner-a','first',input(doc));
+    await expect(generatePreview('owner-a','second',input(doc))).rejects.toMatchObject({code:'QUOTA_EXCEEDED'});
+    db.prepare("INSERT INTO user (id,name,email,username,role,created_at,updated_at) VALUES ('owner-a','Admin','admin@example.test','admin','admin',1,1)").run();
+    const preview=await generatePreview('owner-a','third',input(doc));
+    expect(preview.id).toBeTruthy();expect(transport).toHaveBeenCalledTimes(2);
   });
   it('prevents a concurrent idempotency key from spending twice',async()=>{
     enable();const doc=await create();let resolve:((response:Response)=>void)|undefined;

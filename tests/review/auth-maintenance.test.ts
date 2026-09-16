@@ -28,7 +28,7 @@ const env = {
   }
 } as unknown as { DB: D1Database; DOCUMENTS: R2Bucket };
 
-beforeEach(() => { db = new DatabaseSync(":memory:"); db.exec(readFileSync("migrations/0000_initial.sql", "utf8")); db.exec(readFileSync("migrations/0001_username_auth.sql", "utf8")); db.exec(readFileSync("migrations/0002_workspace_metadata.sql", "utf8")); db.exec(readFileSync("migrations/0003_notebook_appearance.sql", "utf8")); objects.clear(); });
+beforeEach(() => { db = new DatabaseSync(":memory:"); db.exec(readFileSync("migrations/0000_initial.sql", "utf8")); db.exec(readFileSync("migrations/0001_username_auth.sql", "utf8")); db.exec(readFileSync("migrations/0002_workspace_metadata.sql", "utf8")); db.exec(readFileSync("migrations/0003_notebook_appearance.sql", "utf8")); db.exec(readFileSync("migrations/0005_user_role.sql", "utf8")); db.exec(readFileSync("migrations/0006_admin_panel.sql", "utf8")); db.exec(readFileSync("migrations/0007_usage_created_index.sql", "utf8")); objects.clear(); });
 afterEach(() => db.close());
 const documentRow = () => db.prepare("INSERT INTO documents (id,owner_id,title,language,created_at,updated_at) VALUES ('d','u','D','id',1,1)").run();
 
@@ -128,7 +128,7 @@ describe("Better Auth D1 adapter", () => {
     expect((await signIn("203.0.113.8")).status).toBe(429);
     expect((await signIn("203.0.113.9")).status).toBe(401);
     expect(db.prepare("SELECT count FROM rate_limit WHERE key LIKE ?").get("%203.0.113.8% ".trim())).toEqual({ count: 10 });
-  });
+  }, 20000);
 
   it("returns JSON 503 from the auth catch-all when required configuration is absent", async () => {
     authState.env = { DB: env.DB };

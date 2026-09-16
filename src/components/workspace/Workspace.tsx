@@ -16,6 +16,9 @@ import { guardedPush, leaveHref, leavesPath, setLeaveGuard } from '@/lib/client/
 import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/document';
 import { countWords } from '@/lib/editor/metrics';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
+import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
+import { useWritingStyles } from '@/lib/client/styles-store';
+import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useSessionGuard, type UserSettings } from '@/components/app/AppShell';
 import { Toast } from '@/components/ui/Toast';
 import { Button, IconButton, pressGreen, raisedGreen } from '@/components/ui/Button';
@@ -35,7 +38,7 @@ import { NotebookHeader } from './NotebookHeader';
 import { PreviewCard } from './PreviewCard';
 import { protectionExtension } from './protection';
 import { SaveStatus } from './SaveStatus';
-import { planSelectionCommand, type SelectionCommand } from './selection-commands';
+import { planSelectionCommand, planStyleCommand, type SelectionCommand, type SelectionPlan } from './selection-commands';
 import { SelectionMenu } from './SelectionMenu';
 import { StudioPanel, StudioStrip, type StudioTab } from './StudioPanel';
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Surface, type Term, type Version } from './types';
@@ -104,6 +107,9 @@ export default function Workspace() {
   const [lastRequest, setLastRequest] = useState<GenerateRequest | null>(null);
   const [customizeRequest, setCustomizeRequest] = useState(0);
   const [leaving, setLeaving] = useState<{ href: string; saving: boolean } | null>(null);
+  // `apply` marks the notebook as using the style right after it is saved from the current settings.
+  const [styleDialog, setStyleDialog] = useState<{ style: WritingStyle | null; preset: Settings; apply: boolean } | null>(null);
+  const styleList = useWritingStyles();
 
   const current = useRef<Doc | null>(null);
   const owner = useRef('');
@@ -480,7 +486,14 @@ export default function Workspace() {
   // Quick actions from the selection toolbar run and resolve on the text itself; only "Customize" hands over to the panel.
   function selectionCommand(command: SelectionCommand) {
     if (!selection || !editor) return;
-    const plan = planSelectionCommand(command, selection, latest.current.settings, t, (value) => numberFormat(value, locale));
+    runPlan(planSelectionCommand(command, selection, latest.current.settings, t, (value) => numberFormat(value, locale)));
+  }
+  function styleCommand(style: WritingStyle) {
+    if (!selection || !editor) return;
+    runPlan(planStyleCommand(style, selection, latest.current.settings, t, (value) => numberFormat(value, locale)));
+  }
+  function runPlan(plan: SelectionPlan) {
+    if (!selection || !editor) return;
     switch (plan.kind) {
       case 'lock': void lockSelection(); return;
       case 'unlock': { const term = terms.find((item) => item.term === selection.text.trim()); if (term) void unlock(term); return; }
@@ -627,7 +640,16 @@ export default function Workspace() {
     } catch { setNotice({ tone: 'error', message: t('Teks tidak bisa disalin. Izinkan akses papan klip di browser lalu coba lagi.', 'The text could not be copied. Allow clipboard access in your browser and try again.') }); }
   }
 
-  const updateSettings = (next: Settings) => { setSettings(next); markMetadata(title, next); };
+  // Clears the style marker as soon as the settings drift from the saved preset.
+  const updateSettings = (next: Settings) => { const value = reconcileStyle(next, styleList.styles); setSettings(value); markMetadata(title, value); };
+  const chooseStyle = (style: WritingStyle) => updateSettings(applyStyle(latest.current.settings, style));
+  const openStyleDialog = (style: WritingStyle | null, preset: Settings, apply: boolean) => setStyleDialog({ style, preset, apply });
+  function onStyleSaved(saved: WritingStyle, created: boolean) {
+    const shouldApply = styleDialog?.apply || latest.current.settings.styleId === saved.id;
+    setStyleDialog(null);
+    if (shouldApply) updateSettings(applyStyle(latest.current.settings, saved));
+    setNotice({ tone: 'success', message: created ? t(`Skill “${saved.name}” tersimpan.`, `Skill “${saved.name}” saved.`) : t(`Skill “${saved.name}” diperbarui.`, `Skill “${saved.name}” updated.`) });
+  }
 
   const lockedSelection = !!selection && terms.some((term) => term.term === selection.text.trim());
   const stale = !!preview && (preview.stamp !== editStamp || (doc !== null && preview.revision !== doc.revision && busy !== 'apply'));
@@ -657,6 +679,8 @@ export default function Workspace() {
   const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
   const assistant = (
     <AssistantPanel
+      styles={styleList.styles} stylesLoading={styleList.loading} stylesError={styleList.error ? errorText(styleList.error, english) : ''} onRetryStyles={styleList.reload}
+      onApplyStyle={chooseStyle} onCreateStyle={() => openStyleDialog(null, defaults, false)} onEditStyle={(style) => openStyleDialog(style, settings, false)} onSaveAsStyle={() => openStyleDialog(null, settings, true)}
       settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
       busy={busy !== '' || !loaded} generating={busy === 'generate' && lastRequest?.surface === 'panel'}
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
@@ -729,7 +753,7 @@ export default function Workspace() {
             </div>
           )}
           <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
-          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} onCommand={selectionCommand} />}
+          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} onCommand={selectionCommand} onStyle={styleCommand} />}
           {editor && loaded && inline && (
             <InlineResult
               editor={editor} label={inline.label} status={inline.status} preview={inlinePreview} message={inline.message} stale={stale} busy={busy !== ''} applying={busy === 'apply'}
@@ -815,6 +839,9 @@ export default function Workspace() {
               {leaving.saving ? <Spinner size={16} /> : <Save size={16} aria-hidden="true" />}{t('Simpan & keluar', 'Save & leave')}
             </button>
           </>} />
+      )}
+      {styleDialog && (
+        <StyleDialog styles={styleList.styles} style={styleDialog.style} preset={styleDialog.preset} onClose={() => setStyleDialog(null)} onSaved={onStyleSaved} />
       )}
       {recovery && (
         <Modal title={t('Ada tulisan yang belum tersimpan', 'Unsaved writing found')} description={`${t('Dari perangkat ini', 'From this device')} · ${dateTime(recovery.updatedAt, locale)}`} busy={busy === 'recover'} dismissible={false} onClose={() => undefined} size="lg"

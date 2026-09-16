@@ -11,16 +11,17 @@ export function Modal({ title, description, children, footer, onClose, busy = fa
   const { t } = useLocale();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { const node = ref.current; if (node && !node.open) node.showModal(); return () => node?.close(); }, []);
-  const width = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-5xl', '2xl': 'max-w-7xl' }[size];
+  const sheet = size === '2xl';
+  const width = { sm: 'max-w-md', md: 'max-w-lg', lg: 'max-w-2xl', xl: 'max-w-5xl', '2xl': 'max-w-[min(94rem,calc(100vw-3rem))]' }[size];
   return (
     <dialog
       ref={ref}
       aria-labelledby="modal-title"
       onCancel={(event) => { event.preventDefault(); if (canClose) onClose(); }}
       onClick={(event) => { if (event.target === ref.current && canClose) onClose(); }}
-      className={`m-auto w-[calc(100%-2rem)] ${width} rounded-2xl border border-line bg-white p-0 text-ink-900 shadow-2xl`}
+      className={`mx-auto w-[calc(100%-2rem)] ${width} border border-line bg-white p-0 text-ink-900 shadow-2xl ${sheet ? 'mb-0 mt-auto rounded-2xl rounded-b-none border-b-0' : 'my-auto rounded-2xl'}`}
     >
-      <div className="flex max-h-[min(85vh,calc(100dvh-6rem))] flex-col">
+      <div className={`flex flex-col ${sheet ? 'h-[calc(100dvh-2.5rem)] max-h-[calc(100dvh-2.5rem)]' : 'max-h-[min(85vh,calc(100dvh-6rem))]'}`}>
         <header className="flex items-start gap-4 border-b border-line px-6 py-5">
           <div className="min-w-0 flex-1">
             <h2 id="modal-title" className="text-lg font-semibold tracking-tight">{title}</h2>
@@ -28,7 +29,7 @@ export function Modal({ title, description, children, footer, onClose, busy = fa
           </div>
           {dismissible && <button type="button" onClick={onClose} disabled={busy} aria-label={t('Tutup', 'Close')} className="-mr-2 grid h-8 w-8 place-items-center rounded-lg text-ink-400 hover:bg-ink-100 hover:text-ink-900 disabled:opacity-40"><X size={18} /></button>}
         </header>
-        {children && <div className="scrollbar-thin overflow-y-auto px-6 py-5 text-sm leading-relaxed text-ink-700">{children}</div>}
+        {children && <div className={`scrollbar-thin overflow-y-auto px-6 py-5 text-sm leading-relaxed text-ink-700 ${sheet ? 'flex-1' : ''}`}>{children}</div>}
         {footer && <footer className="flex flex-wrap justify-end gap-2 border-t border-line bg-paper/60 px-6 py-4">{footer}</footer>}
       </div>
     </dialog>

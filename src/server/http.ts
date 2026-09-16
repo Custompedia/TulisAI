@@ -1,7 +1,8 @@
 import { ZodError, type ZodType } from "zod";
 import { apiError } from "@/lib/contracts";
 import { ConfigurationError } from "./runtime";
-import { UnauthorizedError } from "./auth/auth";
+import { APIError } from "better-auth/api";
+import { ForbiddenError, UnauthorizedError } from "./auth/auth";
 
 export async function readJson<T>(request: Request, schema: ZodType<T>): Promise<T> {
   const length = Number(request.headers.get("content-length") ?? "0");
@@ -18,6 +19,8 @@ export function handleRouteError(error: unknown): Response {
   if (error instanceof ZodError) return apiError("INVALID_REQUEST", "Request data is invalid.", 400, error.flatten());
   if (error instanceof RequestError) return apiError(error.code, error.message, error.status, error.details);
   if (error instanceof UnauthorizedError) return apiError("UNAUTHENTICATED", error.message, 401);
+  if (error instanceof ForbiddenError) return apiError(error.code, error.message, 403);
+  if (error instanceof APIError) { const body = error.body as { code?: string; message?: string } | undefined; return apiError(body?.code ?? "AUTH_ERROR", body?.message ?? error.message, error.statusCode); }
   if (error instanceof ConfigurationError) return apiError("CONFIGURATION_REQUIRED", error.message, 503);
   console.error("route failure", error instanceof Error ? error.name : "unknown");
   return apiError("INTERNAL_ERROR", "The request could not be completed.", 500);

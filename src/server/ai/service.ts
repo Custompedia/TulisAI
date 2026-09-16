@@ -1,4 +1,5 @@
 import { runtime, requiredSetting, ConfigurationError } from '../runtime';
+import { entitlement, periodKey } from '../usage/quota';
 import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
@@ -8,7 +9,6 @@ import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
 
 const DAY = 86_400_000;
-const periodKey = () => new Date().toISOString().slice(0, 7);
 const model = () => runtime().OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna';
 const outputText = (output: AIResponse, selectedAlternative?: number): string => {
   if (Array.isArray(output.alternatives)) {
@@ -18,8 +18,8 @@ const outputText = (output: AIResponse, selectedAlternative?: number): string =>
   return String(output.transformed_text ?? output.corrected_text ?? '');
 };
 async function reserve(ownerId: string, key: string, promptId: string, characters: number) {
-  const limit = Number(runtime().AI_MONTHLY_REQUEST_LIMIT ?? '100');
-  if (!Number.isSafeInteger(limit) || limit < 1) throw new ConfigurationError('AI_MONTHLY_REQUEST_LIMIT must be a positive integer.');
+  // Admins bypass the monthly cap by comparing against a limit no ledger can reach; the 10-per-minute burst guard stays.
+  const rights = await entitlement(ownerId); const limit = rights.unlimited ? Number.MAX_SAFE_INTEGER : rights.requestLimit;
   const existing = await runtime().DB.prepare('SELECT id FROM usage_ledger WHERE owner_id=? AND idempotency_key=?').bind(ownerId, key).first();
   if (existing) throw new RequestError('IDEMPOTENCY_PENDING', 'This request was already attempted. Check its result before retrying.', 409);
   const id = crypto.randomUUID();

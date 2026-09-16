@@ -41,8 +41,8 @@ export function AccountMenu() {
   const root = useRef<HTMLDivElement>(null);
   const button = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
-  const usedPercent = usage ? Math.min(100, Math.round((usage.requestsUsed / Math.max(1, usage.requestLimit)) * 100)) : 0;
-  const low = usage !== null && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
+  const usedPercent = usage && !usage.unlimited ? Math.min(100, Math.round((usage.requestsUsed / Math.max(1, usage.requestLimit)) * 100)) : 0;
+  const low = usage !== null && !usage.unlimited && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
 
   useEffect(() => {
     if (!open) return;
@@ -113,7 +113,7 @@ export function AccountMenu() {
             <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => { setOpen(false); setPlans(true); }} className={`${ITEM} h-auto py-1.5`}>
               <Gauge size={15} strokeWidth={1.8} aria-hidden="true" className="shrink-0 self-start mt-0.5 text-ink-500" />
               <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2"><span>{t('Pemakaian AI', 'AI usage')}</span><span className={`text-[11px] font-medium tabular-nums ${low ? 'text-amber-700' : 'text-ink-500'}`}>{usage ? `${usage.requestsUsed}/${usage.requestLimit}` : '—'}</span></span>
+                <span className="flex items-center justify-between gap-2"><span>{t('Pemakaian AI', 'AI usage')}</span><span className={`text-[11px] font-medium tabular-nums ${low ? 'text-amber-700' : 'text-ink-500'}`}>{usage ? `${usage.requestsUsed}/${usage.unlimited ? '∞' : usage.requestLimit}` : '—'}</span></span>
                 <span className="mt-1 block h-1 overflow-hidden rounded-full bg-line-strong"><span className={`block h-full rounded-full ${low ? 'bg-amber-500' : 'bg-brand-600'}`} style={{ width: `${usedPercent}%` }} /></span>
               </span>
             </button>

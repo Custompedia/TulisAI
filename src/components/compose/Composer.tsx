@@ -8,6 +8,8 @@ import { plainTextDocument } from '@/lib/editor/document';
 import { countWords } from '@/lib/editor/metrics';
 import { numberFormat } from '@/lib/client/format';
 import { AI_SCOPE_LIMIT, defaults, detectLanguage, LEGACY_CUSTOM_PROMPT, MIN_WORDS, modeFromPrompt, normalizeSettings, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
+import { applyStyle, reconcileStyle } from '@/lib/writing/styles';
+import { useWritingStyles } from '@/lib/client/styles-store';
 import { useSessionGuard, useShell } from '@/components/app/AppShell';
 import { COMPOSER_FOCUS_EVENT } from '@/components/app/Sidebar';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
@@ -16,7 +18,7 @@ import { ConfirmDialog } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
 import { Toast } from '@/components/ui/Toast';
 import { CustomizePanel } from '@/components/writing/WritingControls';
-import { academicOptions, contextOptions, creativityOptions, humanizeStrengthOptions, languageOptions, modeIcon, modeLabel, modeToneClass, preservationOptions, recipientOptions, simplifyForOptions, strengthOptions } from '@/components/writing/modes';
+import { academicOptions, contextOptions, creativityOptions, humanizeStrengthOptions, languageOptions, modeIcon, modeLabel, modeToneClass, preservationOptions, recipientOptions, requestSummary, simplifyForOptions, strengthOptions } from '@/components/writing/modes';
 import { CHIP, ChipRow, ChipSelect } from './ComposerChips';
 
 const DRAFT_KEY = 'composer-draft';
@@ -55,6 +57,7 @@ export function Composer() {
   const [error, setError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   const [customizing, setCustomizing] = useState(false);
+  const { styles } = useWritingStyles();
 
   const focus = useCallback(() => { const node = textarea.current; if (!node) return; node.focus(); node.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, []);
   useEffect(() => { try { const saved = sessionStorage.getItem(DRAFT_KEY); if (saved) setText(saved); } catch { /* storage unavailable */ } }, []);
@@ -74,7 +77,7 @@ export function Composer() {
   const words = countWords(text);
   const detected = detectLanguage(text);
   const tooLong = text.length > AI_SCOPE_LIMIT;
-  const outOfQuota = usage !== null && usage.requestsRemaining <= 0;
+  const outOfQuota = usage !== null && !usage.unlimited && usage.requestsRemaining <= 0;
   const needsLanguage = settings.language === 'auto' && words >= MIN_WORDS && !detected;
   const ready = words >= MIN_WORDS;
   const canSend = ready && !busy && !needsLanguage && !(outOfQuota && !tooLong);
@@ -87,9 +90,21 @@ export function Composer() {
     : words > 0 && !ready ? { warn: false, text: t(`Minimal ${MIN_WORDS} kata`, `At least ${MIN_WORDS} words`) }
     : words > 0 ? { warn: false, text: `${numberFormat(words, locale)} ${t('kata', 'words')}` } : null;
 
-  const set = <K extends keyof Settings>(key: K, value: Settings[K]) => setSettings({ ...settings, [key]: value });
-  const pick = (mode: Mode) => { setSettings({ ...settings, mode }); setPicked(true); textarea.current?.focus(); };
-  const unpick = () => { setSettings({ ...settings, mode: baseMode }); setPicked(false); setCustomizing(false); };
+  // Any manual change drops the style marker as soon as the settings drift from the saved preset.
+  const update = (next: Settings) => setSettings(reconcileStyle(next, styles));
+  const set = <K extends keyof Settings>(key: K, value: Settings[K]) => update({ ...settings, [key]: value });
+  const pick = (mode: Mode) => { update({ ...settings, mode }); setPicked(true); textarea.current?.focus(); };
+  const unpick = () => { update({ ...settings, mode: baseMode, styleId: null }); setPicked(false); setCustomizing(false); };
+  const pickStyle = (id: string) => {
+    const style = styles.find((item) => item.id === id);
+    if (!style) { setSettings({ ...settings, styleId: null }); return; }
+    setSettings(applyStyle(settings, style)); setPicked(true);
+  };
+  const styleChip = styles.length > 0 && (
+    <ChipSelect label={t('Skill', 'Skill')} title={t('Skills', 'Skills')} value={settings.styleId ?? ''} disabled={busy} onChange={pickStyle} width="w-72"
+      options={[{ value: '', label: t('Tanpa skill', 'No skill'), hint: t('Pakai mode dan pengaturan di bawah', 'Use the mode and settings below') },
+        ...styles.map((style) => ({ value: style.id, label: style.name, hint: requestSummary(style.settings, t) }))]} />
+  );
 
   async function create() {
     if (!canSend) return;
@@ -164,6 +179,7 @@ export function Composer() {
           {picked ? (
             <>
               <ChipRow>
+                {styleChip}
                 <span className={`inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border bg-white pl-1 pr-0.5 text-[12.5px] font-medium ${tone.edge} ${tone.ink}`}>
                   <span className={`grid h-6 w-6 place-items-center rounded-full ${tone.fill}`}><ModeIcon size={13} aria-hidden="true" /></span>
                   {modeLabel(settings.mode, t)}
@@ -180,6 +196,7 @@ export function Composer() {
             </>
           ) : (
             <ChipRow center>
+              {styleChip}
               {PRIMARY.map((mode) => {
                 const Icon = modeIcon[mode]; const chipTone = modeToneClass(mode);
                 return (
@@ -202,7 +219,7 @@ export function Composer() {
               <div><p className="text-sm font-semibold text-ink-900">{t('Sesuaikan hasil', 'Customize result')}</p><p className="mt-0.5 text-xs text-ink-500">{t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>
               <button type="button" onClick={() => setCustomizing(false)} aria-label={t('Tutup Sesuaikan', 'Close customize')} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-500 hover:bg-paper-deep hover:text-ink-900"><X size={16} aria-hidden="true" /></button>
             </div>
-            <CustomizePanel embedded settings={settings} disabled={busy} onChange={setSettings} onClose={() => setCustomizing(false)} />
+            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} />
           </div>
         )}
       </section>

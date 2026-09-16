@@ -6,20 +6,23 @@ import { Alert } from './Alert';
 const VIEWPORT_ID = 'toast-viewport';
 const subscribe = () => () => {};
 
+// Anchored under the 56px app header so toasts never cover page content.
+const VIEWPORT_CLASS = 'pointer-events-none fixed right-4 top-[4.5rem] z-[70] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2';
+
 function viewport() {
   let element = document.getElementById(VIEWPORT_ID);
   if (!element) {
     element = document.createElement('div');
     element.id = VIEWPORT_ID;
-    element.className = 'pointer-events-none fixed bottom-20 right-4 z-[70] flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2 md:bottom-4 md:left-24 md:right-auto';
     document.body.appendChild(element);
   }
+  element.className = VIEWPORT_CLASS;
   return element;
 }
 
 type Props = React.ComponentProps<typeof Alert> & { duration?: number };
 
-// Floating notification stacked in the bottom-right corner.
+// Floating notification stacked in the top-right corner.
 export function Toast({ duration, onDismiss, className = '', ...props }: Props) {
   const mounted = useSyncExternalStore(subscribe, () => true, () => false);
   const dismiss = useRef(onDismiss);

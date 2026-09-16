@@ -11,9 +11,9 @@ import { PlansDialog } from './PlansDialog';
 import { Sidebar } from './Sidebar';
 import { LoadingBlock } from '@/components/ui/Spinner';
 
-export type SessionUser = { id: string; name: string; email: string; username?: string | null; image?: string | null };
+export type SessionUser = { id: string; name: string; email: string; username?: string | null; image?: string | null; role?: 'user' | 'admin' };
 export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: 'academic' | 'professional' | 'general'; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; onboarded: boolean; updatedAt: string | null };
-export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number };
+export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; unlimited?: boolean; tier?: 'free' | 'plus' | 'pro' | 'team' };
 export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
 
 type Shell = { user: SessionUser; settings: UserSettings; usage: Usage | null; setSettings: (settings: UserSettings) => void; refresh: () => Promise<void> };
@@ -94,7 +94,7 @@ function TopBar() {
   const { t } = useLocale();
   const { usage } = useShell();
   const [plans, setPlans] = useState(false);
-  const low = usage !== null && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
+  const low = usage !== null && !usage.unlimited && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
 
   return (
     <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-shell px-4 md:pl-[18px]">
@@ -102,7 +102,7 @@ function TopBar() {
       <div className="ml-auto flex items-center gap-2.5">
         {usage && (
           <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={t('Pemakaian AI bulan ini', 'AI usage this month')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
-            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{usage.requestsUsed}/{usage.requestLimit}</span>{t('AI bulan ini', 'AI this month')}
+            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{usage.requestsUsed}/{usage.unlimited ? '∞' : usage.requestLimit}</span>{t('AI bulan ini', 'AI this month')}
           </button>
         )}
         <AccountMenu />

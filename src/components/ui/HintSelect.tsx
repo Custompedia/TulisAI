@@ -6,7 +6,8 @@ import { useAutoSide } from './placement';
 type Option<V extends string> = { value: V; label: string; hint?: string; disabled?: boolean };
 
 // Dropdown whose options show a muted one-line hint under each label.
-export function HintSelect<V extends string>({ id, label, value, options, onChange, disabled, size = 'md', align = 'start' }: { id?: string; label: string; value: V; options: Array<Option<V>>; onChange: (value: V) => void; disabled?: boolean; size?: 'sm' | 'md'; align?: 'start' | 'end' }) {
+// describe: repeats the selected option's hint under the button, for forms where the consequence must stay visible.
+export function HintSelect<V extends string>({ id, label, value, options, onChange, disabled, size = 'md', align = 'start', describe = false }: { id?: string; label: string; value: V; options: Array<Option<V>>; onChange: (value: V) => void; disabled?: boolean; size?: 'sm' | 'md'; align?: 'start' | 'end'; describe?: boolean }) {
   const [open, setOpen] = useState(false);
   const listId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -57,6 +58,7 @@ export function HintSelect<V extends string>({ id, label, value, options, onChan
           })}
         </div>
       )}
+      {describe && current?.hint && <p className="mt-1.5 text-xs leading-snug text-ink-500">{current.hint}</p>}
     </div>
   );
 }

@@ -1,9 +1,10 @@
 'use client';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { NotebookPen, Plus, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
+import { LayoutDashboard, NotebookPen, Plus, Settings as SettingsIcon, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { raisedGreen } from '@/components/ui/Button';
+import { useShell } from '@/components/app/AppShell';
 
 export const COMPOSER_FOCUS_EVENT = 'composer:focus';
 
@@ -24,10 +25,12 @@ function RailLink({ href, label, icon: Icon, active, onClick, primary }: NavItem
 export function Sidebar() {
   const { t } = useLocale();
   const pathname = usePathname();
+  const { user } = useShell();
   const focusComposer = () => { if (pathname === '/app') window.dispatchEvent(new Event(COMPOSER_FOCUS_EVENT)); };
   const items: NavItem[] = [
     { href: '/app#compose', label: t('Baru', 'New'), icon: Plus, active: false, onClick: focusComposer, primary: true },
     { href: '/notebooks', label: t('Notebook', 'Notebooks'), icon: NotebookPen, active: pathname.startsWith('/notebooks') },
+    ...(user.role === 'admin' ? [{ href: '/admin', label: 'Admin', icon: LayoutDashboard, active: pathname.startsWith('/admin') }] : []),
   ];
   const settings: NavItem = { href: '/settings', label: t('Pengaturan', 'Settings'), icon: SettingsIcon, active: pathname.startsWith('/settings') };
 

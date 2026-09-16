@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Building2, Check, Crown, Gauge, Leaf, Sparkles, type LucideIcon } from 'lucide-react';
+import { Building2, Check, ChevronDown, Crown, Gauge, Leaf, Minus, Sparkles, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
@@ -39,12 +39,79 @@ function plans(t: T): Plan[] {
   ];
 }
 
+
+type Cell = boolean | string;
+type Row = { label: string; cells: [Cell, Cell, Cell, Cell] };
+type Group = { title: string; rows: Row[] };
+
+function groups(t: T): Group[] {
+  const all = t('Semua', 'All');
+  return [
+    {
+      title: t('Menulis ulang', 'Rewriting'),
+      rows: [
+        { label: t('Permintaan AI per bulan', 'AI requests per month'), cells: ['100', '500', '2.000', t('3.000 / anggota', '3,000 / member')] },
+        { label: t('Mode penulisan', 'Writing modes'), cells: [t('6 mode', '6 modes'), t('6 mode', '6 modes'), t('6 mode', '6 modes'), t('6 mode', '6 modes')] },
+        { label: t('Sesuaikan hasil & catatan untuk AI', 'Customize results & AI notes'), cells: [false, true, true, true] },
+        { label: t('Aksi cepat pada teks terpilih', 'Quick actions on selected text'), cells: [true, true, true, true] },
+        { label: t('Panjang teks terpilih', 'Selection length'), cells: [t('5.000 karakter', '5,000 characters'), t('5.000 karakter', '5,000 characters'), t('10.000 karakter', '10,000 characters'), t('10.000 karakter', '10,000 characters')] },
+        { label: t('Panjang dokumen sekali proses', 'Document length per run'), cells: [t('20.000 karakter', '20,000 characters'), t('20.000 karakter', '20,000 characters'), t('50.000 karakter', '50,000 characters'), t('50.000 karakter', '50,000 characters')] },
+      ],
+    },
+    {
+      title: t('Menjaga tulisan', 'Refining'),
+      rows: [
+        { label: t('Istilah terkunci per notebook', 'Locked terms per notebook'), cells: [true, true, true, true] },
+        { label: t('Istilah terkunci untuk semua notebook', 'Locked terms across all notebooks'), cells: [false, false, true, true] },
+        { label: t('Analisis kualitas tulisan', 'Writing quality analysis'), cells: [t('5× / bulan', '5× / month'), t('50× / bulan', '50× / month'), t('Tanpa batas', 'Unlimited'), t('Tanpa batas', 'Unlimited')] },
+        { label: t('Bandingkan versi', 'Compare versions'), cells: [true, true, true, true] },
+      ],
+    },
+    {
+      title: t('Notebook & riwayat', 'Notebooks & history'),
+      rows: [
+        { label: t('Jumlah notebook', 'Number of notebooks'), cells: ['10', t('Tanpa batas', 'Unlimited'), t('Tanpa batas', 'Unlimited'), t('Tanpa batas', 'Unlimited')] },
+        { label: t('Riwayat versi', 'Version history'), cells: [t('7 hari', '7 days'), t('90 hari', '90 days'), t('Tanpa batas', 'Unlimited'), t('Tanpa batas', 'Unlimited')] },
+        { label: t('Pulihkan versi lama', 'Restore old versions'), cells: [true, true, true, true] },
+        { label: t('Ekspor DOCX & PDF', 'Export to DOCX & PDF'), cells: [false, true, true, true] },
+      ],
+    },
+    {
+      title: t('Tim & dukungan', 'Team & support'),
+      rows: [
+        { label: t('Ruang kerja & notebook bersama', 'Shared workspace & notebooks'), cells: [false, false, false, true] },
+        { label: t('Peran admin dan anggota', 'Admin and member roles'), cells: [false, false, false, true] },
+        { label: t('Panduan gaya & istilah tim', 'Team style guide & terms'), cells: [false, false, false, true] },
+        { label: t('Tagihan terpusat', 'Centralised billing'), cells: [false, false, false, true] },
+        { label: t('Antrean AI prioritas', 'Priority AI queue'), cells: [false, false, true, true] },
+        { label: t('Dukungan', 'Support'), cells: [t('Pusat bantuan', 'Help centre'), t('Email', 'Email'), t('Email prioritas', 'Priority email'), all + t(' di Pro + orientasi tim', ' in Pro + team onboarding')] },
+      ],
+    },
+  ];
+}
+
+function faqs(t: T): Array<[string, string]> {
+  return [
+    [t('Apa itu satu permintaan AI?', 'What counts as one AI request?'), t('Satu kali menjalankan AI: memperbaiki teks terpilih, satu paragraf, seluruh dokumen, atau satu analisis kualitas. Mengetik, menyimpan, dan membandingkan versi tidak memakai kuota.', 'One AI run: rewriting a selection, a paragraph, the whole document, or one quality analysis. Typing, saving, and comparing versions do not use quota.')],
+    [t('Kalau kuota habis sebelum akhir bulan?', 'What if my quota runs out before the month ends?'), t('Tulisanmu tetap bisa dibuka, diedit, dan disimpan. Hanya fitur AI yang berhenti sampai kuota direset di awal bulan berikutnya, atau kamu naik paket.', 'Your writing stays open, editable, and saved. Only the AI features pause until the quota resets at the start of next month, or you upgrade.')],
+    [t('Apakah kuota sisa dibawa ke bulan berikutnya?', 'Does unused quota roll over?'), t('Tidak. Kuota direset setiap awal bulan dan sisa kuota tidak diakumulasi.', 'No. Quota resets at the start of each month and unused requests do not accumulate.')],
+    [t('Bisa pindah atau berhenti kapan saja?', 'Can I change or cancel anytime?'), t('Bisa. Naik paket berlaku langsung, turun paket berlaku di periode tagihan berikutnya, dan notebook-mu tidak dihapus saat kembali ke Gratis.', 'Yes. Upgrades apply immediately, downgrades apply next billing period, and your notebooks are not deleted when you return to Free.')],
+    [t('Apakah tulisan saya dipakai untuk melatih AI?', 'Is my writing used to train AI?'), t('Tidak. Tulisanmu hanya diproses untuk menghasilkan permintaan yang kamu jalankan.', 'No. Your writing is only processed to produce the request you run.')],
+  ];
+}
+
+function CellValue({ value, t }: { value: Cell; t: T }) {
+  if (value === true) return <Check size={16} className="mx-auto text-brand-700" aria-label={t('Termasuk', 'Included')} />;
+  if (value === false) return <Minus size={16} className="mx-auto text-ink-300" aria-label={t('Tidak termasuk', 'Not included')} />;
+  return <span className="text-[12.5px] text-ink-700">{value}</span>;
+}
+
 export function PlansDialog({ onClose }: { onClose: () => void }) {
   const { t } = useLocale();
   const [notice, setNotice] = useState('');
 
   return (
-    <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI quota')} description={t('Harga dalam Rupiah, sudah termasuk pajak. Kuota tidak terpakai tidak dibawa ke bulan berikutnya.', 'Prices in Rupiah, tax included. Unused quota does not roll over to the next month.')}>
+    <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI quota')}>
       {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Segera hadir', 'Coming soon')}>{t(`Pembayaran untuk paket ${notice} belum tersedia. Ini masih pratinjau paket.`, `Payment for the ${notice} plan is not available yet. This is a plan preview.`)}</Alert>}
 
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -85,6 +152,56 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
         })}
       </ul>
 
+      <section aria-label={t('Perbandingan fitur', 'Feature comparison')} className="mx-auto mt-10 w-full max-w-4xl">
+        <h3 className="text-center text-[15px] font-semibold text-ink-900">{t('Bandingkan semua fitur', 'Compare all features')}</h3>
+        <div className="scrollbar-thin mt-4 overflow-x-auto">
+          <table className="w-full min-w-[640px] border-collapse text-left">
+            <thead>
+              <tr className="border-b border-line">
+                <th scope="col" className="w-[38%] py-2 pr-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">{t('Fitur', 'Feature')}</th>
+                {plans(t).map((plan) => (
+                  <th key={plan.id} scope="col" className="px-3 py-2 text-center text-[13px] font-semibold text-ink-900">{plan.name}{plan.id === CURRENT && <span className="ml-1.5 rounded-full bg-brand-100 px-1.5 py-0.5 text-[10px] font-semibold text-brand-800">{t('Saat ini', 'Current')}</span>}</th>
+                ))}
+              </tr>
+            </thead>
+            {groups(t).map((group) => (
+              <tbody key={group.title}>
+                <tr>
+                  <th scope="colgroup" colSpan={5} className="pb-1.5 pt-5 text-[12px] font-semibold text-brand-800">{group.title}</th>
+                </tr>
+                {group.rows.map((row, index) => (
+                  <tr key={row.label} className={index % 2 === 1 ? 'bg-paper/60' : ''}>
+                    <th scope="row" className="rounded-l-lg py-2 pl-2 pr-3 text-[12.5px] font-normal text-ink-700">{row.label}</th>
+                    {row.cells.map((cell, column) => (
+                      <td key={column} className={`px-3 py-2 text-center ${column === 3 ? 'rounded-r-lg' : ''}`}><CellValue value={cell} t={t} /></td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            ))}
+          </table>
+        </div>
+      </section>
+
+      <section aria-label="FAQ" className="mx-auto mt-10 w-full max-w-3xl">
+        <h3 className="text-center text-[15px] font-semibold text-ink-900">{t('Pertanyaan yang sering muncul', 'Frequently asked questions')}</h3>
+        <div className="mt-4 divide-y divide-line border-y border-line">
+          {faqs(t).map(([question, answer]) => (
+            <details key={question} className="group">
+              <summary className="flex cursor-pointer list-none items-center gap-3 py-3 text-[13.5px] font-medium text-ink-800 marker:hidden hover:text-ink-950">
+                <span className="min-w-0 flex-1">{question}</span>
+                <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-ink-400 transition-transform group-open:rotate-180" />
+              </summary>
+              <p className="pb-3.5 pr-7 text-[12.5px] leading-relaxed text-ink-600">{answer}</p>
+            </details>
+          ))}
+        </div>
+      </section>
+
+      <footer className="mx-auto mt-8 flex w-full max-w-4xl flex-col gap-1.5 border-t border-line pt-4 text-[11.5px] text-ink-500 sm:flex-row sm:items-center sm:justify-between">
+        <p>{t('Harga dalam Rupiah, sudah termasuk pajak. Kuota direset setiap awal bulan.', 'Prices in Rupiah, tax included. Quota resets at the start of each month.')}</p>
+        <p>{t('Semua paket mendapat pembaruan fitur tanpa biaya tambahan.', 'Every plan gets feature updates at no extra cost.')}</p>
+      </footer>
     </Modal>
   );
 }

@@ -1,6 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { username } from "better-auth/plugins";
+import { admin, username } from "better-auth/plugins";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzle } from "drizzle-orm/d1";
 import { runtime, requiredSetting } from "../runtime";
@@ -65,7 +65,7 @@ export function auth() {
       user: {
         create: {
           before: async (user, context) => {
-            if (context?.path !== "/sign-up/email") return;
+            if (context?.path !== "/sign-up/email" && context?.path !== "/admin/create-user") return;
             const name = user.name.trim();
             if (!name || name.length > 100) throw APIError.from("BAD_REQUEST", { code: "INVALID_NAME", message: "Name must be 1 to 100 characters." });
             if (typeof user.username !== "string" || !user.username.trim()) throw APIError.from("BAD_REQUEST", { code: "USERNAME_REQUIRED", message: "Username is required." });
@@ -91,17 +91,31 @@ export function auth() {
         const normalized = value.trim();
         return normalized.length >= 3 && normalized.length <= 30 && /^[a-z0-9](?:[a-z0-9._]*[a-z0-9])?$/i.test(normalized);
       },
-    })],
+    }), admin({ adminRoles: ["admin"], defaultRole: "user", bannedUserMessage: "This account has been disabled. Contact the administrator." })],
   });
 }
 
 async function deliver(to: string, template: EmailTemplate) { await sendEmail({ to, ...renderEmail(template) }); }
 
-export async function requireUser(request: Request): Promise<{ id: string; email: string; name: string; username: string | null; image: string | null }> {
+export type Role = "user" | "admin";
+export type SessionUser = { id: string; email: string; name: string; username: string | null; image: string | null; role: Role };
+
+export async function requireUser(request: Request): Promise<SessionUser> {
   const session = await auth().api.getSession({ headers: request.headers });
   if (!session?.user) throw new UnauthorizedError();
-  const user = session.user as typeof session.user & { username?: string | null };
-  return { id: user.id, email: user.email, name: user.name, username: user.username ?? null, image: user.image ?? null };
+  const user = session.user as typeof session.user & { username?: string | null; role?: string | null; banned?: boolean | null; banExpires?: Date | string | null };
+  // Ban is enforced at sign-in by the admin plugin; this covers sessions that were issued before the ban.
+  if (user.banned && (!user.banExpires || new Date(user.banExpires).getTime() > Date.now())) throw new ForbiddenError("ACCOUNT_DISABLED", "This account has been disabled.");
+  return { id: user.id, email: user.email, name: user.name, username: user.username ?? null, image: user.image ?? null, role: isAdminRole(user.role) ? "admin" : "user" };
 }
+export const isAdminRole = (role: string | null | undefined) => (role ?? "").split(",").map((item) => item.trim()).includes("admin");
+
+export async function requireAdmin(request: Request): Promise<SessionUser> {
+  const user = await requireUser(request);
+  if (user.role !== "admin") throw new ForbiddenError();
+  return user;
+}
+
+export class ForbiddenError extends Error { constructor(public code = "FORBIDDEN", message = "Admin access is required.") { super(message); this.name = "ForbiddenError"; } }
 
 export class UnauthorizedError extends Error { constructor() { super("Sign in is required."); this.name = "UnauthorizedError"; } }

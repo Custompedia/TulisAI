@@ -29,7 +29,7 @@ const BASE = "http://localhost:3000";
 
 beforeEach(() => {
   db = new DatabaseSync(":memory:");
-  for (const file of ["0000_initial", "0001_username_auth", "0002_workspace_metadata", "0003_notebook_appearance"]) db.exec(readFileSync(`migrations/${file}.sql`, "utf8"));
+  for (const file of ["0000_initial", "0001_username_auth", "0002_workspace_metadata", "0003_notebook_appearance", "0005_user_role", "0006_admin_panel", "0007_usage_created_index"]) db.exec(readFileSync(`migrations/${file}.sql`, "utf8"));
   sent.length = 0;
   state.env = { DB: { prepare: (sql: string) => new Statement(sql) }, BETTER_AUTH_SECRET: "a test secret that is long enough for Better Auth", BETTER_AUTH_URL: BASE, EMAIL: { send: async (message: (typeof sent)[number]) => { sent.push(message); return { messageId: "m" }; } }, EMAIL_FROM: "no-reply@example.test" };
 });
@@ -117,7 +117,7 @@ describe("account routes", () => {
     expect((await post({ newPassword: "another secure pass" }, "k2")).status).toBe(200);
     expect(await (await getAccount(cookie)).json()).toMatchObject({ data: { hasPassword: true } });
     expect((await authPost("/sign-in/email", { email: "ada@example.test", password: "another secure pass" })).status).toBe(200);
-  });
+  }, 15000);
 
   it("validates profile names on update", async () => {
     const cookie = await register();

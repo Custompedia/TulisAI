@@ -18,7 +18,7 @@ const DIFF_TEXT = 'text-[16px] leading-relaxed text-ink-900';
 
 function Picker({ prefix, value, options, disabled, onChange }: { prefix: string; value: string; options: Option[]; disabled: boolean; onChange: (value: string) => void }) {
   return (
-    <label className="relative inline-flex h-8 min-w-0 max-w-full items-center rounded-full border border-line bg-white pl-3 pr-8 text-[13px] shadow-[0_1px_2px_rgb(31_32_29/0.04)] transition-colors focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 hover:border-line-strong has-disabled:opacity-60 @xl:max-w-[18rem]">
+    <label className="relative flex h-8 w-full min-w-0 items-center rounded-full border border-line bg-white pl-3 pr-8 text-[13px] shadow-[0_1px_2px_rgb(31_32_29/0.04)] transition-colors focus-within:border-brand-400 focus-within:ring-2 focus-within:ring-brand-100 hover:border-line-strong has-disabled:opacity-60">
       <span className="shrink-0 text-ink-500">{prefix}:</span>
       <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)} className="min-w-0 flex-1 cursor-pointer appearance-none truncate bg-transparent pl-1 font-medium text-ink-900 outline-none disabled:cursor-not-allowed">
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -39,30 +39,31 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
   const identical = before === after;
   const restorable = b !== WORKING && b !== PREVIEW && b !== SOURCE ? b : null;
   const sideOptions = (side: string) => options.filter((option) => option.value !== PREVIEW || side === PREVIEW);
+  const labelOf = (value: string) => options.find((option) => option.value === value)?.label ?? value;
   const size = change < 15 ? t('Perubahan kecil', 'Small change') : change < 45 ? t('Perubahan sedang', 'Moderate change') : t('Perubahan besar', 'Large change');
   const chip = 'inline-flex h-6 items-center rounded-full px-2 text-xs font-medium tabular-nums';
 
   return (
     <section aria-label={t('Bandingkan versi', 'Compare versions')} className="@container flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 border-b border-line bg-white px-4 py-2.5 sm:px-6">
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-          <span className="inline-flex shrink-0 items-center gap-1.5 text-[13px] font-semibold text-ink-800"><Columns2 size={15} className="text-brand-700" aria-hidden="true" />{t('Membandingkan', 'Comparing')}</span>
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <Picker prefix={t('Sebelum', 'Before')} value={a} options={sideOptions(a)} disabled={busy || a === PREVIEW} onChange={(value) => onChange(value, b)} />
-            <IconButton size="sm" icon={ArrowLeftRight} label={t('Tukar sebelum dan sesudah', 'Swap before and after')} disabled={busy} onClick={() => onChange(b, a)} />
-            <Picker prefix={t('Sesudah', 'After')} value={b} options={sideOptions(b)} disabled={busy || b === PREVIEW} onChange={(value) => onChange(a, value)} />
-          </div>
+        <div className="flex items-center gap-3">
+          <span className="inline-flex min-w-0 items-center gap-1.5 truncate text-[13px] font-semibold text-ink-800"><Columns2 size={15} className="shrink-0 text-brand-700" aria-hidden="true" />{t('Membandingkan', 'Comparing')}</span>
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
             <div role="radiogroup" aria-label={t('Tampilan', 'Layout')} className="inline-flex rounded-full border border-line bg-paper p-0.5">
               {([['inline', Rows3, t('Inline', 'Inline')], ['side', Columns2, t('Berdampingan', 'Side by side')]] as const).map(([value, Icon, text]) => (
                 <button key={value} type="button" role="radio" aria-checked={layout === value} aria-label={text} title={text} onClick={() => setLayout(value)}
                   className={`inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors ${layout === value ? 'bg-white text-ink-900 shadow-[0_1px_2px_rgb(31_32_29/0.08)] ring-1 ring-line' : 'text-ink-500 hover:text-ink-900'}`}>
-                  <Icon size={13} aria-hidden="true" /><span className="hidden @lg:inline">{text}</span>
+                  <Icon size={13} aria-hidden="true" /><span className="hidden @md:inline">{text}</span>
                 </button>
               ))}
             </div>
             <IconButton size="sm" icon={X} label={t('Keluar dari Bandingkan', 'Exit Compare')} onClick={onExit} />
           </div>
+        </div>
+        <div className="mt-2 grid grid-cols-1 items-center gap-1.5 @xl:grid-cols-[minmax(0,1fr)_2rem_minmax(0,1fr)]">
+          <Picker prefix={t('Sebelum', 'Before')} value={a} options={sideOptions(a)} disabled={busy || a === PREVIEW} onChange={(value) => onChange(value, b)} />
+          <IconButton size="sm" icon={ArrowLeftRight} label={t('Tukar sebelum dan sesudah', 'Swap before and after')} disabled={busy} onClick={() => onChange(b, a)} className="justify-self-center rotate-90 @xl:rotate-0" />
+          <Picker prefix={t('Sesudah', 'After')} value={b} options={sideOptions(b)} disabled={busy || b === PREVIEW} onChange={(value) => onChange(a, value)} />
         </div>
       </div>
 
@@ -78,7 +79,7 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
             </span>
           )}
         <span className="ml-auto flex items-center gap-2 text-xs text-ink-500">
-          <span className="inline-flex items-center gap-1"><Lock size={12} aria-hidden="true" />{t('Editor dikunci selama membandingkan.', 'Editing is paused while comparing.')}</span>
+          <span className="inline-flex items-center gap-1" title={t('Editor dikunci selama membandingkan.', 'Editing is paused while comparing.')}><Lock size={12} aria-hidden="true" /><span className="hidden @2xl:inline">{t('Editor dikunci selama membandingkan.', 'Editing is paused while comparing.')}</span></span>
           {!loading && !identical && (
             <span className="group relative">
               <button type="button" aria-label={t('Keterangan warna', 'Colour legend')} aria-describedby={legendId} className="grid h-6 w-6 place-items-center rounded-full text-ink-400 hover:bg-white hover:text-ink-800"><Info size={14} aria-hidden="true" /></button>
@@ -100,7 +101,7 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
         <div className="grid min-h-0 flex-1 grid-rows-2 divide-y divide-line bg-white @2xl:grid-cols-2 @2xl:grid-rows-1 @2xl:divide-x @2xl:divide-y-0">
           {(['before', 'after'] as const).map((side) => (
             <div key={side} className="scrollbar-thin min-h-0 min-w-0 overflow-y-auto">
-              <p className="sticky top-0 z-10 border-b border-line bg-white/95 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500 sm:px-8">{side === 'before' ? t('Sebelum', 'Before') : t('Sesudah', 'After')}</p>
+              <p className="sticky top-0 z-10 flex items-baseline gap-2 border-b border-line bg-white/95 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500 sm:px-8"><span className="shrink-0">{side === 'before' ? t('Sebelum', 'Before') : t('Sesudah', 'After')}</span><span className="truncate normal-case tracking-normal text-ink-700" title={labelOf(side === 'before' ? a : b)}>{labelOf(side === 'before' ? a : b)}</span></p>
               <DiffText parts={parts} side={side} className={`px-5 py-5 sm:px-8 ${DIFF_TEXT}`} />
             </div>
           ))}

@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowRight, Bot, Check, ChevronRight, Columns2, Copy, EllipsisVertical, Eye, EyeOff, Feather, History, Info, Lock, Menu, PanelRightClose, Plus, Redo2, Save, ShieldCheck, TextSelect, Undo2, X, type LucideIcon } from 'lucide-react';
+import { ArrowDown, ArrowRight, Bot, Check, ChevronRight, Columns2, Copy, EllipsisVertical, Eye, EyeOff, Feather, History, Info, Languages, Lock, Menu, PanelRightClose, Plus, Redo2, RefreshCw, Save, ShieldCheck, TextSelect, Undo2, X, type LucideIcon } from 'lucide-react';
 import { LocaleScope, useLocale } from '@/lib/client/locale';
 import { request } from '@/lib/client/api';
 import { numberFormat } from '@/lib/client/format';
@@ -11,10 +11,12 @@ import { changePercentage, countWords, wordDelta } from '@/lib/editor/metrics';
 import { Button, IconButton, buttonClass, pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Field';
 import { Logo } from '@/components/ui/Logo';
-import { MODES, generateLabel, modeHint, modeIcon, modeLabel, modeTone, toneClass, type ModeTone } from '@/components/writing/modes';
+import { MODES, generateLabel, languageOptions, modeHint, modeIcon, modeLabel, modeTone, toneClass, type ModeTone } from '@/components/writing/modes';
+import { CustomizePanel, ModeOptions } from '@/components/writing/WritingControls';
+import { HintSelect } from '@/components/ui/HintSelect';
 import { DiffText, useDiff } from '@/components/workspace/DiffText';
 import { SaveStatus } from '@/components/workspace/SaveStatus';
-import type { Mode } from '@/lib/writing/settings';
+import { defaults, type Mode, type Settings } from '@/lib/writing/settings';
 import { SAMPLES } from './examples';
 import { SupportingSections } from './LandingSections';
 import styles from './Landing.module.css';
@@ -83,7 +85,9 @@ function SectionTitle({ children, aside }: { children: React.ReactNode; aside?: 
 // Static replica of the notebook screen: same header, writing panel, Studio panel, preview card, and mode tiles as the real workspace.
 function EditorDemo({ signedIn }: { signedIn: boolean }) {
   const { t, locale } = useLocale();
-  const [mode, setMode] = useState<DemoMode>('academic');
+  const [settings, setSettings] = useState<Settings>({ ...defaults, mode: 'academic' });
+  const mode = settings.mode as DemoMode;
+  const setMode = (value: DemoMode) => setSettings((current) => ({ ...current, mode: value }));
   const [compare, setCompare] = useState(false);
   const [showDiff, setShowDiff] = useState(true);
   const sample = SAMPLES[locale];
@@ -201,6 +205,9 @@ function EditorDemo({ signedIn }: { signedIn: boolean }) {
                   <Button size="sm" icon={Copy} disabled>{t('Salin', 'Copy')}</Button>
                   <Button size="sm" icon={X} disabled>{t('Buang Hasil', 'Discard')}</Button>
                 </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <Button size="sm" variant="ghost" icon={RefreshCw} disabled>{t('Coba alternatif lain', 'Try another')}</Button>
+                </div>
               </footer>
             </section>
 
@@ -219,11 +226,25 @@ function EditorDemo({ signedIn }: { signedIn: boolean }) {
               </div>
               <p className="mt-2 text-xs leading-relaxed text-ink-500">{modeHint(mode, t)}</p>
             </section>
+
+            <section aria-label={t('Pengaturan mode', 'Mode settings')}>
+              <SectionTitle aside={<span className="text-[11px] text-ink-500">{t('untuk', 'for')} {modeLabel(mode, t)}</span>}>{t('Pengaturan', 'Settings')}</SectionTitle>
+              <div className="space-y-2">
+                <ModeOptions compact settings={settings} onChange={setSettings} />
+                <div className="flex items-center gap-3">
+                  <label htmlFor="landing-language" className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-[13px] text-ink-600">
+                    {t('Bahasa', 'Language')}
+                    {settings.language === 'auto' && <span className="inline-flex items-center gap-1 truncate text-[11px] text-ink-500"><Languages size={11} aria-hidden="true" />{locale === 'id' ? 'Indonesia' : 'English'}</span>}
+                  </label>
+                  <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="landing-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} options={languageOptions(t)} onChange={(language) => setSettings({ ...settings, language })} /></div>
+                </div>
+              </div>
+              <div className="mt-3"><CustomizePanel settings={settings} onChange={setSettings} /></div>
+            </section>
           </div>
           </div>
 
           <footer className="shrink-0 space-y-2.5 border-t border-line bg-white px-4 pb-4 pt-3">
-            <SectionTitle>{t('Bagian yang diubah', 'Scope')}</SectionTitle>
             <Segmented size="sm" label={t('Bagian yang diubah', 'Scope')} value="document" onChange={() => undefined} options={[{ value: 'selection', label: t('Pilihan', 'Selection') }, { value: 'paragraph', label: t('Paragraf', 'Paragraph') }, { value: 'document', label: t('Dokumen', 'Document') }]} />
             <p className="flex items-center gap-1.5 text-xs text-ink-500"><TextSelect size={13} className="shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{t('seluruh dokumen', 'entire document')} · {numberFormat(words, locale)} {t('kata', 'words')}</span></p>
             <Link href={startHref} className={`inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold ${raisedGreen} ${pressGreen}`}>{generateLabel(mode, t)}<ArrowRight size={15} aria-hidden="true" /></Link>

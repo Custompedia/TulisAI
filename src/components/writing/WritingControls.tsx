@@ -29,14 +29,14 @@ export function ModePicker({ value, onChange, layout = 'row', disabled }: { valu
   );
 }
 
-export function ModeOptions({ settings, onChange, disabled, compact = false }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; compact?: boolean }) {
+export function ModeOptions({ settings, onChange, disabled, compact = false, describe = false }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; compact?: boolean; describe?: boolean }) {
   const { t } = useLocale();
   const id = useId();
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) => onChange({ ...settings, [key]: value });
   const field = <V extends string>(key: string, label: string, value: V, options: Array<{ value: V; label: string; hint?: string }>, update: (value: V) => void) => compact ? (
     <div key={key} className="flex items-center gap-3"><label htmlFor={`${id}-${key}`} className="min-w-0 flex-1 truncate text-[13px] text-ink-600">{label}</label><div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id={`${id}-${key}`} label={label} value={value} options={options} disabled={disabled} onChange={update} /></div></div>
   ) : (
-    <div key={key}><FieldLabel htmlFor={`${id}-${key}`}>{label}</FieldLabel><HintSelect id={`${id}-${key}`} label={label} value={value} options={options} disabled={disabled} onChange={update} /></div>
+    <div key={key}><FieldLabel htmlFor={`${id}-${key}`}>{label}</FieldLabel><HintSelect id={`${id}-${key}`} label={label} value={value} options={options} disabled={disabled} describe={describe} onChange={update} /></div>
   );
   switch (settings.mode) {
     case 'standard': return field('strength', t('Kekuatan perubahan', 'Change strength'), settings.strength, strengthOptions(t), (value) => set('strength', value));
@@ -58,22 +58,22 @@ export type CustomFields = Pick<Settings, 'format' | 'length' | 'audience' | 'fo
 export const pickCustom = (settings: Settings): CustomFields => ({ format: settings.format, length: settings.length, audience: settings.audience, focus: settings.focus, extra: settings.extra });
 
 // Format, audience, length, emphasis and (optionally) the note; shared by the panel and the style dialog.
-export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean }) {
+export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true, describe = false }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean; describe?: boolean }) {
   const { t } = useLocale();
   const id = useId();
   return (
     <>
       <div>
         <FieldLabel htmlFor={`${id}-fmt`}>{t('Format', 'Format')}</FieldLabel>
-        <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} onChange={(value) => onChange({ ...draft, format: value })} options={formatOptions(t).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
+        <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, format: value })} options={formatOptions(t).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
       </div>
       <div>
         <FieldLabel htmlFor={`${id}-aud`}>{t('Pembaca', 'Audience')}</FieldLabel>
-        <HintSelect id={`${id}-aud`} label={t('Pembaca', 'Audience')} value={draft.audience} disabled={disabled} onChange={(value) => onChange({ ...draft, audience: value })} options={audienceOptions(t)} />
+        <HintSelect id={`${id}-aud`} label={t('Pembaca', 'Audience')} value={draft.audience} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, audience: value })} options={audienceOptions(t)} />
       </div>
       <div>
         <FieldLabel htmlFor={`${id}-len`}>{t('Panjang', 'Length')}</FieldLabel>
-        <HintSelect id={`${id}-len`} label={t('Panjang', 'Length')} value={draft.length} disabled={disabled} onChange={(value) => onChange({ ...draft, length: value })} options={lengthOptions(t).map((option) => ({ ...option, disabled: option.value === 'more_detailed' && draft.format === 'short_summary' }))} />
+        <HintSelect id={`${id}-len`} label={t('Panjang', 'Length')} value={draft.length} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, length: value })} options={lengthOptions(t).map((option) => ({ ...option, disabled: option.value === 'more_detailed' && draft.format === 'short_summary' }))} />
         {draft.format === 'short_summary' && <p className="mt-1.5 text-xs text-ink-500">{t('"Lebih detail" tidak bisa digabung dengan ringkasan.', '"More detailed" cannot be combined with a summary.')}</p>}
       </div>
       <fieldset>

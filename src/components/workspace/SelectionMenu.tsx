@@ -7,6 +7,8 @@ import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockK
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
+import type { WritingStyle } from '@/lib/writing/styles';
+import { StyleMark } from '@/components/writing/StyleMark';
 import { commandLabel, type SelectionCommand } from './selection-commands';
 import type { InlineAction } from './types';
 import { useAutoSide } from '@/components/ui/placement';
@@ -33,10 +35,10 @@ function MenuAction({ icon: Icon, label, onRun, disabled }: { icon: LucideIcon; 
 }
 
 // Hidden while an inline result is open so the two never stack on the same text.
-type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; onCommand: (command: SelectionCommand) => void };
+type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; styles: WritingStyle[]; onCommand: (command: SelectionCommand) => void; onStyle: (style: WritingStyle) => void };
 const INLINE: Array<[InlineAction, LucideIcon]> = [['alternatives', Shuffle], ['shorter', Minimize2], ['clearer', ScanText], ['formal', BriefcaseBusiness], ['natural', Smile]];
 
-export function SelectionMenu({ editor, locked, disabled, hidden, chars, onCommand }: Props) {
+export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles, onCommand, onStyle }: Props) {
   const { t, locale } = useLocale();
   const [more, setMore] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -65,6 +67,7 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, onComma
   }, [more]);
 
   const run = (command: SelectionCommand) => () => { setMore(false); onCommand(command); };
+  const runStyle = (style: WritingStyle) => () => { setMore(false); onStyle(style); };
 
   return (
     <BubbleMenu
@@ -96,6 +99,18 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, onComma
           <div ref={moreRef} role="menu" style={{ maxHeight: placement.maxHeight }} className={`scrollbar-thin absolute right-0 z-40 w-56 overflow-y-auto rounded-xl border border-line bg-white p-1 shadow-lg animate-fade-up ${placement.side === 'bottom' ? 'top-full mt-1.5' : 'bottom-full mb-1.5'}`}>
             <MenuAction icon={Feather} label={commandLabel('humanize', t)} disabled={disabled || overSelection} onRun={run('humanize')} />
             <MenuAction icon={GraduationCap} label={commandLabel('academic', t)} disabled={disabled || overSelection} onRun={run('academic')} />
+            {styles.length > 0 && (
+              <>
+                <div className="my-1 h-px bg-line" />
+                <p className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400">{t('Skills', 'Skills')}</p>
+                {styles.map((style) => (
+                  <button key={style.id} type="button" role="menuitem" disabled={disabled || overSelection} onMouseDown={keep} onClick={runStyle(style)}
+                    className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink-700 hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent">
+                    <StyleMark style={style} size={22} /><span className="min-w-0 truncate">{style.name}</span>
+                  </button>
+                ))}
+              </>
+            )}
             <div className="my-1 h-px bg-line" />
             <MenuAction icon={SlidersHorizontal} label={commandLabel('customize', t)} disabled={disabled || overSelection} onRun={run('customize')} />
             <MenuAction icon={LockKeyhole} label={commandLabel('lock', t)} disabled={disabled} onRun={run('lock')} />

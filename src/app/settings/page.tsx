@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpRight, Gauge, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
+import { ArrowUpRight, Gauge, Palette, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
 import { delMany, keys } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
@@ -13,8 +13,9 @@ import { Toast } from '@/components/ui/Toast';
 import { inputClass, Segmented } from '@/components/ui/Field';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { ProfileCard, ProfileError, ProfileSkeleton, type AccountDetails, type Notice } from '@/components/settings/ProfileCard';
+import { StylesCard } from '@/components/settings/StylesCard';
 
-const TABS = ['profil', 'preferensi', 'pemakaian', 'privasi'] as const;
+const TABS = ['profil', 'skills', 'preferensi', 'pemakaian', 'privasi'] as const;
 type Tab = (typeof TABS)[number];
 const tabFromHash = (hash: string): Tab => { const value = hash.replace(/^#/, ''); return value === 'bahasa' ? 'preferensi' : (TABS as readonly string[]).includes(value) ? value as Tab : 'profil'; };
 
@@ -119,6 +120,7 @@ function SettingsView() {
   const usedPercent = usage ? Math.min(100, Math.round((usage.requestsUsed / Math.max(1, usage.requestLimit)) * 100)) : 0;
   const nav: Array<{ id: Tab; icon: LucideIcon; label: string }> = [
     { id: 'profil', icon: UserRound, label: t('Profil', 'Profile') },
+    { id: 'skills', icon: Palette, label: 'Skills' },
     { id: 'preferensi', icon: SlidersHorizontal, label: t('Preferensi', 'Preferences') },
     { id: 'pemakaian', icon: Gauge, label: t('Pemakaian AI', 'AI usage') },
     { id: 'privasi', icon: ShieldCheck, label: t('Privasi & data', 'Privacy & data') },
@@ -160,6 +162,8 @@ function SettingsView() {
                   : <div role="status" aria-label={t('Memuat detail akun…', 'Loading account details…')}><ProfileSkeleton /></div>}
             </Card>
           )}
+
+          {tab === 'skills' && <StylesCard />}
 
           {tab === 'preferensi' && (
             <Card title={t('Preferensi', 'Preferences')} description={t('Tampilan aplikasi dan penyimpanan di perangkat ini.', 'App display and storage on this device.')}

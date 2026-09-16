@@ -1,0 +1,11 @@
+ALTER TABLE user ADD COLUMN banned INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE user ADD COLUMN ban_reason TEXT;
+ALTER TABLE user ADD COLUMN ban_expires INTEGER;
+ALTER TABLE user ADD COLUMN tier TEXT NOT NULL DEFAULT 'free';
+ALTER TABLE user ADD COLUMN ai_limit_override INTEGER;
+ALTER TABLE user ADD COLUMN admin_note TEXT;
+ALTER TABLE session ADD COLUMN impersonated_by TEXT;
+CREATE TABLE IF NOT EXISTS admin_audit_log (id TEXT PRIMARY KEY, actor_id TEXT NOT NULL, target_user_id TEXT, action TEXT NOT NULL, details_json TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS audit_created_idx ON admin_audit_log(created_at, id);
+CREATE INDEX IF NOT EXISTS audit_target_created_idx ON admin_audit_log(target_user_id, created_at, id);
+CREATE INDEX IF NOT EXISTS usage_owner_created_idx ON usage_ledger(owner_id, created_at, id);
