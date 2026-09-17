@@ -22,13 +22,13 @@ const period = new Date().toISOString().slice(0, 7);
 const addUser = (id: string, name: string, extra: Partial<{ role: string; tier: string; banned: number; banExpires: number | null; override: number | null; createdAt: number }> = {}) =>
   db.prepare('INSERT INTO user (id,name,email,username,role,tier,banned,ban_expires,ai_limit_override,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)')
     .run(id, name, `${id}@example.test`, id, extra.role ?? 'user', extra.tier ?? 'free', extra.banned ?? 0, extra.banExpires ?? null, extra.override ?? null, extra.createdAt ?? 1000, extra.createdAt ?? 1000);
-const addUsage = (owner: string, status: string, tokens: [number, number], at = 5000, key = period) =>
-  db.prepare('INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,input_tokens,output_tokens,prompt_id,latency_ms,error_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .run(crypto.randomUUID(), owner, crypto.randomUUID(), 'generate', status, key, 'r', at, tokens[0], tokens[1], 'P01_STANDARD_REWRITE', 120, status === 'failed' ? 'timeout' : null);
+const addUsage = (owner: string, status: string, tokens: [number, number], at = 5000, key = period, cost: number | null = null) =>
+  db.prepare('INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,input_tokens,output_tokens,prompt_id,latency_ms,error_code,cost_usd) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .run(crypto.randomUUID(), owner, crypto.randomUUID(), 'generate', status, key, 'r', at, tokens[0], tokens[1], 'P01_STANDARD_REWRITE', 120, status === 'failed' ? 'timeout' : null, cost);
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  for (const file of ['0000_initial', '0001_username_auth', '0002_workspace_metadata', '0003_notebook_appearance', '0004_writing_styles', '0005_user_role', '0006_admin_panel', '0007_usage_created_index']) db.exec(readFileSync(`migrations/${file}.sql`, 'utf8'));
+  for (const file of ['0000_initial', '0001_username_auth', '0002_workspace_metadata', '0003_notebook_appearance', '0004_writing_styles', '0005_user_role', '0006_admin_panel', '0007_usage_created_index', '0008_style_description', '0009_usage_cost']) db.exec(readFileSync(`migrations/${file}.sql`, 'utf8'));
   state.env = { DB: { prepare: (sql: string) => new Statement(sql) }, AI_MONTHLY_REQUEST_LIMIT: '100', AI_PUBLIC_ENABLED: 'true', OPENROUTER_MODEL: 'openai/gpt-5.6-luna' };
 });
 afterEach(() => db.close());
@@ -112,10 +112,11 @@ describe('AI metrics', () => {
   it('aggregates a date range by day, prompt, error, and user', async () => {
     addUser('user-1', 'Budi', { tier: 'pro' }); addUser('user-2', 'Citra');
     const day = Date.parse('2026-09-10T12:00:00Z');
-    addUsage('user-1', 'completed', [10, 5], day); addUsage('user-1', 'failed', [0, 0], day + 3600_000); addUsage('user-2', 'completed', [7, 3], day + 86_400_000);
+    addUsage('user-1', 'completed', [10, 5], day, period, 0.002); addUsage('user-1', 'failed', [0, 0], day + 3600_000); addUsage('user-2', 'completed', [7, 3], day + 86_400_000, period, 0.004);
     addUsage('user-2', 'completed', [1, 1], Date.parse('2026-08-01T00:00:00Z'));
     const metrics = await aiMetrics('2026-09-10', '2026-09-11');
-    expect(metrics.totals).toMatchObject({ requests: 3, completed: 2, failed: 1, users: 2, inputTokens: 17, outputTokens: 8, avgLatencyMs: 120, failRate: 33.3 });
+    expect(metrics.totals).toMatchObject({ requests: 3, completed: 2, failed: 1, users: 2, inputTokens: 17, outputTokens: 8, avgLatencyMs: 120, failRate: 33.3, costedRequests: 2 });
+    expect(metrics.totals.costUsd).toBeCloseTo(0.006);
     expect(metrics.byDay.map((row) => [row.day, row.requests, row.failed])).toEqual([['2026-09-11', 1, 0], ['2026-09-10', 2, 1]]);
     expect(metrics.byPrompt[0]).toMatchObject({ promptId: 'P01_STANDARD_REWRITE', requests: 3, failed: 1, tokens: 25 });
     expect(metrics.byError).toEqual([{ errorCode: 'timeout', count: 1 }]);

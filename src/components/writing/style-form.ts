@@ -29,8 +29,10 @@ export function stylePayload(draft: StyleDraft): StyleInput {
   };
 }
 
+// SQLite's COLLATE NOCASE folds ASCII only, so the client check accepts exactly what the unique index accepts.
+export const foldName = (value: string) => value.trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase());
 export const nameTaken = (name: string, styles: WritingStyle[], exceptId?: string) =>
-  styles.some((style) => style.id !== exceptId && style.name.trim().toLowerCase() === name.trim().toLowerCase());
+  styles.some((style) => style.id !== exceptId && foldName(style.name) === foldName(name));
 
 // Appends an example chip on its own line, without going past the note limit or repeating itself.
 export function appendInstruction(current: string, chip: string, limit = EXTRA_LIMIT): string {

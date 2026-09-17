@@ -19,7 +19,9 @@ import type { Scope } from './types';
 
 type Props = {
   settings: Settings; onSettings: (settings: Settings) => void; scope: Scope; onScope: (scope: Scope) => void; hasSelection: boolean; scopeWords: number; scopeChars: number;
-  detected: 'id' | 'en' | null; busy: boolean; generating: boolean; error: string;
+  detected: 'id' | 'en' | null; busy: boolean; generating: boolean; arrival: boolean; previewId: string | null; error: string;
+  // The configuration the Mode tab falls back to when it has nothing of its own remembered yet.
+  manualBase: Settings; modeTabRequest: number;
   onGenerate: () => void; onRetry: () => void; onDismissError: () => void; children?: React.ReactNode; canGenerate: boolean; customizeRequest: number;
   styles: WritingStyle[]; stylesLoading: boolean; stylesError: string; onRetryStyles: () => void; onApplyStyle: (style: WritingStyle) => void; onCreateStyle: () => void; onEditStyle: (style: WritingStyle) => void; onSaveAsStyle: () => void;
   suggestion: WritingStyle | null; onDismissSuggestion: () => void;
@@ -92,12 +94,20 @@ function SkillTiles({ styles, activeId, disabled, full, onPick, onEdit, onCreate
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, error, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion }: Props) {
   const { t, locale } = useLocale();
+  const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<AssistantTab>(() => tabForSettings(settings));
+  // A landing result sits at the top of this list, so the panel scrolls back there instead of leaving it below the fold.
+  useEffect(() => { if (previewId) scroller.current?.scrollTo({ top: 0, behavior: 'smooth' }); }, [previewId]);
   // Each tab keeps its own configuration: the last manual mode setup and the last applied skill.
-  const memory = useRef<TabMemory>({ mode: settings.styleId ? null : settings, styleId: settings.styleId });
+  const memory = useRef<TabMemory>({ mode: null, styleId: settings.styleId });
+  const seeded = useRef<Settings | null>(null);
+  // Anything captured before the notebook finished loading is a placeholder, so a new baseline reseeds the memory.
+  if (seeded.current !== manualBase) { seeded.current = manualBase; memory.current = { mode: settings.styleId ? null : settings, styleId: settings.styleId }; }
   memory.current = rememberSettings(tab, settings, memory.current);
+  // Deleting the applied skill hands the panel back to the Mode tab.
+  useEffect(() => { if (modeTabRequest > 0) setTab('mode'); }, [modeTabRequest]);
   // Follows the notebook into the Skills tab once its settings come from a saved skill.
   useEffect(() => { if (settings.styleId) setTab('skills'); }, [settings.styleId]);
   const activeStyle = styles.find((item) => item.id === settings.styleId) ?? null;
@@ -105,7 +115,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   function chooseTab(next: AssistantTab) {
     if (next === tab) return;
     setTab(next);
-    const value = tabSettings(next, settings, memory.current, styles);
+    const value = tabSettings(next, settings, memory.current, styles, manualBase);
     if (JSON.stringify(value) !== JSON.stringify(settings)) onSettings(value);
   }
   const languageName = detected === 'id' ? 'Indonesia' : detected === 'en' ? 'English' : t('belum jelas', 'unclear');
@@ -117,13 +127,13 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+      <div ref={scroller} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
         <div className="space-y-4 p-4">
           {generating && (
-            <div role="status" className="space-y-2.5 rounded-xl border border-line bg-paper p-3.5">
-              <p className="flex items-center gap-2 text-[13px] font-medium text-ink-700"><Spinner size={14} className="text-brand-600" />{t('Menulis ulang dan memeriksa istilah terkunci…', 'Rewriting and checking locked terms…')}</p>
-              <div className="h-2 w-full animate-pulse rounded bg-paper-deep" /><div className="h-2 w-11/12 animate-pulse rounded bg-paper-deep" /><div className="h-2 w-3/4 animate-pulse rounded bg-paper-deep" />
-              <p className="text-[11px] text-ink-500">{t('Kamu tetap bisa mengedit selama menunggu.', 'You can keep editing while you wait.')}</p>
+            <div role="status" className="space-y-2.5 rounded-xl border border-brand-200 bg-brand-50 p-3.5">
+              <p className="flex items-center gap-2 text-[13px] font-semibold text-brand-900"><Spinner size={14} className="text-brand-700" />{arrival ? t('Menyiapkan hasil pertamamu…', 'Preparing your first result…') : t('Menulis ulang dan memeriksa istilah terkunci…', 'Rewriting and checking locked terms…')}</p>
+              <div className="h-2 w-full animate-pulse rounded bg-white" /><div className="h-2 w-11/12 animate-pulse rounded bg-white" /><div className="h-2 w-3/4 animate-pulse rounded bg-white" />
+              <p className="text-[11px] leading-relaxed text-brand-800">{arrival ? t('Pratinjaunya muncul di sini, lalu tekan “Gunakan Hasil Ini” kalau cocok. Tulisanmu tidak diubah sebelum itu.', 'The preview appears here; press “Use This Result” if it fits. Your writing is untouched until then.') : t('Kamu tetap bisa mengedit selama menunggu.', 'You can keep editing while you wait.')}</p>
             </div>
           )}
 
@@ -134,7 +144,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               <Sparkles size={14} className="shrink-0 text-brand-700" aria-hidden="true" />
               <p className="min-w-0 flex-1 truncate text-xs text-ink-700">{t(`Pakai skill “${suggestion.name}”?`, `Use the “${suggestion.name}” skill?`)}</p>
               <span className="flex shrink-0 items-center gap-1">
-                <Button size="sm" disabled={busy} onClick={() => { onDismissSuggestion(); onApplyStyle(suggestion); }}>{t('Pakai', 'Use')}</Button>
+                <Button size="sm" disabled={busy} onClick={() => onApplyStyle(suggestion)}>{t('Pakai', 'Use')}</Button>
                 <button type="button" onClick={onDismissSuggestion} aria-label={t('Abaikan saran skill', 'Ignore the skill suggestion')} title={t('Abaikan', 'Ignore')}
                   className="grid h-8 w-8 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-ink-100/70 hover:text-ink-900"><X size={15} aria-hidden="true" /></button>
               </span>

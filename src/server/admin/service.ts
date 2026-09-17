@@ -177,7 +177,7 @@ export async function listAudit(filter: AuditFilter = {}, page = 1): Promise<{ i
 
 // --- AI monitoring over an inclusive [from, to] date range in UTC.
 export type AiMetrics = {
-  from: string; to: string; totals: { requests: number; completed: number; failed: number; running: number; users: number; inputTokens: number; outputTokens: number; characters: number; avgLatencyMs: number | null; failRate: number };
+  from: string; to: string; totals: { requests: number; completed: number; failed: number; running: number; users: number; inputTokens: number; outputTokens: number; characters: number; avgLatencyMs: number | null; failRate: number; costUsd: number; costedRequests: number };
   byDay: Array<{ day: string; requests: number; failed: number; tokens: number; users: number }>;
   byPrompt: Array<{ promptId: string; requests: number; failed: number; tokens: number; avgLatencyMs: number | null }>;
   byError: Array<{ errorCode: string; count: number }>;
@@ -198,8 +198,8 @@ export async function aiMetrics(from: string | null, to: string | null): Promise
   const tokens = "SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0))";
   const [totals, byDay, byPrompt, byError, topUsers] = await Promise.all([
     db.prepare(`SELECT COUNT(1) AS requests, SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, SUM(CASE WHEN status='reserved' THEN 1 ELSE 0 END) AS running,
-      COUNT(DISTINCT owner_id) AS users, SUM(COALESCE(input_tokens,0)) AS input_tokens, SUM(COALESCE(output_tokens,0)) AS output_tokens, SUM(COALESCE(source_characters,0)) AS characters, AVG(latency_ms) AS avg_latency
-      FROM usage_ledger WHERE created_at >= ? AND created_at < ?`).bind(range.start, range.end).first<{ requests: number; completed: number | null; failed: number | null; running: number | null; users: number; input_tokens: number | null; output_tokens: number | null; characters: number | null; avg_latency: number | null }>(),
+      COUNT(DISTINCT owner_id) AS users, SUM(COALESCE(input_tokens,0)) AS input_tokens, SUM(COALESCE(output_tokens,0)) AS output_tokens, SUM(COALESCE(source_characters,0)) AS characters, AVG(latency_ms) AS avg_latency, SUM(cost_usd) AS cost, COUNT(cost_usd) AS costed
+      FROM usage_ledger WHERE created_at >= ? AND created_at < ?`).bind(range.start, range.end).first<{ requests: number; completed: number | null; failed: number | null; running: number | null; users: number; input_tokens: number | null; output_tokens: number | null; characters: number | null; avg_latency: number | null; cost: number | null; costed: number }>(),
     db.prepare(`SELECT date(created_at/1000,'unixepoch') AS day, COUNT(1) AS requests, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, ${tokens} AS tokens, COUNT(DISTINCT owner_id) AS users
       FROM usage_ledger WHERE created_at >= ? AND created_at < ? GROUP BY day ORDER BY day DESC`).bind(range.start, range.end).all<{ day: string; requests: number; failed: number | null; tokens: number | null; users: number }>(),
     db.prepare(`SELECT COALESCE(prompt_id, operation) AS prompt_id, COUNT(1) AS requests, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, ${tokens} AS tokens, AVG(latency_ms) AS avg_latency
@@ -212,7 +212,7 @@ export async function aiMetrics(from: string | null, to: string | null): Promise
   const requests = totals?.requests ?? 0; const failed = totals?.failed ?? 0;
   return {
     from: range.from, to: range.to,
-    totals: { requests, completed: totals?.completed ?? 0, failed, running: totals?.running ?? 0, users: totals?.users ?? 0, inputTokens: totals?.input_tokens ?? 0, outputTokens: totals?.output_tokens ?? 0, characters: totals?.characters ?? 0, avgLatencyMs: totals?.avg_latency === null || totals?.avg_latency === undefined ? null : Math.round(totals.avg_latency), failRate: requests ? Math.round((failed / requests) * 1000) / 10 : 0 },
+    totals: { requests, completed: totals?.completed ?? 0, failed, running: totals?.running ?? 0, users: totals?.users ?? 0, inputTokens: totals?.input_tokens ?? 0, outputTokens: totals?.output_tokens ?? 0, characters: totals?.characters ?? 0, avgLatencyMs: totals?.avg_latency === null || totals?.avg_latency === undefined ? null : Math.round(totals.avg_latency), failRate: requests ? Math.round((failed / requests) * 1000) / 10 : 0, costUsd: totals?.cost ?? 0, costedRequests: totals?.costed ?? 0 },
     byDay: byDay.results.map((row) => ({ day: row.day, requests: row.requests, failed: row.failed ?? 0, tokens: row.tokens ?? 0, users: row.users })),
     byPrompt: byPrompt.results.map((row) => ({ promptId: row.prompt_id, requests: row.requests, failed: row.failed ?? 0, tokens: row.tokens ?? 0, avgLatencyMs: row.avg_latency === null ? null : Math.round(row.avg_latency) })),
     byError: byError.results.map((row) => ({ errorCode: row.error_code ?? 'unknown', count: row.count })),

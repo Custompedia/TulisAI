@@ -4,6 +4,7 @@ import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
 import { createOpenRouterProvider, exceedsPreservation, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
+import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
@@ -36,8 +37,8 @@ async function reserve(ownerId: string, key: string, promptId: string, character
   }
 }
 async function completeUsage(id: string, result: ProviderResult, started: number) {
-  await runtime().DB.prepare("UPDATE usage_ledger SET status=?,completed_at=?,provider_request_id=?,input_tokens=?,output_tokens=?,latency_ms=?,error_code=? WHERE id=? AND status='reserved'")
-    .bind(result.ok ? 'completed' : 'failed', Date.now(), result.usage?.providerRequestId ?? null, result.usage?.inputTokens ?? null, result.usage?.outputTokens ?? null, Date.now() - started, result.ok ? null : result.error, id).run();
+  await runtime().DB.prepare("UPDATE usage_ledger SET status=?,completed_at=?,provider_request_id=?,input_tokens=?,output_tokens=?,cost_usd=?,latency_ms=?,error_code=? WHERE id=? AND status='reserved'")
+    .bind(result.ok ? 'completed' : 'failed', Date.now(), result.usage?.providerRequestId ?? null, result.usage?.inputTokens ?? null, result.usage?.outputTokens ?? null, result.usage?.costUsd ?? null, Date.now() - started, result.ok ? null : result.error, id).run();
 }
 async function cleanExpired(ownerId: string) {
   await runtime().DB.prepare("UPDATE transformations SET source_text='',output_json='{}',runtime_json='{}',anchor_json=NULL,status='expired' WHERE id IN (SELECT id FROM transformations WHERE owner_id=? AND status IN ('preview','applied','discarded') AND expires_at<=? ORDER BY expires_at LIMIT 100)").bind(ownerId, Date.now()).run();
@@ -71,7 +72,9 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const locks = await listLocks(ownerId, input.documentId);
   if(input.promptId==='P07_INLINE_ALTERNATIVES'&&locks.some(lock=>lock.term===input.source.text))throw new RequestError('PROTECTED_SELECTION','A locked term cannot be replaced.',422);
   const citations = detectedCitations(input.source.text);
-  const trusted: RuntimeInput = {...input.runtime, sourceText:input.source.text, selectedText:input.source.text, contextBefore:anchor ? source.text.slice(Math.max(0,anchor.from-300),anchor.from) : null, contextAfter:anchor ? source.text.slice(anchor.to,anchor.to+300) : null, protectedTerms:locks.map(lock=>lock.term).filter(term=>input.source.text.includes(term)), protectedCitations:[...new Set(citations)], language:input.runtime.language};
+  // A title is asked for only on the first run of a whole new notebook, and never for an inline selection.
+  const wantsTitle = input.suggestTitle === true && !anchor && input.promptId !== 'P07_INLINE_ALTERNATIVES';
+  const trusted: RuntimeInput = {...input.runtime, suggestTitle:wantsTitle || undefined, suggest_title:undefined, sourceText:input.source.text, selectedText:input.source.text, contextBefore:anchor ? source.text.slice(Math.max(0,anchor.from-300),anchor.from) : null, contextAfter:anchor ? source.text.slice(anchor.to,anchor.to+300) : null, protectedTerms:locks.map(lock=>lock.term).filter(term=>input.source.text.includes(term)), protectedCitations:[...new Set(citations)], language:input.runtime.language};
   let controls: RuntimeInput;
   try { controls = normalizeRuntime(input.promptId, trusted) as RuntimeInput; } catch { throw new RequestError('INVALID_REQUEST', 'The selected AI controls are invalid.'); }
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
@@ -84,6 +87,8 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     return result.response;
   };
   let output = await call(input.promptId,key,controls);
+  // Taken before the schema-strict passes below drop it; an invalid or missing label just falls back to the local title.
+  const suggestedTitle = wantsTitle ? sanitizeSuggestedTitle(output.suggested_title) : null;
   if (input.promptId === 'P07_INLINE_ALTERNATIVES') {
     try { output = validateGeneration(input.promptId,input.source.text,output,trusted); }
     catch { throw new RequestError('AI_OUTPUT_REJECTED', 'No safe set of alternatives was returned. Your source is unchanged.', 422); }
@@ -110,6 +115,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
   }
+  if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
   const id=crypto.randomUUID();const expiry=Date.now()+DAY;
   await runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .bind(id,input.documentId,ownerId,input.promptId,PROMPT_VERSION,model(),input.expectedRevision,input.source.text,anchor?JSON.stringify(anchor):null,JSON.stringify({...controls,style_reference:undefined,style_reference_used:typeof controls.style_reference==='string'&&controls.style_reference.length>0,prompt_version:PROMPT_VERSION,reasoning_effort:REASONING_EFFORT[input.promptId]}),JSON.stringify(output),'preview',key,expiry,Date.now()).run();

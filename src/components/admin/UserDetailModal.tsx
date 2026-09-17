@@ -87,11 +87,12 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
 
   const applyUser = (next: AdminUser) => { setDetail((current) => (current ? { ...current, user: next } : current)); setForm(formOf(next)); onChange(next); };
 
-  async function save() {
+  // roleDone: the role change already ran through its own confirm, so this pass only saves the rest.
+  async function save(roleDone = false) {
     if (!form || !user) return;
     const override = form.aiLimitOverride.trim() === '' ? null : Number(form.aiLimitOverride);
     if (override !== null && (!Number.isInteger(override) || override < 1)) { setFormError(t('Batas khusus harus bilangan bulat positif.', 'The custom limit must be a positive whole number.')); return; }
-    if (form.role !== user.role) { setConfirm({ kind: 'role', role: form.role }); return; }
+    if (!roleDone && form.role !== user.role) { setConfirm({ kind: 'role', role: form.role }); return; }
     const patch: Record<string, unknown> = {};
     if (form.name.trim() !== user.name) patch.name = form.name.trim();
     if (form.emailVerified !== user.emailVerified) patch.emailVerified = form.emailVerified;
@@ -114,7 +115,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
 
   async function runConfirm() {
     if (!confirm || !user) return;
-    if (confirm.kind === 'role') { const ok = await act({ action: 'set-role', role: confirm.role }, confirm.role === 'admin' ? t(`${user.name} sekarang admin.`, `${user.name} is now an admin.`) : t(`Role admin ${user.name} dicabut.`, `${user.name} is no longer an admin.`)); if (ok) { await save(); } return; }
+    if (confirm.kind === 'role') { const ok = await act({ action: 'set-role', role: confirm.role }, confirm.role === 'admin' ? t(`${user.name} sekarang admin.`, `${user.name} is now an admin.`) : t(`Role admin ${user.name} dicabut.`, `${user.name} is no longer an admin.`)); if (ok) { await save(true); } return; }
     if (confirm.kind === 'ban') { const ok = await act({ action: 'ban', reason: banReason.trim(), expiresInDays: banDays === '0' ? null : Number(banDays) }, t('Akun dinonaktifkan dan semua sesinya dicabut.', 'Account disabled and all its sessions revoked.')); if (ok) { setBanReason(''); setBanDays('0'); } return; }
     if (confirm.kind === 'unban') { await act({ action: 'unban' }, t('Akun diaktifkan kembali.', 'Account enabled again.')); return; }
     if (confirm.kind === 'password') { const ok = await act({ action: 'set-password', newPassword: password }, t('Password diganti dan semua sesi dicabut.', 'Password set and all sessions revoked.')); if (ok) setPassword(''); return; }

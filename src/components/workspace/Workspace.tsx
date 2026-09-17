@@ -45,7 +45,7 @@ import { StudioPanel, StudioStrip, type StudioTab } from './StudioPanel';
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Surface, type Term, type Version } from './types';
 import { versionLabel } from './versions';
 
-type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number } };
+type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; suggestTitle?: boolean };
 // One quick action started from the selection toolbar; its result is shown on the text, not in the panel.
 type InlineSession = { label: string; status: InlineStatus; message: string };
 type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'delete' | 'reload'; version?: Version };
@@ -90,6 +90,8 @@ export default function Workspace() {
   const [narrow, setNarrow] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [rightTab, setRightTab] = useState<StudioTab>('assistant');
+  // Arriving from the home composer: the Studio opens on Assistant and stays in its waiting state until the first result lands.
+  const [arriving, setArriving] = useState(() => search.get('autoGenerate') === '1');
   const [versionsError, setVersionsError] = useState('');
   const [versions, setVersions] = useState<Version[]>([]);
   const [versionCursor, setVersionCursor] = useState<string | null>(null);
@@ -111,6 +113,9 @@ export default function Workspace() {
   // `apply` marks the notebook as using the style right after it is saved from the current settings.
   const [styleDialog, setStyleDialog] = useState<{ style: WritingStyle | null; preset: Settings; apply: boolean } | null>(null);
   const [suggestionOff, setSuggestionOff] = useState(true);
+  // What the Mode tab falls back to: the notebook's own settings, or the account defaults when a skill owns them.
+  const [manualBase, setManualBase] = useState<Settings>(defaults);
+  const [modeTabRequest, setModeTabRequest] = useState(0);
   const styleList = useWritingStyles();
 
   const current = useRef<Doc | null>(null);
@@ -126,6 +131,9 @@ export default function Workspace() {
   const latest = useRef({ title, settings });
   const versionTexts = useRef(new Map<string, string>());
   const autoStarted = useRef(false);
+  const arrivingRef = useRef(false);
+  // True only while the notebook still carries the title the composer derived for it.
+  const autoTitle = useRef(false);
   // Bumped when a result is discarded so an in-flight request cannot resurface it.
   const generation = useRef(0);
   const compareStarted = useRef(false);
@@ -137,6 +145,7 @@ export default function Workspace() {
   const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
   latest.current = { title, settings };
+  arrivingRef.current = arriving;
   const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null;
   termsRef.current = terms.map((term) => term.term);
   protectedLabel.current = t('Dilindungi: tidak akan diubah AI', 'Protected: AI will not change this');
@@ -185,7 +194,7 @@ export default function Workspace() {
   useEffect(() => { if (editor && !inline) setInlineTarget(editor, null); }, [editor, inline]);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1023px)');
-    const apply = () => { setNarrow(media.matches); if (media.matches) setPanelOpen(false); };
+    const apply = () => { setNarrow(media.matches); if (media.matches && !arrivingRef.current) setPanelOpen(false); };
     apply(); media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
   }, []);
@@ -212,6 +221,7 @@ export default function Workspace() {
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
   }, [narrow]);
+  useEffect(() => { if (!arriving) return; setRightTab('assistant'); setPanelOpen(true); }, [arriving]);
   useEffect(() => { if (notice?.tone !== 'success') return; const timer = setTimeout(() => setNotice(null), 4000); return () => clearTimeout(timer); }, [notice]);
 
   // The skill suggestion is dismissed per notebook so it never nags after the user says no.
@@ -253,6 +263,8 @@ export default function Workspace() {
       current.current = value; setDoc(value); setTitle(value.title);
       const base = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, ...(value.preferences ?? {}), language: value.language });
       const modeParam = asMode(search.get('mode')); if (modeParam) base.mode = modeParam;
+      const account = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, language: value.language });
+      setManualBase(base.styleId ? account : { ...base, styleId: null, sample: '' });
       setSettings(base); latest.current = { title: value.title, settings: base };
       editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
       setText(documentText(value.content)); setSave('saved');
@@ -412,7 +424,7 @@ export default function Workspace() {
     const effective = req.override ?? latest.current.settings;
     const conflict = effective.customized ? customConflict(effective, termsRef.current) : null;
     const label = req.label ?? inline?.label ?? '';
-    const fail = (message: string) => { if (req.surface === 'inline') setInline({ label, status: 'error', message }); else setAiError(message); };
+    const fail = (message: string) => { setArriving(false); if (req.surface === 'inline') setInline({ label, status: 'error', message }); else setAiError(message); };
     if (req.surface === 'panel') { openRight('assistant'); setInline(null); }
     else if (!getInlineTarget(editor.state)) { const { from, to } = editor.state.selection; setInlineTarget(editor, { from, to }); }
     if (conflict) { fail(conflict === 'summary-detail' ? t('Ringkasan tidak bisa digabung dengan "Lebih detail". Ubah salah satunya di Sesuaikan.', 'A summary cannot be combined with "More detailed". Change one in Customize.') : t('Catatan untuk AI menyebut istilah yang dikunci. Buka kunci istilah itu dulu jika ingin mengubahnya.', 'Your note for the AI mentions a locked term. Unlock it first if you want it changed.')); return; }
@@ -446,20 +458,35 @@ export default function Workspace() {
         documentId: id, promptId: req.inlineAction ? 'P07_INLINE_ALTERNATIVES' : promptFor[effective.mode],
         source: { text: resolved.source, ...(resolved.anchor ? { anchor: resolved.anchor } : {}) },
         runtime: runtimeControls(effective, language, req.inlineAction), expectedRevision: saved.revision,
+        ...(req.suggestTitle ? { suggestTitle: true } : {}),
       }, newKey());
       if (ticket !== generation.current) { void request(`/api/ai/previews/${result.id}/discard`, 'POST', {}, newKey()).catch(() => undefined); return; }
       setPreview({ ...result, source: resolved.source, stamp: captured, anchor: resolved.anchor, settings: effective, scope: req.scope, revision: saved.revision, inlineAction: req.inlineAction, surface: req.surface, label });
       if (req.surface === 'inline') setInline({ label, status: 'ready', message: '' });
+      adoptTitle(req, result.output.suggested_title);
     } catch (caught) { if (!guard(caught)) fail(errorText(caught instanceof ApiError && caught.code.toUpperCase() === 'SCOPE_TOO_LARGE' ? new ApiError('SCOPE_TOO_LARGE', caught.status) : caught, english)); }
-    finally { setBusy(''); }
+    finally { setBusy(''); if (req.surface === 'panel') setArriving(false); }
+  }
+
+  // The AI label replaces the composer's local title once, and only while the user has not renamed the notebook.
+  function adoptTitle(req: GenerateRequest, suggested: string | undefined) {
+    if (!req.suggestTitle || !autoTitle.current || !suggested?.trim()) return;
+    const value = suggested.trim();
+    autoTitle.current = false;
+    if (latest.current.title !== current.current?.title || value === latest.current.title) return;
+    setTitle(value); markMetadata(value, latest.current.settings);
   }
 
   const runInitialGenerate = useEffectEvent(() => {
-    if (!loaded || recovery || autoStarted.current || search.get('autoGenerate') !== '1') return;
+    if (autoStarted.current || search.get('autoGenerate') !== '1') return;
+    if (!loaded || recovery) return;
     autoStarted.current = true;
     const intent = sessionStorage.getItem(`writing-generate:${id}`); sessionStorage.removeItem(`writing-generate:${id}`);
     syncUrl({ autoGenerate: null, mode: null });
-    if (intent === '1') void generate({ scope: 'document', surface: 'panel' });
+    if (intent !== '1') { setArriving(false); return; }
+    autoTitle.current = true;
+    openRight('assistant');
+    void generate({ scope: 'document', surface: 'panel', suggestTitle: true });
   });
   useEffect(() => { runInitialGenerate(); }, [loaded, recovery]);
 
@@ -656,12 +683,17 @@ export default function Workspace() {
 
   // Clears the style marker as soon as the settings drift from the saved preset.
   const updateSettings = (next: Settings) => { const value = reconcileStyle(next, styleList.styles); setSettings(value); markMetadata(title, value); };
-  const chooseStyle = (style: WritingStyle) => updateSettings(applyStyle(latest.current.settings, style));
+  // Applying a skill hides the chip for this session only; the permanent dismissal stays with the explicit "ignore".
+  const chooseStyle = (style: WritingStyle) => { setSuggestionOff(true); updateSettings(applyStyle(latest.current.settings, style)); };
   const openStyleDialog = (style: WritingStyle | null, preset: Settings, apply: boolean) => setStyleDialog({ style, preset, apply });
   // Deleting the applied skill only drops the marker; the notebook keeps the settings it is running with.
   function onStyleDeleted(removed: WritingStyle) {
     setStyleDialog(null);
-    if (latest.current.settings.styleId === removed.id) updateSettings({ ...latest.current.settings, styleId: null });
+    // The deleted skill's sample and custom request must stop being sent; the notebook keeps writing in the same mode.
+    if (latest.current.settings.styleId === removed.id) {
+      updateSettings({ ...latest.current.settings, styleId: null, sample: '', extra: '', focus: [], format: defaults.format, length: defaults.length, customized: false });
+      setModeTabRequest((value) => value + 1);
+    }
     setNotice({ tone: 'success', message: t(`Skill “${removed.name}” dihapus.`, `Skill “${removed.name}” deleted.`) });
   }
   function onStyleSaved(saved: WritingStyle, created: boolean) {
@@ -677,6 +709,8 @@ export default function Workspace() {
   const inlinePreview = preview?.surface === 'inline' ? preview : null;
   const scopeText = scope === 'selection' ? selection?.text ?? '' : scope === 'paragraph' ? editor?.state.selection.$from.parent.textContent ?? '' : text;
   const detected = detectLanguage(scopeText || text);
+  // Suggestion only: it never changes settings and never starts a generation.
+  const suggestion = useMemo(() => (suggestionOff || !loaded || settings.styleId ? null : suggestStyle(styleList.styles, { title, text })), [suggestionOff, loaded, settings.styleId, styleList.styles, title, text]);
   const compareOptions = useMemo(() => [
     { value: WORKING, label: t('Tulisan saat ini', 'Current draft') },
     ...(preview ? [{ value: SOURCE, label: t('Teks sumber pratinjau', 'Preview source') }, { value: PREVIEW, label: t('Pratinjau AI', 'AI preview') }] : []),
@@ -696,8 +730,6 @@ export default function Workspace() {
   }
 
   const words = countWords(text);
-  // Suggestion only: it never changes settings and never starts a generation.
-  const suggestion = !suggestionOff && loaded && !settings.styleId ? suggestStyle(styleList.styles, { title, text }) : null;
   const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
   const assistant = (
     <AssistantPanel
@@ -705,7 +737,8 @@ export default function Workspace() {
       styles={styleList.styles} stylesLoading={styleList.loading} stylesError={styleList.error ? errorText(styleList.error, english) : ''} onRetryStyles={styleList.reload}
       onApplyStyle={chooseStyle} onCreateStyle={() => openStyleDialog(null, defaults, false)} onEditStyle={(style) => openStyleDialog(style, settings, false)} onSaveAsStyle={() => openStyleDialog(null, settings, true)}
       settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
-      busy={busy !== '' || !loaded} generating={busy === 'generate' && lastRequest?.surface === 'panel'}
+      busy={busy !== '' || !loaded} generating={(busy === 'generate' && lastRequest?.surface === 'panel') || (arriving && !aiError)} arrival={arriving} previewId={panelPreview?.id ?? null}
+      manualBase={manualBase} modeTabRequest={modeTabRequest}
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
       onGenerate={() => void generate({ scope, surface: 'panel' })} customizeRequest={customizeRequest}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
@@ -764,7 +797,7 @@ export default function Workspace() {
       ) : null}
       <div className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-10 sm:py-8 ${compare ? 'hidden' : ''}`}>
         <article className="editor-plain relative mx-auto min-h-full max-w-[760px]">
-          {!loaded && <LoadingBlock label={t('Memuat notebook…', 'Loading notebook…')} />}
+          {!loaded && <LoadingBlock label={arriving ? t('Menyiapkan notebook…', 'Preparing your notebook…') : t('Memuat notebook…', 'Loading notebook…')} />}
           {loaded && !text.trim() && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
               <p aria-hidden="true" className="text-[16px] leading-[1.75] text-ink-500">{t('Tulis atau tempel teks yang terasa seperti tulisan AI…', 'Write or paste text that sounds AI-written…')}</p>
@@ -791,7 +824,7 @@ export default function Workspace() {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-shell">
       <NotebookHeader
-        title={title} onTitle={(value) => { setTitle(value); markMetadata(value, settings); }} disabled={!loaded || frozen} comparing={!!compare} canCopy={loaded && !!text.trim()}
+        title={title} onTitle={(value) => { autoTitle.current = false; setTitle(value); markMetadata(value, settings); }} disabled={!loaded || frozen} comparing={!!compare} canCopy={loaded && !!text.trim()}
         onCopy={() => void copyAll()} onCompare={() => (compare ? exitCompare() : defaultCompare())} onAnalytics={openAnalytics}
         onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} onDelete={() => setDialog({ kind: 'delete' })}
       />

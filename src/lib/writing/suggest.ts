@@ -3,6 +3,8 @@ import type { WritingStyle } from './styles';
 export const SUGGEST_MIN_WORDS = 40;
 export const SUGGEST_CONTEXT_WORDS = 200;
 export const SUGGEST_MIN_SCORE = 3;
+// Only the opening of a notebook is ever tokenised, so a long document costs the same as a short one.
+export const SUGGEST_SCAN_CHARS = 4_000;
 const MIN_KEYWORD = 4;
 // Frequent words carry no topic signal in either language.
 const STOP = new Set([
@@ -16,19 +18,20 @@ const words = (text: string): string[] => text.toLowerCase().match(/[\p{L}\p{N}]
 export const keywords = (text: string): Set<string> => new Set(words(text).filter((word) => word.length >= MIN_KEYWORD && !STOP.has(word)));
 
 // The notebook is represented by its title plus the opening of its text, where the topic is usually stated.
-export const contextKeywords = ({ title, text }: SuggestContext): Set<string> => keywords(`${title} ${words(text).slice(0, SUGGEST_CONTEXT_WORDS).join(' ')}`);
+export const contextKeywords = ({ title, text }: SuggestContext): Set<string> => keywords(`${title} ${words(text.slice(0, SUGGEST_SCAN_CHARS)).slice(0, SUGGEST_CONTEXT_WORDS).join(' ')}`);
 
-// Name matches weigh double: the name is what the author chose to call the situation.
+// Name matches weigh double, and a word shared by the name and the description is still one match.
 export function scoreStyle(style: WritingStyle, context: Set<string>): number {
+  const name = keywords(style.name);
   let score = 0;
-  for (const word of keywords(style.name)) if (context.has(word)) score += 2;
-  for (const word of keywords(style.description ?? '')) if (context.has(word)) score += 1;
+  for (const word of name) if (context.has(word)) score += 2;
+  for (const word of keywords(style.description ?? '')) if (context.has(word) && !name.has(word)) score += 1;
   return score;
 }
 
 // At most one suggestion, and only when the match is strong enough to be worth showing.
 export function suggestStyle(styles: WritingStyle[], context: SuggestContext): WritingStyle | null {
-  if (words(context.text).length < SUGGEST_MIN_WORDS) return null;
+  if (words(context.text.slice(0, SUGGEST_SCAN_CHARS)).length < SUGGEST_MIN_WORDS) return null;
   const notebook = contextKeywords(context);
   let best: { style: WritingStyle; score: number } | null = null;
   for (const style of styles) {

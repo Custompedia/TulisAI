@@ -28,6 +28,12 @@ export const responseSchemas = {
 
 export type ResponseSchemas = typeof responseSchemas;
 
+// First run of a brand-new notebook only: the same rewrite result plus a short label for the document.
+const titled = transform.extend({ suggested_title: z.string() });
+export const titledResponseSchemas: Partial<Record<keyof ResponseSchemas, typeof titled>> = {
+  P01_STANDARD_REWRITE: titled, P02_ACADEMIC: titled, P03_HUMANIZER: titled, P04_PROFESSIONAL: titled, P05_CREATIVE: titled, P06_SIMPLIFY: titled, P08_CUSTOM_TRANSFORM: titled,
+};
+
 export const focusValues = ["clarity", "naturalness", "formality", "persuasiveness", "remove_repetition"] as const;
 const language = z.enum(["id", "en"]);
 const strings = z.array(z.string()).default([]);
@@ -39,7 +45,7 @@ const request = z.object({
   additional_instruction: z.string().max(EXTRA_LIMIT).default(""),
 });
 // style_reference is the author's writing sample; it travels in the user message as its own block.
-const rewrite = { source_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, protected_terms: strings, protected_citations: strings, request: request.optional(), style_reference: z.string().max(SAMPLE_LIMIT).optional() };
+const rewrite = { source_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, protected_terms: strings, protected_citations: strings, request: request.optional(), style_reference: z.string().max(SAMPLE_LIMIT).optional(), suggest_title: z.boolean().optional() };
 const strength = z.enum(["light", "balanced", "strong"]);
 
 export const runtimeSchemas = {

@@ -17,15 +17,15 @@ import { modeHint, modeLabel, requestSummary } from './modes';
 import { StyleMark } from './StyleMark';
 import { appendInstruction, countWords, hasAdvancedValues, hasCustomFields, instructionChips, nameTaken, SAMPLE_GOOD_WORDS, SAMPLE_MIN_WORDS, styleDraft, stylePayload, type StyleDraft } from './style-form';
 
-type Props = { styles: WritingStyle[]; style?: WritingStyle | null; preset: Settings; onClose: () => void; onSaved: (style: WritingStyle, created: boolean) => void; onDeleted?: (style: WritingStyle) => void };
+type Props = { styles: WritingStyle[]; style?: WritingStyle | null; preset: Settings; initial?: StyleDraft; onClose: () => void; onSaved: (style: WritingStyle, created: boolean) => void; onDeleted?: (style: WritingStyle) => void };
 
-export function StyleDialog({ styles, style = null, preset, onClose, onSaved, onDeleted }: Props) {
+export function StyleDialog({ styles, style = null, preset, initial, onClose, onSaved, onDeleted }: Props) {
   const { t, locale } = useLocale();
   const guard = useSessionGuard();
   const id = useId();
-  const [draft, setDraft] = useState<StyleDraft>(() => styleDraft(preset, style));
+  const [draft, setDraft] = useState<StyleDraft>(() => initial ?? styleDraft(preset, style));
   // Opens straight away when editing a skill that already carries non-default details.
-  const [advanced, setAdvanced] = useState(() => !!style && hasAdvancedValues(styleDraft(preset, style).settings));
+  const [advanced, setAdvanced] = useState(() => hasAdvancedValues((initial ?? styleDraft(preset, style)).settings) && (!!style || !!initial));
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
@@ -154,7 +154,7 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
         </div>
 
         <div className="rounded-xl border border-line">
-          <button type="button" onClick={() => setAdvanced(!detailsOpen)} aria-expanded={detailsOpen} aria-controls={`${id}-advanced`}
+          <button type="button" onClick={() => setAdvanced(!advanced)} aria-expanded={detailsOpen} aria-controls={`${id}-advanced`}
             className="flex h-10 w-full items-center gap-2 rounded-xl px-3.5 text-left transition-colors hover:bg-paper">
             <span className="flex-1 text-[13px] font-semibold text-ink-800">{t('Rincian lanjutan', 'Advanced details')}</span>
             {changed && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-800">{t('Diubah', 'Custom')}</span>}

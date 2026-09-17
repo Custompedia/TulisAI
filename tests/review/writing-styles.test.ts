@@ -32,7 +32,7 @@ describe('review: saved writing styles', () => {
   it('flags only non-default values behind the advanced details row', () => {
     expect(hasAdvancedValues(defaults)).toBe(false);
     expect(hasAdvancedValues({ ...defaults, mode: 'creative', extra: 'catatan' })).toBe(false);
-    for (const change of [{ strength: 'strong' }, { context: 'academic' }, { preservation: 'flexible' }, { recipient: 'klien' }, { simplifyFor: 'pemula' }, { academic: 'journal' }, { format: 'bullets' }, { length: 'shorter' }, { audience: 'client' }, { focus: ['clarity'] }] as Array<Partial<Settings>>) {
+    for (const change of [{ strength: 'strong' }, { context: 'academic' }, { preservation: 'balanced' }, { recipient: 'klien' }, { simplifyFor: 'pemula' }, { academic: 'journal' }, { format: 'bullets' }, { length: 'shorter' }, { audience: 'client' }, { focus: ['clarity'] }] as Array<Partial<Settings>>) {
       expect(hasAdvancedValues({ ...defaults, ...change })).toBe(true);
     }
   });
@@ -120,7 +120,11 @@ describe('review: Mode and Skills tabs keep separate configurations', () => {
 
   it('keeps the writing language and drops the marker when the skill is gone or unknown', () => {
     const applied = { ...applyStyle(manual, skill), language: 'en' as const };
-    expect(tabSettings('mode', applied, empty, [skill])).toMatchObject({ language: 'en', styleId: null, sample: '' });
+    // An empty memory falls back to the manual baseline, never to the skill's own configuration.
+    expect(tabSettings('mode', applied, empty, [skill])).toEqual({ ...defaults, language: 'en', styleId: null, sample: '' });
+    expect(tabSettings('mode', applied, empty, [skill], manual)).toEqual({ ...manual, language: 'en', styleId: null, sample: '' });
+    expect(tabSettings('mode', applied, empty, [skill]).extra).toBe('');
+    expect(tabSettings('mode', applied, empty, [skill]).mode).toBe(defaults.mode);
     expect(tabSettings('skills', { ...manual, styleId: null }, { mode: manual, styleId: 'gone' }, [])).toEqual({ ...manual, styleId: null });
     expect(tabSettings('skills', applied, { mode: manual, styleId: skill.id }, []).styleId).toBeNull();
   });

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Copy, MoreHorizontal, PencilLine, Plus, RotateCw, Trash2 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText } from '@/lib/client/api';
-import { createStyle, removeStyle, useWritingStyles } from '@/lib/client/styles-store';
+import { removeStyle, useWritingStyles } from '@/lib/client/styles-store';
 import { defaults } from '@/lib/writing/settings';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { useSessionGuard } from '@/components/app/AppShell';
@@ -15,26 +15,24 @@ import { Toast } from '@/components/ui/Toast';
 import { modeLabel, modeTone, requestSummary, toneClass } from '@/components/writing/modes';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { StyleMark } from '@/components/writing/StyleMark';
-import { copyName } from '@/components/writing/style-form';
+import { copyName, styleDraft, type StyleDraft } from '@/components/writing/style-form';
 
 export function StylesCard() {
   const { t, locale } = useLocale();
   const guard = useSessionGuard();
   const { styles, loading, error, reload } = useWritingStyles();
-  const [dialog, setDialog] = useState<{ style: WritingStyle | null } | null>(null);
+  const [dialog, setDialog] = useState<{ style: WritingStyle | null; initial?: StyleDraft } | null>(null);
   const [confirm, setConfirm] = useState<WritingStyle | null>(null);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
   const full = styles.length >= STYLE_LIMIT;
   const en = locale === 'en';
 
-  async function duplicate(style: WritingStyle) {
+  // Duplicating opens a prefilled form instead of saving straight away, so repeated clicks cannot pile up copies.
+  const duplicate = (style: WritingStyle) => {
     if (busy || full) return;
-    setBusy(style.id); setNotice('');
-    try { await createStyle({ name: copyName(style.name, styles), description: style.description, color: style.color, icon: style.icon, settings: style.settings }); }
-    catch (caught) { if (!guard(caught)) setNotice(errorText(caught, en)); }
-    finally { setBusy(''); }
-  }
+    setDialog({ style: null, initial: { ...styleDraft(style.settings, style), name: copyName(style.name, styles) } });
+  };
 
   async function remove() {
     if (!confirm) return;
@@ -68,7 +66,7 @@ export function StylesCard() {
             {styles.map((style) => {
               const actions = [
                 { label: t(`Ubah skill ${style.name}`, `Edit skill ${style.name}`), short: t('Ubah', 'Edit'), icon: PencilLine, danger: false, disabled: false, run: () => setDialog({ style }) },
-                { label: t(`Duplikat skill ${style.name}`, `Duplicate skill ${style.name}`), short: t('Duplikat', 'Duplicate'), icon: Copy, danger: false, disabled: full, run: () => void duplicate(style) },
+                { label: t(`Duplikat skill ${style.name}`, `Duplicate skill ${style.name}`), short: t('Duplikat', 'Duplicate'), icon: Copy, danger: false, disabled: full, run: () => duplicate(style) },
                 { label: t(`Hapus skill ${style.name}`, `Delete skill ${style.name}`), short: t('Hapus', 'Delete'), icon: Trash2, danger: true, disabled: false, run: () => setConfirm(style) },
               ];
               return (
@@ -106,7 +104,7 @@ export function StylesCard() {
         <Button variant="primary" icon={Plus} disabled={loading || full || busy !== ''} onClick={() => setDialog({ style: null })}>{t('Buat skill', 'Create skill')}</Button>
       </footer>
 
-      {dialog && <StyleDialog styles={styles} style={dialog.style} preset={defaults} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} onDeleted={() => setDialog(null)} />}
+      {dialog && <StyleDialog styles={styles} style={dialog.style} initial={dialog.initial} preset={defaults} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} onDeleted={() => setDialog(null)} />}
       {confirm && (
         <ConfirmDialog title={t('Hapus skill ini?', 'Delete this skill?')} tone="danger" busy={busy === confirm.id} confirmLabel={t('Hapus skill', 'Delete skill')} onClose={() => { if (!busy) setConfirm(null); }} onConfirm={() => void remove()}>
           <p>{t('Skill', 'The skill')} <b className="text-ink-900">“{confirm.name}”</b> {t('akan dihapus. Notebook yang memakainya tetap menyimpan pengaturannya.', 'will be deleted. Notebooks using it keep their current settings.')}</p>

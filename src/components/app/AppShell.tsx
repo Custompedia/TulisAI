@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { Gauge } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, isUnauthenticated, request } from '@/lib/client/api';
+import { resetStyles } from '@/lib/client/styles-store';
 import { StatusScreen, statusIcons } from '@/components/ui/StatusScreen';
 import { Logo } from '@/components/ui/Logo';
 import { AccountMenu } from './AccountMenu';
@@ -25,7 +26,7 @@ export function useSignOut() {
   const [busy, setBusy] = useState(false);
   const signOut = useCallback(async () => {
     setBusy(true);
-    try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' }); } finally { router.replace('/'); router.refresh(); }
+    try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' }); } finally { resetStyles(); router.replace('/'); router.refresh(); }
   }, [router]);
   return { signOut, busy };
 }

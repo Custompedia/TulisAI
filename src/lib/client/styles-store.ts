@@ -15,6 +15,9 @@ const emit = (next: StylesState) => { state = next; for (const listener of liste
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 const setStyles = (styles: WritingStyle[]) => { loaded = true; emit({ styles, loading: false, error: null }); };
 
+// The cache belongs to one signed-in account; sign-out clears it so the next user never sees the previous list.
+export function resetStyles() { loaded = false; inFlight = null; emit({ styles: [], loading: true, error: null }); }
+
 // One shared fetch of GET /api/styles; every reader sees the same list.
 export function loadStyles(force = false): Promise<void> {
   if (inFlight) return inFlight;

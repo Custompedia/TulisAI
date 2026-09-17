@@ -1,4 +1,4 @@
-import { INLINE_LIMIT, SELECTION_LIMIT, type Settings } from '@/lib/writing/settings';
+import { defaults, INLINE_LIMIT, SELECTION_LIMIT, type Settings } from '@/lib/writing/settings';
 import { applyStyle, type WritingStyle } from '@/lib/writing/styles';
 import type { InlineAction, SelectionRange } from './types';
 
@@ -32,6 +32,9 @@ export function planStyleCommand(style: WritingStyle, selection: SelectionRange,
   return { kind: 'generate', label: style.name, override: applyStyle(base, style) };
 }
 
+// A toolbar action is a plain run: the applied skill's sample, note and output shape never ride along.
+const plain = (base: Settings, patch: Partial<Settings>): Settings => ({ ...base, styleId: null, sample: '', extra: '', focus: [], format: defaults.format, length: defaults.length, customized: false, ...patch });
+
 // Humanize keeps the register of the mode the user is already writing in.
 const humanizeContext = (base: Settings) => (base.mode === 'academic' ? 'academic' : base.mode === 'professional' ? 'professional' : base.context);
 
@@ -41,14 +44,14 @@ export function planSelectionCommand(command: SelectionCommand, selection: Selec
   const length = selection.text.length; const multiline = selection.text.includes('\n');
   const label = commandLabel(command, t);
   const over = (limit: number) => tooLong(label, length, limit, t, format);
-  if (command === 'humanize') return length > SELECTION_LIMIT ? over(SELECTION_LIMIT) : { kind: 'generate', label, override: { ...base, mode: 'humanize', context: humanizeContext(base) } };
-  if (command === 'academic') return length > SELECTION_LIMIT ? over(SELECTION_LIMIT) : { kind: 'generate', label, override: { ...base, mode: 'academic' } };
+  if (command === 'humanize') return length > SELECTION_LIMIT ? over(SELECTION_LIMIT) : { kind: 'generate', label, override: plain(base, { mode: 'humanize', context: humanizeContext(base) }) };
+  if (command === 'academic') return length > SELECTION_LIMIT ? over(SELECTION_LIMIT) : { kind: 'generate', label, override: plain(base, { mode: 'academic' }) };
   if (length > INLINE_LIMIT) return over(INLINE_LIMIT);
   if (!multiline) return { kind: 'generate', label, inlineAction: command };
   if (command === 'alternatives') return { kind: 'error', label, message: t('Alternatif hanya untuk kata, frasa, atau satu kalimat. Pilih bagian yang lebih kecil.', 'Alternatives work on a word, phrase, or single sentence. Select a smaller part.') };
   const override: Record<Exclude<InlineAction, 'alternatives'>, Settings> = {
-    clearer: { ...base, mode: 'simplify' }, shorter: { ...base, mode: 'standard', customized: true, length: 'shorter' },
-    formal: { ...base, mode: 'professional' }, natural: { ...base, mode: 'humanize', context: humanizeContext(base) },
+    clearer: plain(base, { mode: 'simplify' }), shorter: plain(base, { mode: 'standard', customized: true, length: 'shorter' }),
+    formal: plain(base, { mode: 'professional' }), natural: plain(base, { mode: 'humanize', context: humanizeContext(base) }),
   };
   return { kind: 'generate', label, override: override[command] };
 }

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { EXTRA_LIMIT } from "../../src/lib/writing/settings";
-import { buildMessages, buildSystemMessage, buildUserMessage, compileControlBlock, createOpenRouterProvider, exceedsPreservation, getPromptDefinition, normalizeRuntime, promptHash, PROMPT_VERSION, PROMPTS, promptIds, REASONING_EFFORT, validateGeneration } from "../../src/server/ai/core";
+import { buildMessages, buildSystemMessage, buildUserMessage, clipText, compileControlBlock, createOpenRouterProvider, exceedsPreservation, getPromptDefinition, normalizeRuntime, promptHash, PROMPT_VERSION, PROMPTS, promptIds, REASONING_EFFORT, validateGeneration } from "../../src/server/ai/core";
 import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P01_LANGUAGE, P02, P02_LANGUAGE, P03, P03_LANGUAGE, P04, P04_LANGUAGE, P05, P05_LANGUAGE, P06, P06_LANGUAGE, P07, P07_LANGUAGE, P08_CONTROL_BLOCK, P09, P10 } from "../../src/server/ai/core/prompts";
 
 const transform = (text: string, extra: Record<string, unknown> = {}) => ({ transformed_text: text, change_categories: [], warnings: [], no_change_needed: false, ...extra });
@@ -183,12 +183,12 @@ describe("deterministic response safety", () => {
 });
 
 describe("bounded OpenRouter provider", () => {
-  const reply = (content: unknown, id = "req_1") => new Response(JSON.stringify({ id, choices: [{ message: { content: JSON.stringify(content) } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } }), { status: 200, headers: { "content-type": "application/json" } });
+  const reply = (content: unknown, id = "req_1") => new Response(JSON.stringify({ id, choices: [{ message: { content: JSON.stringify(content) } }], usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, cost: 0.0004 } }), { status: 200, headers: { "content-type": "application/json" } });
   it("sends tagged messages, reasoning effort, structured output and privacy denial", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(reply(transform("Halo")));
     const provider = createOpenRouterProvider({ apiKey: "test", model: "openai/gpt-5.6-luna", privacyMode: "deny", fetchImpl });
     const result = await provider.generate({ promptId: "P01_STANDARD_REWRITE", runtime: { language: "id", strength: "light", protected_terms: [], protected_citations: [] }, sourceText: "Halo", requestId: "r1" });
-    expect(result).toMatchObject({ ok: true, usage: { totalTokens: 5, providerRequestId: "req_1" } });
+    expect(result).toMatchObject({ ok: true, usage: { totalTokens: 5, costUsd: 0.0004, providerRequestId: "req_1" } });
     const body = JSON.parse(fetchImpl.mock.calls[0][1].body);
     expect(body.provider).toEqual({ data_collection: "deny" }); expect(body.reasoning).toEqual({ effort: "none" });
     expect(body.messages[0].content).not.toContain("Halo\n"); expect(body.messages[1].content).toBe("<input>\nHalo\n</input>");
@@ -210,5 +210,13 @@ describe("bounded OpenRouter provider", () => {
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body).reasoning).toEqual({ effort: "low" });
     expect((await provider.generate({ promptId: "P10_REPAIR", runtime, sourceText: runtime.originalScope, requestId: "repair-bad", protectedTerms: ["wrong"], protectedCitations: ["Davis (1989)"], repairAttempt: 1 })).ok).toBe(false);
     expect(fetchImpl).toHaveBeenCalledOnce();
+  });
+});
+
+describe('clipText', () => {
+  it('keeps short labels and cuts long ones at a word boundary', () => {
+    expect(clipText('kosakata', 40)).toBe('kosakata');
+    expect(clipText('Penghapusan pengulangan dan penguatan bentuk aktif', 40)).toBe('Penghapusan pengulangan dan penguatan');
+    expect(clipText('Supercalifragilisticexpialidociousandmorewords', 20)).toBe('Supercalifragilistic');
   });
 });

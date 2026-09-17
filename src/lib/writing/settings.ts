@@ -1,3 +1,6 @@
+import { detectLanguage } from './language';
+
+export { detectLanguage };
 export type Mode = 'standard' | 'academic' | 'humanize' | 'professional' | 'creative' | 'simplify';
 export type WritingLanguage = 'auto' | 'id' | 'en';
 export type Strength = 'light' | 'balanced' | 'strong';
@@ -19,7 +22,7 @@ export type Settings = {
 };
 
 export const defaults: Settings = {
-  mode: 'humanize', language: 'auto', strength: 'balanced', academic: 'thesis', context: 'general', preservation: 'balanced',
+  mode: 'humanize', language: 'auto', strength: 'balanced', academic: 'thesis', context: 'general', preservation: 'flexible',
   recipient: 'umum', simplifyFor: 'umum', audience: 'general_public', format: 'paragraph', length: 'same',
   focus: [], extra: '', customized: false, sample: '', styleId: null,
 };
@@ -27,6 +30,8 @@ export const defaults: Settings = {
 export const EXTRA_LIMIT = 500;
 export const SAMPLE_LIMIT = 1_000;
 export const FOCUS_LIMIT = 3;
+// Share of words that may change before a Humanize result counts as over its limit.
+export const PRESERVATION_CEILING: Record<string, number> = { conservative: 15, balanced: 30, flexible: 50 };
 export const AI_SCOPE_LIMIT = 20_000;
 export const SELECTION_LIMIT = 5_000;
 export const INLINE_LIMIT = 600;
@@ -86,15 +91,6 @@ export function runtimeControls(settings: Settings, language: 'id' | 'en', inlin
   return { language, ...controls[settings.mode], ...(sample ? { style_sample: sample } : {}), ...(settings.customized ? { custom_request: request } : {}) };
 }
 
-const ID_WORDS = new Set(['yang', 'dan', 'untuk', 'dengan', 'pada', 'ini', 'adalah', 'dalam', 'tidak', 'saya', 'kami', 'tersebut', 'akan', 'dari', 'itu', 'bahwa', 'juga', 'atau', 'sebagai', 'karena']);
-const EN_WORDS = new Set(['the', 'and', 'for', 'with', 'this', 'is', 'are', 'in', 'not', 'we', 'our', 'that', 'of', 'to', 'it', 'be', 'was', 'as', 'by', 'from']);
-
-export function detectLanguage(text: string): 'id' | 'en' | null {
-  const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
-  let id = 0; let en = 0;
-  for (const word of words.slice(0, 2000)) { if (ID_WORDS.has(word)) id++; if (EN_WORDS.has(word)) en++; }
-  return id > en ? 'id' : en > id ? 'en' : null;
-}
 
 export const resolveLanguage = (settings: Settings, text: string) => (settings.language === 'auto' ? detectLanguage(text) : settings.language);
 

@@ -1,12 +1,11 @@
 'use client';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, CircleAlert, Clock, Coins, RotateCw, Users, type LucideIcon } from 'lucide-react';
+import { Activity, CircleAlert, CircleDollarSign, Clock, Coins, RotateCw, Type, Users, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, request } from '@/lib/client/api';
-import { numberFormat } from '@/lib/client/format';
+import { numberFormat, usdFormat } from '@/lib/client/format';
 import { useSessionGuard } from '@/components/app/AppShell';
 import { Button } from '@/components/ui/Button';
-import { inputClass } from '@/components/ui/Field';
 import { Alert } from '@/components/ui/Alert';
 import { promptLabel, tierLabel, type AdminSummary, type AiMetrics } from './admin-shared';
 import { UsageChart, type Bar } from './UsageChart';
@@ -26,12 +25,13 @@ function rangeOf(preset: Preset, month: string): { from: string; to: string } {
 function Stat({ icon: Icon, label, value, hint, tone = 'default' }: { icon: LucideIcon; label: string; value: string; hint?: string; tone?: 'default' | 'warn' }) {
   return (
     <div className="rounded-2xl border border-line bg-white px-4 py-3.5">
-      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500"><Icon size={14} aria-hidden="true" className={tone === 'warn' ? 'text-amber-600' : 'text-brand-700'} />{label}</p>
+      <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500"><Icon size={14} aria-hidden="true" className={`shrink-0 ${tone === 'warn' ? 'text-amber-600' : 'text-brand-700'}`} /><span className="truncate" title={label}>{label}</span></p>
       <p className="mt-1.5 text-2xl font-semibold tabular-nums tracking-tight text-ink-950">{value}</p>
       {hint && <p className="mt-0.5 truncate text-[12px] text-ink-500" title={hint}>{hint}</p>}
     </div>
   );
 }
+const dateInput = 'h-8 rounded-md border border-line-strong bg-white px-2 text-[13px] tabular-nums text-ink-900 transition-colors hover:border-ink-300 focus:border-brand-400 focus:outline-none focus:ring-3 focus:ring-brand-100';
 const th = 'px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500';
 const thr = `${th} text-right`;
 const td = 'px-3 py-2 text-[13px] text-ink-700';
@@ -57,6 +57,7 @@ export function AiMonitor({ summary, onOpenUser }: { summary: AdminSummary | nul
   const [loading, setLoading] = useState(true);
   const range = preset === 'custom' ? custom : rangeOf(preset, month);
   const n = useCallback((value: number) => numberFormat(value, locale), [locale]);
+  const usd = (value: number) => usdFormat(value, locale);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -89,29 +90,39 @@ export function AiMonitor({ summary, onOpenUser }: { summary: AdminSummary | nul
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-white px-3 py-2.5">
-        <div role="radiogroup" aria-label={t('Rentang waktu', 'Time range')} className="inline-flex rounded-lg border border-line-strong bg-paper p-0.5">
-          {presets.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={preset === value} onClick={() => setPreset(value)} className={`h-8 rounded-md px-3 text-[13px] font-semibold transition-colors ${preset === value ? 'bg-white text-ink-900 shadow-sm ring-1 ring-line' : 'text-ink-500 hover:text-ink-800'}`}>{label}</button>)}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-line bg-white p-2.5">
+        <div role="radiogroup" aria-label={t('Rentang waktu', 'Time range')} className="inline-flex max-w-full overflow-x-auto rounded-lg border border-line-strong bg-paper p-0.5">
+          {presets.map(([value, label]) => <button key={value} type="button" role="radio" aria-checked={preset === value} onClick={() => setPreset(value)} className={`h-8 shrink-0 whitespace-nowrap rounded-md px-3 text-[13px] font-semibold transition-colors ${preset === value ? 'bg-white text-ink-900 shadow-sm ring-1 ring-line' : 'text-ink-500 hover:text-ink-800'}`}>{label}</button>)}
         </div>
-        {preset === 'month' && <input type="month" aria-label={t('Bulan', 'Month')} value={month} max={iso(new Date()).slice(0, 7)} onChange={(event) => event.target.value && setMonth(event.target.value)} className={`${inputClass} h-8 w-44`} />}
-        {preset === 'custom' && <div className="flex flex-wrap items-center gap-1.5 text-[13px] text-ink-500"><input type="date" aria-label={t('Dari', 'From')} value={custom.from} max={custom.to} onChange={(event) => event.target.value && setCustom({ ...custom, from: event.target.value })} className={`${inputClass} h-8 w-40`} /><span>–</span><input type="date" aria-label={t('Sampai', 'To')} value={custom.to} min={custom.from} max={iso(new Date())} onChange={(event) => event.target.value && setCustom({ ...custom, to: event.target.value })} className={`${inputClass} h-8 w-40`} /></div>}
-        <span className="ml-auto text-[12.5px] text-ink-500">{range.from} → {range.to} (UTC)</span>
-        <Button size="sm" variant="ghost" icon={RotateCw} loading={loading} onClick={() => void load()}>{t('Muat ulang', 'Refresh')}</Button>
+        {preset === 'month' && <input type="month" aria-label={t('Bulan', 'Month')} value={month} max={iso(new Date()).slice(0, 7)} onChange={(event) => event.target.value && setMonth(event.target.value)} className={`${dateInput} w-40`} />}
+        {preset === 'custom' && (
+          <div className="flex items-center gap-1.5 text-[13px] text-ink-400">
+            <input type="date" aria-label={t('Dari', 'From')} value={custom.from} max={custom.to} onChange={(event) => event.target.value && setCustom({ ...custom, from: event.target.value })} className={`${dateInput} w-[9.25rem]`} />
+            <span aria-hidden="true">→</span>
+            <input type="date" aria-label={t('Sampai', 'To')} value={custom.to} min={custom.from} max={iso(new Date())} onChange={(event) => event.target.value && setCustom({ ...custom, to: event.target.value })} className={`${dateInput} w-[9.25rem]`} />
+          </div>
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          <span className="whitespace-nowrap text-[12.5px] tabular-nums text-ink-500">{preset !== 'custom' && `${range.from} → ${range.to} · `}UTC</span>
+          <Button size="sm" variant="ghost" icon={RotateCw} loading={loading} onClick={() => void load()}>{t('Muat ulang', 'Refresh')}</Button>
+        </div>
       </div>
 
       {error !== null && <Alert tone="error" actions={<Button size="sm" icon={RotateCw} onClick={() => void load()}>{t('Coba lagi', 'Retry')}</Button>}>{errorText(error, en)}</Alert>}
 
-      <section aria-label={t('Ringkasan AI', 'AI summary')} className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <section aria-label={t('Ringkasan AI', 'AI summary')} className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {totals ? (
           <>
             <Stat icon={Activity} label={t('Permintaan', 'Requests')} value={n(totals.requests)} hint={t(`${n(totals.completed)} selesai · ${n(totals.running)} berjalan`, `${n(totals.completed)} completed · ${n(totals.running)} running`)} />
             <Stat icon={CircleAlert} label={t('Gagal', 'Failed')} value={n(totals.failed)} hint={t(`${totals.failRate}% dari permintaan`, `${totals.failRate}% of requests`)} tone={totals.failed > 0 ? 'warn' : 'default'} />
             <Stat icon={Users} label={t('Pengguna aktif', 'Active users')} value={n(totals.users)} hint={summary ? t(`dari ${n(summary.users)} akun`, `of ${n(summary.users)} accounts`) : undefined} />
-            <Stat icon={Coins} label="Token" value={n(totals.inputTokens + totals.outputTokens)} hint={t(`${n(totals.inputTokens)} masuk · ${n(totals.outputTokens)} keluar`, `${n(totals.inputTokens)} in · ${n(totals.outputTokens)} out`)} />
             <Stat icon={Clock} label={t('Latensi rata-rata', 'Avg latency')} value={totals.avgLatencyMs === null ? '—' : `${n(totals.avgLatencyMs)} ms`} hint={t('dari permintaan selesai', 'over completed requests')} />
-            <Stat icon={Activity} label={t('Karakter diproses', 'Characters')} value={n(totals.characters)} hint={summary ? `${summary.model}` : undefined} />
+            <Stat icon={Coins} label="Token" value={n(totals.inputTokens + totals.outputTokens)} hint={t(`${n(totals.inputTokens)} masuk · ${n(totals.outputTokens)} keluar`, `${n(totals.inputTokens)} in · ${n(totals.outputTokens)} out`)} />
+            <Stat icon={Type} label={t('Karakter diproses', 'Characters')} value={n(totals.characters)} hint={totals.requests ? t(`±${n(Math.round(totals.characters / totals.requests))} / permintaan`, `~${n(Math.round(totals.characters / totals.requests))} / request`) : undefined} />
+            <Stat icon={Wallet} label={t('Total biaya', 'Total cost')} value={totals.costedRequests ? usd(totals.costUsd) : '—'} hint={summary?.model} />
+            <Stat icon={CircleDollarSign} label={t('Biaya / permintaan', 'Cost / request')} value={totals.costedRequests ? usd(totals.costUsd / totals.costedRequests) : '—'} hint={totals.costedRequests ? t(`rata-rata dari ${n(totals.costedRequests)} permintaan`, `average over ${n(totals.costedRequests)} requests`) : t('Belum ada data biaya', 'No cost data yet')} />
           </>
-        ) : Array.from({ length: 6 }, (_, index) => <div key={index} aria-hidden="true" className="h-[92px] animate-pulse rounded-2xl border border-line bg-white" />)}
+        ) : Array.from({ length: 8 }, (_, index) => <div key={index} aria-hidden="true" className="h-[92px] animate-pulse rounded-2xl border border-line bg-white" />)}
       </section>
 
       {data && charts && (

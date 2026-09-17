@@ -14,7 +14,7 @@ export type RuntimeInput = {
   protected_terms?: string[]; protected_citations?: string[];
   requiredProtectedTerms?: string[]; requiredProtectedCitations?: string[]; required_protected_terms?: string[]; required_protected_citations?: string[];
   failedOutput?: string; originalScope?: string; failed_output?: string; original_scope?: string;
-  preservation?: string; request?: ControlRequest; custom_request?: Record<string, unknown>;
+  preservation?: string; suggestTitle?: boolean; request?: ControlRequest; custom_request?: Record<string, unknown>;
 };
 
 export type ControlRequest = {
@@ -30,6 +30,7 @@ export type UsageMetadata = {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
+  costUsd?: number;
   providerRequestId?: string;
 };
 

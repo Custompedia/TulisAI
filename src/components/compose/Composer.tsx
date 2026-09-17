@@ -9,6 +9,7 @@ import { countWords } from '@/lib/editor/metrics';
 import { numberFormat } from '@/lib/client/format';
 import { AI_SCOPE_LIMIT, defaults, detectLanguage, LEGACY_CUSTOM_PROMPT, MIN_WORDS, modeFromPrompt, normalizeSettings, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle } from '@/lib/writing/styles';
+import { deriveTitle } from '@/lib/writing/title';
 import { rememberSettings, tabSettings, type TabMemory } from '@/components/workspace/assistant-tabs';
 import { StyleMark } from '@/components/writing/StyleMark';
 import { useWritingStyles } from '@/lib/client/styles-store';
@@ -60,6 +61,8 @@ export function Composer() {
   const [confirmClear, setConfirmClear] = useState(false);
   const [customizing, setCustomizing] = useState(false);
   const { styles } = useWritingStyles();
+  // The composer's own baseline: the account defaults, never anything a skill brought in.
+  const manualBase = useRef<Settings>(normalizeSettings({ ...defaults, mode: prefs.defaultMode === LEGACY_CUSTOM_PROMPT ? 'custom' : baseMode, language: prefs.writingLanguage, context: prefs.humanizerContext }));
   // Remembers the manual configuration so removing a skill restores it instead of resetting.
   const memory = useRef<TabMemory>({ mode: null, styleId: null });
   const manualPicked = useRef(false);
@@ -110,7 +113,7 @@ export function Composer() {
     setSettings(applyStyle(settings, style)); setCustomizing(false); setPicked(true); textarea.current?.focus();
   };
   // Removing a skill hands the row back to the manual configuration the user had before.
-  const clearStyle = () => { setSettings(tabSettings('mode', settings, memory.current, styles)); setPicked(manualPicked.current); };
+  const clearStyle = () => { setSettings(tabSettings('mode', settings, memory.current, styles, manualBase.current)); setPicked(manualPicked.current); };
   const styleChip = styles.length > 0 && (
     <ChipSelect label={t('Skill', 'Skill')} title={t('Skills', 'Skills')} value="" disabled={busy} onChange={pickStyle} width="w-72"
       options={styles.map((style) => ({ value: style.id, label: style.name, hint: style.description ?? requestSummary(style.settings, t) }))} />
@@ -119,7 +122,8 @@ export function Composer() {
   async function create() {
     if (!canSend) return;
     setBusy(true); setError('');
-    const title = text.trim().split('\n')[0]?.slice(0, 60).trim() || t('Notebook tanpa judul', 'Untitled notebook');
+    // Short local title now; the first generation may replace it with a better one without a second read.
+    const title = deriveTitle(text, t('Notebook tanpa judul', 'Untitled notebook'));
     try {
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences: settings }, newKey());
       try {

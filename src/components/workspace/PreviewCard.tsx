@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Check, CircleCheck, Columns2, Copy, Eye, EyeOff, Feather, Minus, Plus, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { changePercentage } from '@/lib/editor/metrics';
+import { PRESERVATION_CEILING } from '@/lib/writing/settings';
 import { Button } from '@/components/ui/Button';
 import { DiffText, useDiff } from './DiffText';
 import { previewText, type Preview } from './types';
@@ -21,6 +22,8 @@ export function PreviewCard({ preview, stale, busy, applying, onApply, onCompare
   const parts = useDiff(preview.source, result);
   const unchanged = !!preview.output.no_change_needed || result.trim() === preview.source.trim();
   const exceeds = !!preview.output.exceeds_preservation && !unchanged;
+  const changed = changePercentage(preview.source, result);
+  const ceiling = PRESERVATION_CEILING[preview.settings.preservation] ?? 30;
   const humanize = preview.settings.mode === 'humanize';
   const scopeLabel = { selection: t('Teks terpilih', 'Selection'), paragraph: t('Paragraf', 'Paragraph'), document: t('Seluruh dokumen', 'Entire document') }[preview.scope];
 
@@ -40,7 +43,7 @@ export function PreviewCard({ preview, stale, busy, applying, onApply, onCompare
       <div className="space-y-3 p-3.5">
         {exceeds && (
           <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[13px] text-amber-900">
-            <p className="flex gap-2"><TriangleAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />{t('Hasil ini mengubah lebih banyak dari batas yang kamu pilih.', 'This result changes more than your chosen limit.')}</p>
+            <p className="flex gap-2"><TriangleAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" />{t(`Berubah ${changed}% dari tulisan aslimu, batasmu ${ceiling}%. Hasilnya tetap bisa dipakai.`, `${changed}% of your original changed, your limit is ${ceiling}%. You can still use it.`)}</p>
             <Button size="sm" className="mt-2" icon={Minus} disabled={busy || (preview.settings.strength === 'light' && preview.settings.preservation === 'conservative')} onClick={onReduce}>{t('Kurangi Perubahan', 'Reduce Changes')}</Button>
           </div>
         )}

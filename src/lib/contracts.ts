@@ -18,7 +18,9 @@ export const LockCreateSchema = z.object({ term: z.string().min(1).max(300).refi
 export const GenerateSchema = z.object({
   documentId: z.string().uuid(), promptId: z.enum(["P01_STANDARD_REWRITE", "P02_ACADEMIC", "P03_HUMANIZER", "P04_PROFESSIONAL", "P05_CREATIVE", "P06_SIMPLIFY", "P07_INLINE_ALTERNATIVES", "P08_CUSTOM_TRANSFORM"]),
   source: z.object({ text: z.string().min(1).max(200000), anchor: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional() }),
-  runtime: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(0)
+  runtime: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(0),
+  // Set once, on the first run of a brand-new notebook, so the rewrite call also returns a short title.
+  suggestTitle: z.boolean().optional()
 });
 export const ApplyPreviewSchema = z.object({ expectedRevision: z.number().int().min(0), selectedAlternative: z.number().int().min(0).max(4).optional() });
 export const AnalyzeQualitySchema = z.object({ documentId: z.string().uuid(), expectedRevision: z.number().int().min(0), source: z.object({ text: z.string().min(1).max(20000), anchor: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional() }), language: z.enum(["id", "en"]), context: z.enum(["standard", "academic", "humanize", "professional", "creative", "simplify"]) });

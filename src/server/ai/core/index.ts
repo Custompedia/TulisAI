@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { changePercentage } from "@/lib/editor/metrics";
-import { EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT } from "@/lib/writing/settings";
+import { EXTRA_LIMIT, FOCUS_LIMIT, PRESERVATION_CEILING, SAMPLE_LIMIT } from "@/lib/writing/settings";
 import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
-import { responseSchemas, runtimeSchemas } from "./schemas";
+import { responseSchemas, runtimeSchemas, titledResponseSchemas } from "./schemas";
 import { mergeWarnings as mergeWarningList, paragraphsPreserved, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
 
@@ -10,8 +10,12 @@ import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition,
 const strictSafe = (node: unknown): unknown => Array.isArray(node) ? node.map(strictSafe) : node && typeof node === "object" ? Object.fromEntries(Object.entries(node).filter(([key]) => key !== "minLength" && key !== "maxLength").map(([key, value]) => [key, strictSafe(value)])) : node;
 const jsonSchema = (schema: z.ZodTypeAny) => ({ type: "json_schema", json_schema: { name: "ai_result", strict: true, schema: strictSafe(z.toJSONSchema(schema)) } });
 
-export function getPromptDefinition(id: PromptId): PromptDefinition {
-  return { id, systemPrompt: PROMPTS[id], reasoningEffort: REASONING_EFFORT[id], outputSchema: responseSchemas[id] as z.ZodType<AIResponse>, responseFormat: jsonSchema(responseSchemas[id]) };
+// Only the first run of a brand-new notebook asks for a title, so every other call keeps the plain schema.
+export const titleAware = (id: PromptId, wantsTitle: boolean) => (wantsTitle && titledResponseSchemas[id] ? titledResponseSchemas[id] : responseSchemas[id]) as z.ZodTypeAny;
+
+export function getPromptDefinition(id: PromptId, wantsTitle = false): PromptDefinition {
+  const schema = titleAware(id, wantsTitle);
+  return { id, systemPrompt: PROMPTS[id], reasoningEffort: REASONING_EFFORT[id], outputSchema: schema as z.ZodType<AIResponse>, responseFormat: jsonSchema(schema) };
 }
 
 type Table = Record<string, string>;
@@ -82,6 +86,7 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     mode: lookup(ENUM_MAP.mode, get("mode", "context")),
     request: request && Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)),
     style_reference: id === "P07_INLINE_ALTERNATIVES" ? undefined : sanitizeSample(get("styleSample", "style_sample", "styleReference", "style_reference")),
+    suggest_title: get("suggestTitle", "suggest_title") === true ? true : undefined,
     failed_output: get("failedOutput", "failed_output"), original_scope: get("originalScope", "original_scope"),
     required_protected_terms: get("requiredProtectedTerms", "required_protected_terms"), required_protected_citations: get("requiredProtectedCitations", "required_protected_citations"),
   };
@@ -113,6 +118,9 @@ const section = (tag: string, value: unknown) => typeof value === "string" && va
 // Added block, not part of the verbatim v4 prompt text: it rides in the user message and says how the sample may be used.
 export const STYLE_REFERENCE_RULES = `The block above is a writing sample the author picked as a style example. Match its tone, its typical sentence length, and its vocabulary level. Its sentences, facts, names, and numbers stay out of your output; only <input> supplies content.`;
 const styleReferenceBlock = (value: unknown) => { const body = section("style_reference", value); return body ? `${body}\n${section("style_reference_rules", STYLE_REFERENCE_RULES)}` : ""; };
+// Added block, not part of the verbatim v4 prompt text: it asks for the notebook label alongside the rewrite, so no second call is needed.
+export const TITLE_REQUEST_RULES = `Also fill "suggested_title": a short label naming what <input> is about, written in the same language as <input>. At most 3 words and 40 characters. It is a label, not a summary and not a sentence: no ending punctuation, no quotes, no markup, and no prefix such as "Title:". Return an empty string when no short label fits. This field never changes the rewrite itself.`;
+const titleRequestBlock = (value: unknown) => (value === true ? section("title_request", TITLE_REQUEST_RULES) : "");
 export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>): string {
   const strings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   if (id === "P09_QUALITY_EVALUATION") return section("input", runtime.source_text);
@@ -124,25 +132,38 @@ export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>)
   const protectedStrings = [...new Set([...strings(runtime.protected_terms), ...strings(runtime.protected_citations)])].join("\n");
   const inline = id === "P07_INLINE_ALTERNATIVES";
   const body = inline ? section("selection", runtime.selected_text) : section("input", runtime.source_text);
-  return [inline ? "" : styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
+  return [inline ? "" : titleRequestBlock(runtime.suggest_title), inline ? "" : styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
 }
 
 export function buildMessages(id: PromptId, runtime: Record<string, unknown>) {
   return [{ role: "system" as const, content: buildSystemMessage(id, runtime) }, { role: "user" as const, content: buildUserMessage(id, runtime) }];
 }
 
-const clampList = (value: unknown, items: number, characters: number) => Array.isArray(value) ? value.slice(0, items).map((item) => typeof item === "string" ? item.slice(0, characters) : item) : value;
+// Cuts an over-long label at the last whole word so a clamped value never reads as a broken fragment.
+// Turns an identifier-shaped label ("academic_style") back into words so the preview never shows a raw key.
+export function humanizeLabel(value: string): string {
+  const spaced = value.replace(/[_\-]+/g, " ").replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/\s+/g, " ").trim();
+  return spaced === spaced.toLowerCase() || spaced === value ? spaced : spaced.toLowerCase();
+}
+export function clipText(value: string, characters: number): string {
+  if (value.length <= characters) return value;
+  const cut = value.slice(0, characters);
+  const space = cut.lastIndexOf(" ");
+  return (space >= Math.ceil(characters * 0.5) ? cut.slice(0, space) : cut).replace(/[\s,;:.\-–—]+$/u, "");
+}
+const clampList = (value: unknown, items: number, characters: number, tidy: (text: string) => string = (text) => text) => Array.isArray(value) ? value.slice(0, items).map((item) => typeof item === "string" ? clipText(tidy(item), characters) : item) : value;
 function clampResponse(value: unknown): unknown {
   const result = record(value); if (!result) return value;
   const clamped = { ...result };
   if ("warnings" in clamped) clamped.warnings = clampList(clamped.warnings, 3, 160);
-  if ("change_categories" in clamped) clamped.change_categories = clampList(clamped.change_categories, 3, 40);
+  if ("change_categories" in clamped) clamped.change_categories = clampList(clamped.change_categories, 3, 40, humanizeLabel);
+  if (typeof clamped.suggested_title === "string") clamped.suggested_title = clamped.suggested_title.slice(0, 200);
   if (Array.isArray(clamped.alternatives)) clamped.alternatives = clamped.alternatives.slice(0, 5);
   return clamped;
 }
 
-export function validateAIResponse(id: PromptId, value: unknown): AIResponse {
-  const parsed = responseSchemas[id].parse(clampResponse(value)) as AIResponse;
+export function validateAIResponse(id: PromptId, value: unknown, wantsTitle = false): AIResponse {
+  const parsed = titleAware(id, wantsTitle).parse(clampResponse(value)) as AIResponse;
   if (id === "P07_INLINE_ALTERNATIVES") {
     if ((parsed.alternatives as Array<{ text: string }>).some((option) => !option.text.trim() || option.text.length > 200000)) throw new Error("P07 alternatives cannot be empty");
     return parsed;
@@ -182,7 +203,7 @@ export function structuralErrors(id: PromptId, original: string, output: string,
   return errors;
 }
 
-export const PRESERVATION_CEILING: Record<string, number> = { conservative: 15, balanced: 30, flexible: 50 };
+export { PRESERVATION_CEILING } from "@/lib/writing/settings";
 export const exceedsPreservation = (original: string, output: string, preservation: unknown) => changePercentage(original, output) > (PRESERVATION_CEILING[String(preservation)] ?? 30);
 
 export function validateGeneration(id: PromptId, original: string, value: unknown, runtime: RuntimeInput, repairAttempt = 0): AIResponse {
@@ -275,12 +296,13 @@ export function createOpenRouterProvider(options: OpenRouterOptions) {
     const runtimeCitations = (runtime.protected_citations ?? runtime.required_protected_citations ?? []) as string[];
     if (args.protectedTerms && JSON.stringify(args.protectedTerms) !== JSON.stringify(runtimeTerms)) return { ok: false, error: "invalid_provider_response" };
     if (args.protectedCitations && JSON.stringify(args.protectedCitations) !== JSON.stringify(runtimeCitations)) return { ok: false, error: "invalid_provider_response" };
-    const definition = getPromptDefinition(args.promptId);
+    const wantsTitle = runtime.suggest_title === true;
+    const definition = getPromptDefinition(args.promptId, wantsTitle);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      const response = await fetchImpl(endpoint, { method: "POST", headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json", "X-Title": "AI Writing Workspace" }, body: JSON.stringify({ model: options.model, messages, response_format: definition.responseFormat, reasoning: { effort: definition.reasoningEffort }, provider: { data_collection: "deny" }, stream: false }), signal: controller.signal });
+      const response = await fetchImpl(endpoint, { method: "POST", headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json", "X-Title": "AI Writing Workspace" }, body: JSON.stringify({ model: options.model, messages, response_format: definition.responseFormat, reasoning: { effort: definition.reasoningEffort }, provider: { data_collection: "deny" }, usage: { include: true }, stream: false }), signal: controller.signal });
       if (!response.ok) return { ok: false, error: "http_error", status: response.status };
       if (!response.body) return { ok: false, error: "invalid_provider_response" };
       reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;
@@ -292,14 +314,14 @@ export function createOpenRouterProvider(options: OpenRouterOptions) {
       const record = json as { choices?: Array<{ message?: { content?: unknown }; finish_reason?: string }>; usage?: Record<string, unknown>; id?: string };
       const choice = record.choices?.[0]; const content = choice?.message?.content; if (choice?.finish_reason === "length") return { ok: false, error: "invalid_provider_response", usage: usageOf(record) };
       if (typeof content !== "string") return { ok: false, error: "invalid_provider_response", usage: usageOf(record) };
-      let parsed: AIResponse; try { parsed = validateAIResponse(args.promptId, JSON.parse(content)); } catch { return { ok: false, error: "invalid_provider_response", usage: usageOf(json) }; }
+      let parsed: AIResponse; try { parsed = validateAIResponse(args.promptId, JSON.parse(content), wantsTitle); } catch { return { ok: false, error: "invalid_provider_response", usage: usageOf(json) }; }
       return { ok: true, response: parsed, usage: { ...usageOf(record), providerRequestId: record.id } };
     } catch (error) { return { ok: false, error: error instanceof DOMException && error.name === "AbortError" ? "timeout" : "network_error" }; }
     finally { clearTimeout(timer); reader?.releaseLock(); }
   } };
 }
-function usageOf(value: { usage?: Record<string, unknown> }) { return { inputTokens: typeof value.usage?.prompt_tokens === "number" ? value.usage.prompt_tokens : undefined, outputTokens: typeof value.usage?.completion_tokens === "number" ? value.usage.completion_tokens : undefined, totalTokens: typeof value.usage?.total_tokens === "number" ? value.usage.total_tokens : undefined }; }
+function usageOf(value: { usage?: Record<string, unknown> }) { return { inputTokens: typeof value.usage?.prompt_tokens === "number" ? value.usage.prompt_tokens : undefined, outputTokens: typeof value.usage?.completion_tokens === "number" ? value.usage.completion_tokens : undefined, totalTokens: typeof value.usage?.total_tokens === "number" ? value.usage.total_tokens : undefined, costUsd: typeof value.usage?.cost === "number" && value.usage.cost >= 0 ? value.usage.cost : undefined }; }
 
 export { mergeWarnings, sampleEcho, sampleEchoRuns, sampleEchoSeverity, softWarnings } from "./validators";
-export { PROMPTS, PROMPT_VERSION, REASONING_EFFORT, promptIds, responseSchemas, runtimeSchemas };
+export { PROMPTS, PROMPT_VERSION, REASONING_EFFORT, promptIds, responseSchemas, runtimeSchemas, titledResponseSchemas };
 export type { AIResponse, ControlRequest, PromptId, PromptDefinition, ProviderResult, RuntimeInput } from "./types";

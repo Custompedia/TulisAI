@@ -16,7 +16,7 @@ export type UsersPage = { summary: AdminSummary; items: AdminUser[]; pageInfo: P
 export type AuditPage = { items: AuditEntry[]; pageInfo: PageInfo };
 export type UserSort = 'newest' | 'oldest' | 'name' | 'usage' | 'active';
 export type AiMetrics = {
-  from: string; to: string; totals: { requests: number; completed: number; failed: number; running: number; users: number; inputTokens: number; outputTokens: number; characters: number; avgLatencyMs: number | null; failRate: number };
+  from: string; to: string; totals: { requests: number; completed: number; failed: number; running: number; users: number; inputTokens: number; outputTokens: number; characters: number; avgLatencyMs: number | null; failRate: number; costUsd: number; costedRequests: number };
   byDay: Array<{ day: string; requests: number; failed: number; tokens: number; users: number }>;
   byPrompt: Array<{ promptId: string; requests: number; failed: number; tokens: number; avgLatencyMs: number | null }>;
   byError: Array<{ errorCode: string; count: number }>;

@@ -13,7 +13,7 @@ export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | '
 // Where an AI request was started and where its result is shown: on the text itself or in the Assistant panel.
 export type Surface = 'inline' | 'panel';
 
-export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean };
+export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean; suggested_title?: string };
 export type Preview = {
   id: string; output: PreviewOutput; expiresAt: string; source: string; stamp: number; anchor?: { from: number; to: number };
   settings: Settings; scope: Scope; revision: number; inlineAction?: InlineAction; surface: Surface; label?: string;

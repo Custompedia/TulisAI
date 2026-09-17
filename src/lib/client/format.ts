@@ -10,3 +10,6 @@ export const dateTime = (value: string | number | Date, locale: 'id' | 'en') =>
   new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 
 export const numberFormat = (value: number, locale: 'id' | 'en') => new Intl.NumberFormat(locale).format(value);
+// Sub-cent AI costs need extra decimals to stay readable.
+export const usdFormat = (value: number, locale: 'id' | 'en') =>
+  new Intl.NumberFormat(locale, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: value >= 1 ? 2 : value >= 0.01 ? 4 : 6 }).format(value);
