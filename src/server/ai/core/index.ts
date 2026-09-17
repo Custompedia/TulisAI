@@ -3,7 +3,7 @@ import { changePercentage } from "@/lib/editor/metrics";
 import { EXTRA_LIMIT, FOCUS_LIMIT, PRESERVATION_CEILING, SAMPLE_LIMIT } from "@/lib/writing/settings";
 import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
 import { responseSchemas, runtimeSchemas, titledResponseSchemas } from "./schemas";
-import { mergeWarnings as mergeWarningList, paragraphsPreserved, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
+import { mergeWarnings as mergeWarningList, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
 
 // Strict structured outputs reject string length keywords; lengths are clamped before zod parsing instead.
@@ -31,12 +31,12 @@ export const ENUM_MAP = {
   intent: { alternatives: "alternatif", paraphrase: "alternatif", shorter: "lebih singkat", clearer: "lebih jelas", formal: "lebih formal", natural: "lebih natural" },
   simplify_for: { anak_sekolah: "anak sekolah" },
   request_audience: { lecturer: "dosen", professional: "profesional", client: "klien", general_public: "umum" },
-  format: { paragraph: "paragraf", bullets: "poin", numbered_list: "bernomor", table: "tabel", short_summary: "ringkasan", summary: "ringkasan" },
+  format: { paragraph: "paragraf", bullets: "poin", numbered_list: "bernomor", table: "tabel", short_summary: "ringkasan", summary: "ringkasan", email: "email" },
   length: { shorter: "lebih singkat", same: "sama", more_detailed: "lebih detail" },
   mode: { standard: "standar", academic: "akademik", humanize: "humanize", professional: "profesional", creative: "kreatif", simplify: "sederhanakan" },
 } satisfies Record<string, Table>;
 
-const FORMAT_LINE: Table = { poin: "bullet points where the content is genuinely enumerable; keep continuous argument as prose", bernomor: "a numbered list, only where the content has a real sequence", tabel: "a table whose columns come from distinctions already present in the text", ringkasan: "a summary that keeps every claim, at roughly 40% of the input length" };
+const FORMAT_LINE: Table = { email: "an email in this order, each part on its own line: a greeting line addressed to the recipient named in <input>, or a neutral greeting when <input> names nobody; one opening sentence stating why you are writing; the body in short paragraphs, one topic each; one closing sentence built only from a request or next step already in <input>; a sign-off line followed by the sender name from <input>, or a [Nama] placeholder when <input> has none. Keep a greeting or sign-off <input> already has instead of adding a second one. The greeting line, the sign-off line, and that placeholder are the only details that may be added", poin: "bullet points where the content is genuinely enumerable; keep continuous argument as prose", bernomor: "a numbered list, only where the content has a real sequence", tabel: "a table whose columns come from distinctions already present in the text", ringkasan: "a summary that keeps every claim, at roughly 40% of the input length" };
 const LENGTH_LINE: Table = { "lebih singkat": "about 60-75% of the input length, with no claim dropped", sama: "within 10% of the input length", "lebih detail": "about 130-150% of the input length, expanding only what is already present" };
 const AUDIENCE_LINE: Table = { dosen: "a thesis supervisor or journal reviewer", profesional: "a professional colleague", klien: "a client who is not a specialist", umum: "a general reader" };
 const FOCUS_LABEL: Table = { clarity: "clarity", naturalness: "naturalness", formality: "formality", persuasiveness: "persuasiveness", remove_repetition: "removing repetition" };
@@ -195,10 +195,9 @@ export function requestOf(id: PromptId, runtime: RuntimeInput): { format?: strin
 
 const REWRITES = new Set<PromptId>(["P01_STANDARD_REWRITE", "P02_ACADEMIC", "P03_HUMANIZER", "P04_PROFESSIONAL", "P05_CREATIVE", "P06_SIMPLIFY", "P08_CUSTOM_TRANSFORM"]);
 // Hard structural checks a protected-content repair cannot fix.
-export function structuralErrors(id: PromptId, original: string, output: string, runtime: RuntimeInput): string[] {
+export function structuralErrors(id: PromptId, original: string, output: string): string[] {
   if (!REWRITES.has(id)) return [];
   const errors: string[] = [];
-  if (!paragraphsPreserved(original, output, requestOf(id, runtime)?.format)) errors.push("paragraph count changed");
   if (id === "P06_SIMPLIFY" && !simplifyLengthKept(original, output)) errors.push("simplified output is shorter than 85% of the input");
   return errors;
 }
@@ -249,7 +248,7 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   const check = validateProtectedContent(original, text, protectedTerms, protectedCitations, true, id === "P04_PROFESSIONAL");
   if (!check.valid) throw new Error(check.errors.join("; "));
   if (parsed.no_change_needed === true && changePercentage(original, text) > 2) throw new Error("no_change_needed was set but the text changed");
-  const structure = structuralErrors(id, original, text, runtime);
+  const structure = structuralErrors(id, original, text);
   if (structure.length) throw new Error(structure.join("; "));
   return echoWarning ? { ...parsed, warnings: mergeWarningList(parsed.warnings, [echoWarning]) } : parsed;
 }

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { ArrowLeft, ChevronDown, RefreshCw, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { Logo } from './Logo';
-import { raisedBlack } from './Button';
+import { pressGreen, raisedGreen } from './Button';
 import { Spinner } from './Spinner';
 
 export type StatusKind = 'error' | 'not-found' | 'offline';
@@ -41,7 +41,7 @@ export function StatusScreen({ kind = 'error', title, description, primary, seco
   const button = (action: Action, main: boolean) => {
     const Icon = action.icon;
     const className = main
-      ? `inline-flex h-10 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-transform hover:-translate-y-px disabled:opacity-60 ${raisedBlack}`
+      ? `inline-flex h-10 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition-colors disabled:opacity-60 ${raisedGreen} ${pressGreen}`
       : 'inline-flex h-10 items-center justify-center gap-2 rounded-full border border-line-strong bg-white px-5 text-sm font-semibold text-ink-800 transition-colors hover:border-ink-300 hover:text-ink-950';
     const content = <>{main && running ? <Spinner size={15} /> : Icon && <Icon size={16} aria-hidden="true" />}{action.label}</>;
     return action.href ? <Link href={action.href} className={className}>{content}</Link> : <button type="button" onClick={() => void run(action)} disabled={running} className={className}>{content}</button>;

@@ -28,7 +28,7 @@ export function Pagination({ info, disabled, onPage, className = '' }: { info: P
           <button type="button" aria-label={t('Halaman sebelumnya', 'Previous page')} disabled={disabled || info.page <= 1} onClick={() => onPage(info.page - 1)} className={`${button} text-ink-600 hover:bg-paper-deep`}><ChevronLeft size={16} aria-hidden="true" /></button>
           {windowOf(info.page, info.pages).map((value, index) => value === null
             ? <span key={`gap-${index}`} aria-hidden="true" className="px-1 text-ink-400">…</span>
-            : <button key={value} type="button" aria-current={value === info.page ? 'page' : undefined} disabled={disabled} onClick={() => onPage(value)} className={`${button} ${value === info.page ? 'bg-ink-900 text-white' : 'text-ink-700 hover:bg-paper-deep'}`}>{value}</button>)}
+            : <button key={value} type="button" aria-current={value === info.page ? 'page' : undefined} disabled={disabled} onClick={() => onPage(value)} className={`${button} ${value === info.page ? 'bg-brand-800 text-white' : 'text-ink-700 hover:bg-paper-deep'}`}>{value}</button>)}
           <button type="button" aria-label={t('Halaman berikutnya', 'Next page')} disabled={disabled || info.page >= info.pages} onClick={() => onPage(info.page + 1)} className={`${button} text-ink-600 hover:bg-paper-deep`}><ChevronRight size={16} aria-hidden="true" /></button>
         </div>
       )}

@@ -40,7 +40,6 @@ export function CreateUserDialog({ summary, onClose, onCreated }: { summary: Adm
         {error && <Alert tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Alert>}
         <div className="grid gap-4 sm:grid-cols-2">
           <div><FieldLabel htmlFor="new-name">{t('Nama', 'Name')}</FieldLabel><input id="new-name" className={inputClass} value={form.name} maxLength={100} onChange={(event) => set('name', event.target.value)} autoFocus /></div>
-          <div><FieldLabel htmlFor="new-username" hint={t('huruf kecil, angka, titik, underscore', 'lowercase, digits, period, underscore')}>Username</FieldLabel><input id="new-username" className={inputClass} value={form.username} maxLength={30} onChange={(event) => set('username', event.target.value.toLowerCase())} aria-invalid={form.username.length > 0 && !usernameOk} /></div>
           <div><FieldLabel htmlFor="new-username">Username</FieldLabel><input id="new-username" className={inputClass} value={form.username} maxLength={30} onChange={(event) => set('username', event.target.value.toLowerCase())} aria-invalid={form.username.length > 0 && !usernameOk} /></div>
         </div>
         <div><FieldLabel htmlFor="new-email">Email</FieldLabel><input id="new-email" type="email" className={inputClass} value={form.email} maxLength={200} onChange={(event) => set('email', event.target.value)} /></div>

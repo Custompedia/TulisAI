@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Copy, MoreHorizontal, PencilLine, Plus, RotateCw, Trash2 } from 'lucide-react';
+import { Copy, MoreHorizontal, PencilLine, Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText } from '@/lib/client/api';
 import { removeStyle, useWritingStyles } from '@/lib/client/styles-store';
@@ -8,14 +8,14 @@ import { defaults } from '@/lib/writing/settings';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { useSessionGuard } from '@/components/app/AppShell';
 import { Alert } from '@/components/ui/Alert';
-import { Button, IconButton } from '@/components/ui/Button';
+import { Button, IconButton, pillButton } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { Toast } from '@/components/ui/Toast';
 import { modeLabel, modeTone, requestSummary, toneClass } from '@/components/writing/modes';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { StyleMark } from '@/components/writing/StyleMark';
-import { copyName, styleDraft, type StyleDraft } from '@/components/writing/style-form';
+import { copyName, nameTaken, styleDraft, styleTemplates, type StyleDraft } from '@/components/writing/style-form';
 
 export function StylesCard() {
   const { t, locale } = useLocale();
@@ -32,6 +32,11 @@ export function StylesCard() {
   const duplicate = (style: WritingStyle) => {
     if (busy || full) return;
     setDialog({ style: null, initial: { ...styleDraft(style.settings, style), name: copyName(style.name, styles) } });
+  };
+
+  const openTemplate = (template: StyleDraft) => {
+    if (busy || full) return;
+    setDialog({ style: null, initial: { ...template, name: nameTaken(template.name, styles) ? copyName(template.name, styles) : template.name } });
   };
 
   async function remove() {
@@ -93,6 +98,12 @@ export function StylesCard() {
               );
             })}
           </ul>
+        )}
+        {!loading && !error && !full && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <p className="text-[13px] text-ink-500">{t('Mulai dari template:', 'Start from a template:')}</p>
+            {styleTemplates(t).map((template) => <button key={template.name} type="button" disabled={busy !== ''} onClick={() => openTemplate(template)} className={pillButton}><Sparkles size={13} aria-hidden="true" className="text-brand-700" />{template.name}</button>)}
+          </div>
         )}
       </div>
 

@@ -38,7 +38,7 @@ export const focusValues = ["clarity", "naturalness", "formality", "persuasivene
 const language = z.enum(["id", "en"]);
 const strings = z.array(z.string()).default([]);
 const request = z.object({
-  format: z.enum(["paragraf", "poin", "bernomor", "tabel", "ringkasan"]).default("paragraf"),
+  format: z.enum(["paragraf", "poin", "bernomor", "tabel", "ringkasan", "email"]).default("paragraf"),
   length: z.enum(["lebih singkat", "sama", "lebih detail"]).optional(),
   audience: z.enum(["dosen", "profesional", "klien", "umum"]).optional(),
   focus: z.array(z.enum(focusValues)).max(3).default([]),

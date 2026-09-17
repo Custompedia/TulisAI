@@ -45,8 +45,8 @@
 .remember { display: inline-flex; align-self: flex-start; align-items: center; gap: 8px; min-height: 20px; font-size: 12px; color: #656c5b; cursor: pointer; }
 .remember input { width: 15px; height: 15px; accent-color: #3c4733; }
 .submit, .google { width: 100%; min-height: 44px; display: flex; justify-content: center; align-items: center; gap: 10px; border-radius: 8px; font-size: 13px; font-weight: 500; }
-.submit { color: white; border: 1px solid #252525; background: var(--auth-raised); box-shadow: var(--auth-shadow); transition: transform 140ms; }
-.submit:hover:not(:disabled) { transform: translateY(-1px); }
+.submit { color: white; border: 1px solid transparent; background: #425b34; transition: background-color 140ms, transform 140ms; }
+.submit:hover:not(:disabled) { background: #34472a; }
 .submit:active:not(:disabled) { transform: translateY(1px); }
 .submit:disabled, .google:disabled { cursor: wait; opacity: .6; }
 .divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: #92968a; font-size: 11px; }

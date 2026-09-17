@@ -17,7 +17,8 @@ export const sentences = (text: string): string[] => {
 // One paragraph per non-empty line, matching documentText and plainTextDocument.
 export const paragraphCount = (text: string): number => text.split('\n').filter((line) => line.trim()).length;
 
-export const LIST_FORMATS = new Set(['poin', 'bernomor', 'tabel', 'ringkasan']);
+// Formats whose own shape decides the paragraph count, so the source count is not the rule.
+export const LIST_FORMATS = new Set(['poin', 'bernomor', 'tabel', 'ringkasan', 'email']);
 export const paragraphsPreserved = (source: string, output: string, format?: string) => (format && LIST_FORMATS.has(format)) || paragraphCount(source) === paragraphCount(output);
 
 export const SIMPLIFY_MIN_RATIO = 0.85;
@@ -28,6 +29,8 @@ export const LENGTH_BANDS: Record<string, Band> = { "lebih singkat": { min: 0.5,
 export const LENGTH_MIN_WORDS = 10;
 export function lengthBand(promptId: string, request: { format?: string; length?: string } | undefined): Band | null {
   if (request?.format === 'ringkasan') return LENGTH_BANDS.ringkasan!;
+  // An email adds a greeting and a sign-off, so its length is not comparable to the source.
+  if (request?.format === 'email') return null;
   if (request?.length && LENGTH_BANDS[request.length]) return LENGTH_BANDS[request.length]!;
   return promptId === 'P01_STANDARD_REWRITE' || promptId === 'P08_CUSTOM_TRANSFORM' ? LENGTH_BANDS.default! : null;
 }
@@ -98,6 +101,7 @@ const say = (language: Language, id: string, en: string) => (language === 'en' ?
 export function softWarnings(promptId: string, source: string, output: string, runtime: { language?: unknown; strength?: unknown; request?: { format?: string; length?: string } }): string[] {
   const language: Language = runtime.language === 'en' ? 'en' : 'id'; const warnings: string[] = [];
   if (promptId === 'P01_STANDARD_REWRITE' && runtime.strength === 'light' && sentences(source).length !== sentences(output).length) warnings.push(say(language, 'Jumlah kalimat berubah padahal kekuatan Ringan.', 'The sentence count changed at Light strength.'));
+  if (!paragraphsPreserved(source, output, runtime.request?.format)) warnings.push(say(language, 'Jumlah paragraf hasilnya berbeda dari teks asli.', 'The result has a different number of paragraphs than the original.'));
   const band = lengthBand(promptId, runtime.request);
   if (band && !withinBand(source, output, band)) warnings.push(say(language, 'Panjang hasil di luar rentang yang diminta.', 'The result length is outside the requested range.'));
   if (promptId === 'P03_HUMANIZER' && !varianceHolds(source, output)) warnings.push(say(language, 'Panjang kalimat jadi lebih seragam dari teks asli.', 'Sentence lengths became more uniform than the original.'));

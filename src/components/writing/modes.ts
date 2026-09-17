@@ -103,8 +103,8 @@ export const formatOptions = (t: T): Option[] => [
   { value: 'paragraph', label: t('Paragraf', 'Paragraph'), hint: t('Bawaan, bentuk paragraf tetap', 'Default, paragraphs stay as they are') },
   { value: 'bullets', label: t('Poin-poin', 'Bullet points'), hint: t('Poin jika isinya memang daftar, argumen tetap prosa', 'Bullets where content is a list; argument stays prose') },
   { value: 'numbered_list', label: t('Daftar bernomor', 'Numbered list'), hint: t('Bernomor hanya jika ada urutan nyata', 'Numbered only where there is a real sequence') },
-  { value: 'table', label: t('Tabel', 'Table'), hint: t('Kolom dari pembeda yang sudah ada di teks', 'Columns from distinctions already in the text') },
   { value: 'short_summary', label: t('Ringkasan', 'Summary'), hint: t('Sekitar 40% panjang, semua klaim tetap', 'About 40% of the length, every claim kept') },
+  { value: 'email', label: t('Email', 'Email'), hint: t('Salam, isi, penutup, dan tanda tangan', 'Greeting, body, closing, and sign-off') },
 ];
 export const lengthOptions = (t: T): Option[] => [
   { value: 'shorter', label: t('Lebih singkat', 'Shorter'), hint: t('Sekitar 60–75% panjang, tanpa klaim hilang', 'About 60–75% of the length, no claim dropped') },

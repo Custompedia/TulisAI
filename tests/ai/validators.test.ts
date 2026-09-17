@@ -81,14 +81,15 @@ describe("soft warnings", () => {
 });
 
 describe("hard validators in validateGeneration", () => {
-  it("rejects paragraph count changes except for list and summary formats", () => {
+  it("warns about paragraph count changes instead of rejecting them", () => {
     const source = "Paragraf pertama.\nParagraf kedua.";
-    expect(() => validateGeneration("P02_ACADEMIC", source, transform("Paragraf pertama. Paragraf kedua."), {})).toThrow(/paragraph count/);
+    expect(validateGeneration("P02_ACADEMIC", source, transform("Paragraf pertama. Paragraf kedua."), {}).transformed_text).toContain("pertama");
+    expect(softWarnings("P02_ACADEMIC", source, "Paragraf pertama. Paragraf kedua.", { language: "id" })).toContain("Jumlah paragraf hasilnya berbeda dari teks asli.");
+    expect(softWarnings("P02_ACADEMIC", source, "Satu.\nDua.", { language: "id" })).not.toContain("Jumlah paragraf hasilnya berbeda dari teks asli.");
     expect(validateGeneration("P02_ACADEMIC", source, transform("Paragraf awal.\n\nParagraf berikutnya."), {}).transformed_text).toContain("awal");
     expect(validateGeneration("P01_STANDARD_REWRITE", source, transform("- Paragraf pertama\n- Paragraf kedua\n- Tambahan"), { custom_request: { format: "bullets" } }).transformed_text).toContain("Tambahan");
     expect(validateGeneration("P02_ACADEMIC", source, transform("Ringkas."), { request: { format: "ringkasan" } }).transformed_text).toBe("Ringkas.");
-    expect(() => validateGeneration("P08_CUSTOM_TRANSFORM", source, transform("Satu paragraf."), { format: "paragraph" })).toThrow(/paragraph count/);
-    expect(structuralErrors("P07_INLINE_ALTERNATIVES", source, "x", {})).toEqual([]);
+    expect(structuralErrors("P07_INLINE_ALTERNATIVES", source, "x")).toEqual([]);
   });
   it("rejects P06 output below 85% of the input words", () => {
     const source = words(20, "syarat");

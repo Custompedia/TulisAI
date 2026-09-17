@@ -887,12 +887,12 @@ export default function Workspace() {
         </ConfirmDialog>
       )}
       {leaving && (
-        <Modal size="sm" title={t('Perubahan belum tersimpan', 'Unsaved changes')} description={t('Kamu punya perubahan yang belum tersimpan di notebook ini.', 'You have unsaved changes in this notebook.')} busy={leaving.saving} onClose={() => setLeaving(null)}
+        <Modal title={t('Perubahan belum tersimpan', 'Unsaved changes')} description={t('Kamu punya perubahan yang belum tersimpan di notebook ini.', 'You have unsaved changes in this notebook.')} busy={leaving.saving} onClose={() => setLeaving(null)}
           footer={<>
-            <button type="button" disabled={leaving.saving} onClick={() => void discardAndLeave()} className="mr-auto inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50"><Trash2 size={16} aria-hidden="true" />{t('Buang perubahan', 'Discard changes')}</button>
-            <Button disabled={leaving.saving} onClick={() => setLeaving(null)}>{t('Batal', 'Cancel')}</Button>
-            <button type="button" disabled={leaving.saving} aria-busy={leaving.saving || undefined} onClick={() => void saveAndLeave()} className={`inline-flex h-10 items-center gap-2 rounded-full px-5 text-sm font-semibold disabled:opacity-80 ${raisedGreen} ${pressGreen}`}>
-              {leaving.saving ? <Spinner size={16} /> : <Save size={16} aria-hidden="true" />}{t('Simpan & keluar', 'Save & leave')}
+            <button type="button" disabled={leaving.saving} onClick={() => void discardAndLeave()} className="mr-auto inline-flex h-10 items-center gap-2 rounded-lg px-3 text-[13px] font-semibold text-red-700 transition-colors hover:bg-red-50 disabled:opacity-50"><Trash2 size={15} aria-hidden="true" />{t('Buang perubahan', 'Discard changes')}</button>
+            <button type="button" disabled={leaving.saving} onClick={() => setLeaving(null)} className="inline-flex h-10 items-center rounded-lg border border-line bg-white px-4 text-[13px] font-semibold text-ink-800 transition-colors hover:border-line-strong hover:bg-paper disabled:opacity-50">{t('Batal', 'Cancel')}</button>
+            <button type="button" disabled={leaving.saving} aria-busy={leaving.saving || undefined} onClick={() => void saveAndLeave()} className={`inline-flex h-10 items-center gap-2 rounded-lg px-4 text-[13px] font-semibold disabled:opacity-80 ${raisedGreen} ${pressGreen}`}>
+              {leaving.saving ? <Spinner size={15} /> : <Save size={15} aria-hidden="true" />}{t('Simpan & keluar', 'Save & leave')}
             </button>
           </>} />
       )}

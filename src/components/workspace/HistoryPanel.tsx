@@ -44,7 +44,7 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
         <div role="radiogroup" aria-label={t('Saring riwayat', 'Filter history')} className="flex gap-1">
           {chips.map(([value, label]) => (
             <button key={value} type="button" role="radio" aria-checked={filter === value} onClick={() => setFilter(value)}
-              className={`h-7 rounded-md px-2.5 text-xs font-semibold transition-colors ${filter === value ? 'bg-ink-900 text-white' : 'border border-line bg-white text-ink-600 hover:border-line-strong hover:text-ink-900'}`}>{label}</button>
+              className={`h-7 rounded-md px-2.5 text-xs font-semibold transition-colors ${filter === value ? 'bg-brand-800 text-white' : 'border border-line bg-white text-ink-600 hover:border-line-strong hover:text-ink-900'}`}>{label}</button>
           ))}
         </div>
         <Button size="sm" variant="ghost" icon={Save} className="ml-auto" disabled={!canSave} onClick={onSave}>{t('Simpan Versi', 'Save Version')}</Button>

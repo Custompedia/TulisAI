@@ -1,5 +1,5 @@
 'use client';
-import { ArrowRight, BookmarkPlus, Check, ChevronRight, Languages, PencilLine, Plus, RefreshCw, Sparkles, TextSelect, X } from 'lucide-react';
+import { ArrowRight, BookmarkPlus, Check, ChevronRight, Languages, PencilLine, Plus, RefreshCw, Sparkles, TextSelect, TriangleAlert, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
@@ -123,6 +123,11 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   const overLimit = scopeChars > limit;
   const needsSelection = scope === 'selection' && !hasSelection;
   const disabled = busy || !canGenerate || overLimit;
+  const nameOf = (value: 'id' | 'en') => (value === 'id' ? t('Indonesia', 'Indonesian') : 'English');
+  // The writing language is a real instruction: picking the other language makes the run a translation.
+  const mismatch = detected !== null && settings.language !== 'auto' && settings.language !== detected;
+  const detectedName = nameOf(detected ?? 'id');
+  const chosenName = settings.language === 'auto' ? '' : nameOf(settings.language);
   const scopeLabel = { selection: t('teks terpilih', 'selected text'), paragraph: t('paragraf aktif', 'current paragraph'), document: t('seluruh dokumen', 'entire document') }[scope];
 
   return (
@@ -244,10 +249,21 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               : `${scopeLabel} · ${numberFormat(scopeWords, locale)} ${t('kata', 'words')}`}
           </span>
         </p>
-        <button type="button" onClick={onGenerate} disabled={disabled} title={generateLabel(settings.mode, t)}
-          className={`inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold transition-colors ${disabled ? 'bg-paper-deep text-ink-300' : `${raisedGreen} ${pressGreen}`}`}>
-          {generating ? <><Spinner size={14} />{t('Memproses…', 'Working…')}</> : <>{generateLabel(settings.mode, t)}<ArrowRight size={15} aria-hidden="true" /></>}
-        </button>
+        {mismatch && (
+          <div role="alert" className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
+            <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1">{t(`Tulisan ini ${detectedName}, tapi bahasa hasil diatur ${chosenName}. Hasilnya akan diterjemahkan.`, `This text is in ${detectedName}, but the output language is set to ${chosenName}. The result will be translated.`)}</span>
+            <button type="button" onClick={() => onSettings({ ...settings, language: detected ?? 'auto' })} disabled={busy} className={`${pillButton} shrink-0`}>{t(`Tulis dalam ${detectedName}`, `Write in ${detectedName}`)}</button>
+          </div>
+        )}
+        {previewId && !generating ? (
+          <p className="text-center text-xs leading-relaxed text-ink-500">{t('Hasil ada di atas. Terapkan atau buang dulu sebelum membuat yang baru.', 'The result is above. Apply or discard it before making a new one.')}</p>
+        ) : (
+          <button type="button" onClick={onGenerate} disabled={disabled} title={generateLabel(settings.mode, t)}
+            className={`inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold transition-colors ${disabled ? 'bg-paper-deep text-ink-300' : `${raisedGreen} ${pressGreen}`}`}>
+            {generating ? <><Spinner size={14} />{t('Memproses…', 'Working…')}</> : <>{generateLabel(settings.mode, t)}<ArrowRight size={15} aria-hidden="true" /></>}
+          </button>
+        )}
       </footer>
     </div>
   );

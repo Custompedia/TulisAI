@@ -45,6 +45,8 @@ export function documentText(document:unknown):string {return mapping(parsed(doc
 function inline(text:string):EditorNode[] {
   return text.split(/(\n)/u).flatMap((part):EditorNode[]=>part==='\n'?[{type:'hardBreak'}]:part?[{type:'text',text:part}]:[]);
 }
+// AI output separates parts with a blank line; the editor spaces paragraphs itself, so the blank lines would double the gap.
+export const collapseBlankLines=(text:string):string=>text.replace(/\n{2,}/gu,'\n');
 export function plainTextDocument(text:string):EditorDocument {
   return {type:'doc',content:text.split('\n').map(line=>({type:'paragraph',content:inline(line)}))};
 }

@@ -53,6 +53,14 @@ export function copyName(name: string, styles: WritingStyle[]): string {
   return base.slice(0, STYLE_NAME_LIMIT);
 }
 
+// Ready-made starting points; each opens the form prefilled so the user reviews before saving.
+export const styleTemplates = (t: T): StyleDraft[] => [
+  {
+    name: t('Email profesional', 'Professional email'), description: t('Ubah draf kasar jadi email lengkap dengan salam dan penutup', 'Turn a rough draft into a full email with greeting and sign-off'), color: 'blue', icon: 'icon:Mail',
+    settings: { ...defaults, mode: 'professional', recipient: 'umum', format: 'email', customized: true, extra: [t('Pakai sapaan "Anda"', 'Address the reader as "you"'), t('Pakai kalimat pendek', 'Use short sentences'), t('Kalau nama penerima tidak ada di teks, pakai sapaan netral', 'Use a neutral greeting when the text names no recipient')].join('\n') },
+  },
+];
+
 // Affirmative phrasing: models follow "do X" more reliably than "do not Y". Rules the base prompt already guarantees are not offered.
 export const instructionChips = (t: T): string[] => [
   t('Pakai kalimat pendek', 'Use short sentences'),

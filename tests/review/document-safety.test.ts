@@ -167,8 +167,11 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     const preview=await generatePreview('owner-a','soft',{...input(doc,source),runtime:runtimeControls({...defaults,mode:'standard',strength:'light'},'id')});
     expect(preview.output.warnings).toEqual(['Catatan model.','Jumlah kalimat berubah padahal kekuatan Ringan.']);expect(transport).toHaveBeenCalledTimes(1);
     const split=vi.fn(async()=>response({transformed_text:'Tim kami menyelesaikan migrasi sistem pada bulan lalu.\n\nSemua layanan berjalan normal setelah pengujian selesai dilakukan.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',split);
-    await expect(generatePreview('owner-a','structure',{...input(doc,source),promptId:'P02_ACADEMIC',runtime:runtimeControls({...defaults,mode:'academic'},'id')})).rejects.toMatchObject({code:'AI_OUTPUT_REJECTED',status:422});
+    const structure=await generatePreview('owner-a','structure',{...input(doc,source),promptId:'P02_ACADEMIC',runtime:runtimeControls({...defaults,mode:'academic'},'id')});
+    expect(structure.output.warnings).toContain('Jumlah paragraf hasilnya berbeda dari teks asli.');
     expect(split).toHaveBeenCalledTimes(1);
+    const cut=vi.fn(async()=>response({transformed_text:'Migrasi selesai.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',cut);
+    await expect(generatePreview('owner-a','structure-hard',{...input(doc,source),promptId:'P06_SIMPLIFY',runtime:runtimeControls({...defaults,mode:'simplify'},'id')})).rejects.toMatchObject({code:'AI_STRUCTURE_REJECTED',status:422});
   });
   it('rejects a dishonest no_change_needed flag with 422',async()=>{
     enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan yang sepenuhnya berbeda.',change_categories:[],warnings:[],no_change_needed:true})));

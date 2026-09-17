@@ -5,7 +5,7 @@ import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText } from '@/lib/client/api';
 import { createStyle, removeStyle, saveStyle } from '@/lib/client/styles-store';
 import { customConflict, EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT, type Settings } from '@/lib/writing/settings';
-import { STYLE_DESCRIPTION_LIMIT, STYLE_LIMIT, STYLE_NAME_LIMIT, type WritingStyle } from '@/lib/writing/styles';
+import { STYLE_LIMIT, STYLE_NAME_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { useSessionGuard } from '@/components/app/AppShell';
 import { AppearanceFields } from '@/components/app/AppearancePicker';
 import { Alert } from '@/components/ui/Alert';
@@ -25,7 +25,7 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
   const id = useId();
   const [draft, setDraft] = useState<StyleDraft>(() => initial ?? styleDraft(preset, style));
   // Opens straight away when editing a skill that already carries non-default details.
-  const [advanced, setAdvanced] = useState(() => hasAdvancedValues((initial ?? styleDraft(preset, style)).settings) && (!!style || !!initial));
+  const [advanced, setAdvanced] = useState(() => { const base = initial ?? styleDraft(preset, style); return (!!style || !!initial) && (hasAdvancedValues(base.settings) || !!base.description.trim() || !!base.settings.sample.trim()); });
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
@@ -101,13 +101,6 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
           {nameProblem
             ? <p id={`${id}-name-error`} className="mt-1.5 text-xs font-medium text-red-700">{nameProblem}</p>
             : <p id={`${id}-name-hint`} className="mt-1.5 text-xs text-ink-500">{t('Nama yang kamu kenali saat memilih skill, bukan instruksi untuk AI.', 'A name you will recognise when picking the skill, not an instruction for the AI.')}</p>}
-          <div className="mt-3">
-            <FieldLabel htmlFor={`${id}-description`} hint={`${draft.description.length}/${STYLE_DESCRIPTION_LIMIT}`}>{t('Kapan dipakai', 'When to use it')}</FieldLabel>
-            <input id={`${id}-description`} className={inputClass} value={draft.description} maxLength={STYLE_DESCRIPTION_LIMIT} disabled={busy} autoComplete="off"
-              placeholder={t('Mis. bab tinjauan pustaka skripsi', 'E.g. the literature review chapter of a thesis')}
-              onChange={(event) => setDraft({ ...draft, description: event.target.value.slice(0, STYLE_DESCRIPTION_LIMIT) })} />
-            <p className="mt-1.5 text-xs text-ink-500">{t('Catatan untukmu sendiri: tampil di daftar skill dan tidak pernah dikirim ke AI.', 'A note for yourself: it shows in your skill list and is never sent to the AI.')}</p>
-          </div>
           <div className="mt-3 overflow-hidden rounded-xl border border-line">
             <AppearanceFields color={draft.color} icon={draft.icon} mode={draft.settings.mode} gridHeight="max-h-40"
               onSelect={(next) => setDraft({ ...draft, color: next.color, icon: next.icon })}
@@ -128,7 +121,7 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
             onChange={(event) => setSettings({ ...draft.settings, extra: event.target.value.slice(0, EXTRA_LIMIT) })}
             placeholder={t('Mis. jangan ubah nama produk', 'E.g. don’t change product names')}
             className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
-          <p className="mt-1.5 text-xs text-ink-500">{t('Angka, sitasi, istilah terkunci, dan fakta sudah otomatis dijaga; tidak perlu ditulis di sini.', 'Numbers, citations, locked terms, and facts are protected automatically; no need to write them here.')}</p>
+          <p className="mt-1.5 text-xs text-ink-500">{t('Tulis 3–5 perintah singkat, satu per baris. Angka, sitasi, istilah terkunci, dan fakta sudah dijaga otomatis.', 'Write 3–5 short instructions, one per line. Numbers, citations, locked terms, and facts are protected automatically.')}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {instructionChips(t).map((chip) => {
               const used = draft.settings.extra.toLowerCase().includes(chip.toLowerCase());
@@ -143,20 +136,10 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
           </div>
         </div>
 
-        <div>
-          <FieldLabel htmlFor={`${id}-sample`} hint={`${draft.settings.sample.length}/${SAMPLE_LIMIT}`}>{t('Contoh tulisan', 'Writing sample')}</FieldLabel>
-          <textarea id={`${id}-sample`} rows={4} maxLength={SAMPLE_LIMIT} disabled={busy} value={draft.settings.sample}
-            onChange={(event) => setSettings({ ...draft.settings, sample: event.target.value.slice(0, SAMPLE_LIMIT) })}
-            placeholder={t('Tempel satu atau dua paragraf tulisanmu sendiri…', 'Paste one or two paragraphs of your own writing…')}
-            className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
-          <p className={`mt-1.5 text-xs ${draft.settings.sample.trim() && sampleWords < SAMPLE_MIN_WORDS ? 'font-medium text-amber-700' : 'text-ink-500'}`}>{sampleHint}</p>
-          <p className="mt-1.5 text-xs leading-relaxed text-ink-500">{t('Dipakai sebagai contoh gaya saja: AI meniru cara menulisnya, bukan isinya. Dikirim ke AI hanya saat skill ini dipakai, jadi menambah sedikit biaya token.', 'Used as a style example only: the AI imitates how it is written, never its content. It is sent only when this skill is applied, so it adds a little token cost.')}</p>
-        </div>
-
         <div className="rounded-xl border border-line">
           <button type="button" onClick={() => setAdvanced(!advanced)} aria-expanded={detailsOpen} aria-controls={`${id}-advanced`}
             className="flex h-10 w-full items-center gap-2 rounded-xl px-3.5 text-left transition-colors hover:bg-paper">
-            <span className="flex-1 text-[13px] font-semibold text-ink-800">{t('Rincian lanjutan', 'Advanced details')}</span>
+            <span className="flex-1 text-[13px] font-semibold text-ink-800">{t('Pengaturan lanjutan', 'Advanced settings')}</span>
             {changed && <span className="rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-semibold text-brand-800">{t('Diubah', 'Custom')}</span>}
             <ChevronDown size={15} aria-hidden="true" className={`text-ink-400 transition-transform ${detailsOpen ? 'rotate-180' : ''}`} />
           </button>
@@ -171,6 +154,17 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
               {conflict === 'summary-detail' && (
                 <Alert tone="warning">{t('Format "Ringkasan" tidak bisa digabung dengan panjang "Lebih detail". Ubah salah satu di dua kolom di atas.', 'The "Summary" format cannot be combined with the "More detailed" length. Change one of the two fields above.')}</Alert>
               )}
+              <div className="border-t border-line pt-4">
+                <div>
+                  <FieldLabel htmlFor={`${id}-sample`} hint={`${draft.settings.sample.length}/${SAMPLE_LIMIT}`}>{t('Contoh tulisan', 'Writing sample')}</FieldLabel>
+                  <textarea id={`${id}-sample`} rows={4} maxLength={SAMPLE_LIMIT} disabled={busy} value={draft.settings.sample}
+                    onChange={(event) => setSettings({ ...draft.settings, sample: event.target.value.slice(0, SAMPLE_LIMIT) })}
+                    placeholder={t('Tempel satu atau dua paragraf tulisanmu sendiri…', 'Paste one or two paragraphs of your own writing…')}
+                    className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
+                  <p className={`mt-1.5 text-xs ${draft.settings.sample.trim() && sampleWords < SAMPLE_MIN_WORDS ? 'font-medium text-amber-700' : 'text-ink-500'}`}>{sampleHint}</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-ink-500">{t('Dipakai sebagai contoh gaya saja: AI meniru cara menulisnya, bukan isinya. Dikirim ke AI hanya saat skill ini dipakai, jadi menambah sedikit biaya token.', 'Used as a style example only: the AI imitates how it is written, never its content. It is sent only when this skill is applied, so it adds a little token cost.')}</p>
+                </div>
+                  </div>
             </div>
           ) : (
             <p className="border-t border-line px-3.5 py-2 text-xs leading-relaxed text-ink-500">{requestSummary(summary, t)}</p>

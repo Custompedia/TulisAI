@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { AI_SCOPE_LIMIT, asMode, customConflict, defaults, detectLanguage, EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, modeFromPrompt, normalizeSettings, promptFor, runtimeControls, SELECTION_LIMIT } from "../../src/lib/writing/settings";
 import { countSentences, repeatedWords, wordDelta } from "../../src/lib/editor/metrics";
+import { compileControlBlock, normalizeRuntime } from "../../src/server/ai/core";
+import { lengthBand, paragraphsPreserved } from "../../src/server/ai/core/validators";
 
 describe("writing settings", () => {
   it("blocks conflicting customize choices before any AI call", () => {
@@ -47,5 +49,20 @@ describe("local analytics", () => {
     expect(countSentences("")).toBe(0);
     expect(repeatedWords("sistem sistem sistem data data")).toEqual([{ word: "sistem", count: 3 }]);
     expect(wordDelta("satu dua tiga", "satu empat tiga lima")).toEqual({ added: 2, removed: 1 });
+  });
+});
+
+describe('email format', () => {
+  it('maps to the prompt enum and carries its own layout line', () => {
+    const runtime = normalizeRuntime('P04_PROFESSIONAL', { language: 'id', sourceText: 'halo', audience: 'klien', request: { format: 'email', length: 'same', focus: [], additional_instruction: '' } });
+    expect((runtime.request as { format: string }).format).toBe('email');
+    expect(compileControlBlock(runtime.request as never)).toContain('greeting line');
+  });
+  it('lets an email change the paragraph count and skips the length band', () => {
+    const source = 'tolong dicek invoice bulan lalu ya';
+    const email = 'Halo,\n\nSaya menanyakan invoice bulan lalu.\n\nTerima kasih.\n\nSalam,\n[Nama]';
+    expect(paragraphsPreserved(source, email, 'email')).toBe(true);
+    expect(paragraphsPreserved(source, email, 'paragraf')).toBe(false);
+    expect(lengthBand('P04_PROFESSIONAL', { format: 'email', length: 'sama' })).toBeNull();
   });
 });

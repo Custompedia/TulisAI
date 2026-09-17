@@ -6,6 +6,7 @@ import { listLocks } from '../documents/locks';
 import { createOpenRouterProvider, exceedsPreservation, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
+import {collapseBlankLines} from '@/lib/editor/document';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
 
@@ -78,23 +79,31 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   let controls: RuntimeInput;
   try { controls = normalizeRuntime(input.promptId, trusted) as RuntimeInput; } catch { throw new RequestError('INVALID_REQUEST', 'The selected AI controls are invalid.'); }
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
+  let mainUsageId = '';
   const call = async (promptId: PromptId, callKey: string, runtimeControls: RuntimeInput, repair=false, requiredTerms=trusted.protectedTerms) => {
     const usageId = await reserve(ownerId, callKey, promptId, input.source.text.length);
+    if (!repair && !mainUsageId) mainUsageId = usageId;
     const started = Date.now();
     const result = await provider.generate({promptId,runtime:runtimeControls,sourceText:input.source.text,requestId:usageId,protectedTerms:requiredTerms,protectedCitations:trusted.protectedCitations,...(repair?{repairAttempt:1}:{})});
     await completeUsage(usageId,result,started);
     if (!result.ok) throw new RequestError('AI_UNAVAILABLE', 'AI generation could not be completed safely. Your source is unchanged.', 502);
     return result.response;
   };
+  // The provider call succeeded, so the ledger says 'completed'; this records why the result was still refused.
+  const rejected = async (reason: string, error: RequestError) => {
+    if (mainUsageId) await runtime().DB.prepare("UPDATE usage_ledger SET error_code=? WHERE id=?").bind(`rejected:${reason}`.slice(0, 120), mainUsageId).run().catch(() => undefined);
+    return error;
+  };
   let output = await call(input.promptId,key,controls);
   // Taken before the schema-strict passes below drop it; an invalid or missing label just falls back to the local title.
   const suggestedTitle = wantsTitle ? sanitizeSuggestedTitle(output.suggested_title) : null;
   if (input.promptId === 'P07_INLINE_ALTERNATIVES') {
     try { output = validateGeneration(input.promptId,input.source.text,output,trusted); }
-    catch { throw new RequestError('AI_OUTPUT_REJECTED', 'No safe set of alternatives was returned. Your source is unchanged.', 422); }
+    catch (error) { throw await rejected(error instanceof Error ? error.message : 'p07', new RequestError('AI_OUTPUT_REJECTED', 'No safe set of alternatives was returned. Your source is unchanged.', 422)); }
   } else {
     output = validateAIResponse(input.promptId,output);
-    if (structuralErrors(input.promptId,input.source.text,outputText(output),controls).length) throw new RequestError('AI_OUTPUT_REJECTED', 'AI output changed the text structure. Your source is unchanged.', 422);
+    const structure = structuralErrors(input.promptId,input.source.text,outputText(output));
+    if (structure.length) throw await rejected(structure.join('; '), new RequestError('AI_STRUCTURE_REJECTED', 'AI output changed the text structure. Your source is unchanged.', 422));
     const placeholders = input.promptId === 'P04_PROFESSIONAL';
     const protection = validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders);
     if (!protection.valid) {
@@ -104,12 +113,14 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
       try {
         const checked = validateGeneration('P10_REPAIR',input.source.text,repaired,repairRuntime,1);
         output = {...output,transformed_text:checked.corrected_text};
-      } catch { throw new RequestError('AI_OUTPUT_REJECTED', 'AI output could not be repaired safely. Your source is unchanged.', 422); }
+      } catch (error) { throw await rejected(`repair: ${error instanceof Error ? error.message : 'failed'}`, new RequestError('AI_OUTPUT_REJECTED', 'AI output could not be repaired safely. Your source is unchanged.', 422)); }
     }
     try { output = validateGeneration(input.promptId,input.source.text,output,{...trusted,request:controls.request}); }
     catch (error) {
-      if (error instanceof Error && error.message.startsWith('style sample copied')) throw new RequestError('STYLE_SAMPLE_COPIED', 'The result copied the style sample. Your source is unchanged.', 422);
-      throw new RequestError('AI_OUTPUT_REJECTED', 'AI output did not pass safety checks. Your source is unchanged.', 422);
+      if (error instanceof Error && error.message.startsWith('style sample copied')) throw await rejected(error.message, new RequestError('STYLE_SAMPLE_COPIED', 'The result copied the style sample. Your source is unchanged.', 422));
+      const reason = error instanceof Error ? error.message : 'validation failed';
+      if (/paragraph count|shorter than/.test(reason)) throw await rejected(reason, new RequestError('AI_STRUCTURE_REJECTED', 'AI output changed the text structure. Your source is unchanged.', 422));
+      throw await rejected(reason, new RequestError('AI_OUTPUT_REJECTED', 'AI output did not pass safety checks. Your source is unchanged.', 422));
     }
     const soft = output.no_change_needed === true ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
     if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
@@ -138,7 +149,7 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
   const locks=await listLocks(ownerId,preview.document_id);
   const fresh: RuntimeInput={...controls,protectedTerms:locks.map(lock=>lock.term).filter(term=>preview.source_text.includes(term))};
   try {validateGeneration(preview.prompt_id,preview.source_text,output,fresh);} catch {throw new RequestError('AI_OUTPUT_REJECTED','This preview no longer meets protected-content requirements.',422);}
-  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,outputText(output,selectedAlternative),requestedFormat(preview.prompt_id,controls));
+  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,collapseBlankLines(outputText(output,selectedAlternative)),requestedFormat(preview.prompt_id,controls));
   return saveDocument(ownerId,preview.document_id,expectedRevision,{content},'ai_apply',null,{previewId,expectedLockIds:locks.map(lock=>lock.id),promptId:preview.prompt_id,scopeType:anchor?'selection':'document'});
 }
 export async function discardPreview(ownerId:string,previewId:string) {
