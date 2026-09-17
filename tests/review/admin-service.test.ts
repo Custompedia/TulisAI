@@ -91,6 +91,7 @@ describe('admin service: updates and guards', () => {
   it('records and lists audit entries globally and per user', async () => {
     addUser('admin-1', 'Admin', { role: 'admin' }); addUser('user-1', 'Budi');
     await audit('admin-1', 'user-1', 'user.role', { from: 'user', to: 'admin' });
+    await new Promise((resolve) => setTimeout(resolve, 3)); // distinct created_at so the newest-first order is deterministic
     await audit('admin-1', null, 'user.create', { email: 'x@example.test' });
     const all = await listAudit(); expect(all.items.map((item) => item.action)).toEqual(['user.create', 'user.role']); expect(all.pageInfo).toMatchObject({ total: 2, pages: 1 });
     expect(all.items[1]).toMatchObject({ actorName: 'Admin', targetName: 'Budi', details: { from: 'user', to: 'admin' } });

@@ -102,7 +102,10 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
       } catch { throw new RequestError('AI_OUTPUT_REJECTED', 'AI output could not be repaired safely. Your source is unchanged.', 422); }
     }
     try { output = validateGeneration(input.promptId,input.source.text,output,{...trusted,request:controls.request}); }
-    catch { throw new RequestError('AI_OUTPUT_REJECTED', 'AI output did not pass safety checks. Your source is unchanged.', 422); }
+    catch (error) {
+      if (error instanceof Error && error.message.startsWith('style sample copied')) throw new RequestError('STYLE_SAMPLE_COPIED', 'The result copied the style sample. Your source is unchanged.', 422);
+      throw new RequestError('AI_OUTPUT_REJECTED', 'AI output did not pass safety checks. Your source is unchanged.', 422);
+    }
     const soft = output.no_change_needed === true ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
     if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};

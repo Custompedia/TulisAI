@@ -71,6 +71,26 @@ export function sampleEcho(sample: string, source: string, output: string, span 
   return null;
 }
 
+// Every maximal run of output words that also appears in the sample (as SAMPLE_ECHO_WORDS-grams) and not in the author's input.
+export function sampleEchoRuns(sample: string, source: string, output: string, span = SAMPLE_ECHO_WORDS): string[] {
+  const sampleWords = words(sample); const outputWords = words(output);
+  if (sampleWords.length < span || outputWords.length < span) return [];
+  const fromSample = grams(sampleWords, span); const fromSource = grams(words(source), span);
+  const runs: string[] = []; let start = -1; let end = -1;
+  for (let index = 0; index + span <= outputWords.length; index++) {
+    const phrase = outputWords.slice(index, index + span).join(' ');
+    const hit = fromSample.has(phrase) && !fromSource.has(phrase);
+    if (hit && start === -1) start = index;
+    if (hit) end = index + span;
+    if (!hit && start !== -1 && index >= end) { runs.push(outputWords.slice(start, end).join(' ')); start = -1; end = -1; }
+  }
+  if (start !== -1) runs.push(outputWords.slice(start, end).join(' '));
+  return runs;
+}
+export const SAMPLE_ECHO_REJECT_WORDS = 12;
+// One short echo is a warning; two runs, or one run of SAMPLE_ECHO_REJECT_WORDS words, is a copy and rejects the output.
+export const sampleEchoSeverity = (runs: string[]): 'none' | 'warn' | 'reject' => runs.length === 0 ? 'none' : runs.length >= 2 || runs.some((run) => words(run).length >= SAMPLE_ECHO_REJECT_WORDS) ? 'reject' : 'warn';
+
 export const emDashCount = (text: string): number => (text.match(/\u2014/g) ?? []).length;
 type Language = 'id' | 'en';
 const say = (language: Language, id: string, en: string) => (language === 'en' ? en : id);

@@ -496,7 +496,7 @@ Follow <request> where it fits within the rules above; where it does not, the ru
 | | `klien` | `a client who is not a specialist` |
 | | `umum` | `a general reader` |
 | Emphasis | multi-select | joined into one line, capped at three |
-| Author note | free text | capped at 200 characters, `<` and `>` stripped |
+| Author note | free text | capped at 500 characters, `<` and `>` stripped |
 
 The Audience line is dropped server-side for P04 and P06, which carry their own `{{audience}}`; a second audience would be a contradictory instruction. P07 never receives a control block.
 

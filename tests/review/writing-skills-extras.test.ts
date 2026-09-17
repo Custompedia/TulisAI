@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildUserMessage, normalizeRuntime, sampleEcho, sanitizeSample, validateGeneration } from '@/server/ai/core';
+import { buildUserMessage, normalizeRuntime, sampleEcho, sampleEchoRuns, sampleEchoSeverity, sanitizeSample, validateGeneration } from '@/server/ai/core';
 import { SAMPLE_ECHO_WORDS } from '@/server/ai/core/validators';
 import { STYLE_REFERENCE_RULES } from '@/server/ai/core';
 import { defaults, normalizeSettings, runtimeControls, SAMPLE_LIMIT, type Settings } from '@/lib/writing/settings';
@@ -46,6 +46,9 @@ describe('review: "Contoh tulisan" is a style reference only', () => {
     expect(message).toContain(`<style_reference_rules>\n${STYLE_REFERENCE_RULES}\n</style_reference_rules>`);
     expect(message.indexOf('<style_reference>')).toBeLessThan(message.indexOf('<input>'));
     expect(buildUserMessage('P01_STANDARD_REWRITE', normalizeRuntime('P01_STANDARD_REWRITE', { sourceText: 'Teks asli.', language: 'id', strength: 'balanced' }))).not.toContain('style_reference');
+    const inline = normalizeRuntime('P07_INLINE_ALTERNATIVES', { selectedText: 'teks', language: 'id', action: 'alternatives', styleSample: 'Contoh gaya saya.' });
+    expect(inline.style_reference).toBeUndefined();
+    expect(buildUserMessage('P07_INLINE_ALTERNATIVES', inline)).not.toContain('style_reference');
   });
 
   it('rejects a long verbatim span copied from the sample but keeps overlap the author wrote themselves', () => {
@@ -57,12 +60,20 @@ describe('review: "Contoh tulisan" is a style reference only', () => {
     expect(SAMPLE_ECHO_WORDS).toBe(8);
   });
 
-  it('fails generation validation when the output echoes the sample', () => {
-    const shared = 'satu dua tiga empat lima enam tujuh delapan sembilan';
+  it('warns on one short echo and rejects long or repeated copies', () => {
+    const short = 'satu dua tiga empat lima enam tujuh delapan sembilan';
+    const long = 'satu dua tiga empat lima enam tujuh delapan sembilan sepuluh sebelas dua belas tiga belas';
     const response = (text: string) => ({ transformed_text: text, change_categories: [], warnings: [], no_change_needed: false });
-    const runtime = { style_reference: shared, protectedTerms: [], protectedCitations: [] };
-    expect(() => validateGeneration('P01_STANDARD_REWRITE', 'Teks penulis sendiri.', response(`Hasil ${shared}`), runtime)).toThrow(/style sample copied/);
-    expect(validateGeneration('P01_STANDARD_REWRITE', 'Teks penulis sendiri.', response('Tulisan penulis sendiri.'), runtime)).toMatchObject({ transformed_text: 'Tulisan penulis sendiri.' });
+    const runtime = (sample: string) => ({ style_reference: sample, language: 'id', protectedTerms: [], protectedCitations: [] });
+    expect(sampleEchoRuns(short, 'Teks penulis sendiri.', `Hasil ${short}`)).toEqual([short]);
+    expect(sampleEchoSeverity([short])).toBe('warn');
+    expect(sampleEchoSeverity([long])).toBe('reject');
+    expect(sampleEchoSeverity([short, short])).toBe('reject');
+    const warned = validateGeneration('P01_STANDARD_REWRITE', 'Teks penulis sendiri.', response(`Hasil ${short}`), runtime(short));
+    expect(warned.warnings).toEqual([`Satu frasa mirip contoh gaya: "${short}".`]);
+    expect(() => validateGeneration('P01_STANDARD_REWRITE', 'Teks penulis sendiri.', response(`Hasil ${long}`), runtime(long))).toThrow(/style sample copied/);
+    expect(() => validateGeneration('P01_STANDARD_REWRITE', 'Teks penulis sendiri.', response(`${short}. Lalu ${short}.`), runtime(short))).toThrow(/style sample copied/);
+    expect(validateGeneration('P01_STANDARD_REWRITE', 'Teks penulis sendiri.', response('Tulisan penulis sendiri.'), runtime(short))).toMatchObject({ transformed_text: 'Tulisan penulis sendiri.', warnings: [] });
   });
 });
 

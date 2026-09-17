@@ -15,7 +15,7 @@ import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { CustomFields, ModeOptions, ModePicker, pickCustom } from './WritingControls';
 import { modeHint, modeLabel, requestSummary } from './modes';
 import { StyleMark } from './StyleMark';
-import { appendInstruction, hasAdvancedValues, hasCustomFields, instructionChips, nameTaken, styleDraft, stylePayload, type StyleDraft } from './style-form';
+import { appendInstruction, countWords, hasAdvancedValues, hasCustomFields, instructionChips, nameTaken, SAMPLE_GOOD_WORDS, SAMPLE_MIN_WORDS, styleDraft, stylePayload, type StyleDraft } from './style-form';
 
 type Props = { styles: WritingStyle[]; style?: WritingStyle | null; preset: Settings; onClose: () => void; onSaved: (style: WritingStyle, created: boolean) => void; onDeleted?: (style: WritingStyle) => void };
 
@@ -42,6 +42,10 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
   const blocked = !trimmed || duplicate || full || conflict !== null;
   const setSettings = (settings: Settings) => setDraft({ ...draft, settings });
   const nameProblem = nameError || (duplicate ? t('Sudah ada skill dengan nama ini.', 'A skill with this name already exists.') : '');
+  const sampleWords = countWords(draft.settings.sample);
+  const sampleHint = !draft.settings.sample.trim() ? t(`Sekitar ${SAMPLE_MIN_WORDS}–${SAMPLE_GOOD_WORDS} kata paling efektif.`, `About ${SAMPLE_MIN_WORDS}–${SAMPLE_GOOD_WORDS} words works best.`)
+    : sampleWords < SAMPLE_MIN_WORDS ? t(`${sampleWords} kata. Contoh sependek ini belum cukup menunjukkan gaya; tambahkan sampai sekitar ${SAMPLE_MIN_WORDS} kata.`, `${sampleWords} words. A sample this short barely shows a style; add up to about ${SAMPLE_MIN_WORDS} words.`)
+    : t(`${sampleWords} kata.`, `${sampleWords} words.`);
   const preview: WritingStyle = { id: style?.id ?? 'preview', name: trimmed, description: draft.description.trim() || null, color: draft.color, icon: draft.icon, settings: summary, createdAt: '', updatedAt: '' };
 
   async function submit(event?: React.FormEvent) {
@@ -124,6 +128,7 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
             onChange={(event) => setSettings({ ...draft.settings, extra: event.target.value.slice(0, EXTRA_LIMIT) })}
             placeholder={t('Mis. jangan ubah nama produk', 'E.g. don’t change product names')}
             className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
+          <p className="mt-1.5 text-xs text-ink-500">{t('Angka, sitasi, istilah terkunci, dan fakta sudah otomatis dijaga; tidak perlu ditulis di sini.', 'Numbers, citations, locked terms, and facts are protected automatically; no need to write them here.')}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {instructionChips(t).map((chip) => {
               const used = draft.settings.extra.toLowerCase().includes(chip.toLowerCase());
@@ -144,6 +149,7 @@ export function StyleDialog({ styles, style = null, preset, onClose, onSaved, on
             onChange={(event) => setSettings({ ...draft.settings, sample: event.target.value.slice(0, SAMPLE_LIMIT) })}
             placeholder={t('Tempel satu atau dua paragraf tulisanmu sendiri…', 'Paste one or two paragraphs of your own writing…')}
             className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
+          <p className={`mt-1.5 text-xs ${draft.settings.sample.trim() && sampleWords < SAMPLE_MIN_WORDS ? 'font-medium text-amber-700' : 'text-ink-500'}`}>{sampleHint}</p>
           <p className="mt-1.5 text-xs leading-relaxed text-ink-500">{t('Dipakai sebagai contoh gaya saja: AI meniru cara menulisnya, bukan isinya. Dikirim ke AI hanya saat skill ini dipakai, jadi menambah sedikit biaya token.', 'Used as a style example only: the AI imitates how it is written, never its content. It is sent only when this skill is applied, so it adds a little token cost.')}</p>
         </div>
 

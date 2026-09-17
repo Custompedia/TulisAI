@@ -72,6 +72,7 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'QUOTA_EXCEEDED': return t('Batas pemakaian AI bulan ini tercapai. Coba lagi nanti.', 'You have reached this month’s AI limit. Try again later.');
     case code === 'RATE_LIMITED': return t('Terlalu banyak permintaan. Tunggu sebentar lalu coba lagi.', 'Too many requests. Wait a moment and try again.');
     case code === 'SCOPE_TOO_LARGE' || code === 'PAYLOAD_TOO_LARGE': return t('Teks terlalu panjang untuk sekali proses. Pilih paragraf atau bagian tertentu.', 'The text is too long for one run. Select a paragraph or a shorter passage.');
+    case code === 'STYLE_SAMPLE_COPIED': return t('Hasil menyalin kalimat dari contoh tulisan skill, jadi dibatalkan. Coba lagi atau ganti contohnya dengan teks yang lebih umum.', 'The result copied sentences from the skill’s writing sample, so it was discarded. Try again or use a more generic sample.');
     case code === 'AI_OUTPUT_REJECTED': return t('Hasil ini mengubah istilah yang dikunci atau angka. Teks belum diterapkan.', 'This result changed a locked term or number. Nothing was applied.');
     case code === 'PROTECTED_SELECTION': return t('Istilah yang dikunci tidak bisa diganti. Buka kuncinya dulu.', 'A locked term cannot be replaced. Unlock it first.');
     case code === 'AI_UNAVAILABLE': return t('AI gagal memproses. Teksmu tidak berubah — coba lagi.', 'The AI could not finish. Your text is unchanged — try again.');

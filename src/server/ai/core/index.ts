@@ -3,7 +3,7 @@ import { changePercentage } from "@/lib/editor/metrics";
 import { EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT } from "@/lib/writing/settings";
 import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
 import { responseSchemas, runtimeSchemas } from "./schemas";
-import { paragraphsPreserved, repairDrift, sampleEcho, simplifyLengthKept } from "./validators";
+import { mergeWarnings as mergeWarningList, paragraphsPreserved, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
 
 // Strict structured outputs reject string length keywords; lengths are clamped before zod parsing instead.
@@ -81,7 +81,7 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     intent: lookup(ENUM_MAP.intent, get("intent", "action")), n: input.n,
     mode: lookup(ENUM_MAP.mode, get("mode", "context")),
     request: request && Object.fromEntries(Object.entries(request).filter(([, value]) => value !== undefined)),
-    style_reference: sanitizeSample(get("styleSample", "style_sample", "styleReference", "style_reference")),
+    style_reference: id === "P07_INLINE_ALTERNATIVES" ? undefined : sanitizeSample(get("styleSample", "style_sample", "styleReference", "style_reference")),
     failed_output: get("failedOutput", "failed_output"), original_scope: get("originalScope", "original_scope"),
     required_protected_terms: get("requiredProtectedTerms", "required_protected_terms"), required_protected_citations: get("requiredProtectedCitations", "required_protected_citations"),
   };
@@ -122,8 +122,9 @@ export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>)
     return [section("violations", violations.map((item) => `required: ${item.required} | appeared instead: ${item.found}`).join("\n")), section("failed_output", failed), section("original", original)].filter(Boolean).join("\n");
   }
   const protectedStrings = [...new Set([...strings(runtime.protected_terms), ...strings(runtime.protected_citations)])].join("\n");
-  const body = id === "P07_INLINE_ALTERNATIVES" ? section("selection", runtime.selected_text) : section("input", runtime.source_text);
-  return [styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
+  const inline = id === "P07_INLINE_ALTERNATIVES";
+  const body = inline ? section("selection", runtime.selected_text) : section("input", runtime.source_text);
+  return [inline ? "" : styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
 }
 
 export function buildMessages(id: PromptId, runtime: Record<string, unknown>) {
@@ -218,13 +219,18 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   }
   const text = String(parsed.transformed_text ?? "");
   const sample = [runtime.style_reference, runtime.styleSample, runtime.style_sample].find((value) => typeof value === "string");
-  if (typeof sample === "string") { const echo = sampleEcho(sample, original, text); if (echo) throw new Error(`style sample copied verbatim: ${echo}`); }
+  let echoWarning: string | null = null;
+  if (typeof sample === "string") {
+    const runs = sampleEchoRuns(sample, original, text); const severity = sampleEchoSeverity(runs);
+    if (severity === "reject") throw new Error(`style sample copied verbatim: ${runs.join(" | ")}`);
+    if (severity === "warn") echoWarning = runtime.language === "en" ? `One phrase resembles the style sample: "${runs[0]}".` : `Satu frasa mirip contoh gaya: "${runs[0]}".`;
+  }
   const check = validateProtectedContent(original, text, protectedTerms, protectedCitations, true, id === "P04_PROFESSIONAL");
   if (!check.valid) throw new Error(check.errors.join("; "));
   if (parsed.no_change_needed === true && changePercentage(original, text) > 2) throw new Error("no_change_needed was set but the text changed");
   const structure = structuralErrors(id, original, text, runtime);
   if (structure.length) throw new Error(structure.join("; "));
-  return parsed;
+  return echoWarning ? { ...parsed, warnings: mergeWarningList(parsed.warnings, [echoWarning]) } : parsed;
 }
 
 const multiset = (tokens: string[]) => tokens.reduce((map, token) => map.set(token, (map.get(token) ?? 0) + 1), new Map<string, number>());
@@ -294,6 +300,6 @@ export function createOpenRouterProvider(options: OpenRouterOptions) {
 }
 function usageOf(value: { usage?: Record<string, unknown> }) { return { inputTokens: typeof value.usage?.prompt_tokens === "number" ? value.usage.prompt_tokens : undefined, outputTokens: typeof value.usage?.completion_tokens === "number" ? value.usage.completion_tokens : undefined, totalTokens: typeof value.usage?.total_tokens === "number" ? value.usage.total_tokens : undefined }; }
 
-export { mergeWarnings, sampleEcho, softWarnings } from "./validators";
+export { mergeWarnings, sampleEcho, sampleEchoRuns, sampleEchoSeverity, softWarnings } from "./validators";
 export { PROMPTS, PROMPT_VERSION, REASONING_EFFORT, promptIds, responseSchemas, runtimeSchemas };
 export type { AIResponse, ControlRequest, PromptId, PromptDefinition, ProviderResult, RuntimeInput } from "./types";

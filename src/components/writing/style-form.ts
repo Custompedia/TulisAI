@@ -51,11 +51,15 @@ export function copyName(name: string, styles: WritingStyle[]): string {
   return base.slice(0, STYLE_NAME_LIMIT);
 }
 
+// Affirmative phrasing: models follow "do X" more reliably than "do not Y". Rules the base prompt already guarantees are not offered.
 export const instructionChips = (t: T): string[] => [
-  t('Hindari kata "sangat"', 'Avoid the word "very"'),
   t('Pakai kalimat pendek', 'Use short sentences'),
-  t('Jangan ubah istilah teknis', 'Do not change technical terms'),
-  t('Pertahankan angka dan data apa adanya', 'Keep numbers and data exactly as they are'),
-  t('Hindari kalimat pasif', 'Avoid passive sentences'),
-  t('Jangan tambah informasi baru', 'Do not add new information'),
+  t('Pakai kalimat aktif', 'Use active sentences'),
+  t('Pertahankan istilah teknis apa adanya', 'Keep technical terms exactly as written'),
+  t('Ganti "sangat" dengan kata yang lebih spesifik', 'Replace "very" with a more specific word'),
+  t('Pakai sapaan "Anda"', 'Address the reader as "you"'),
+  t('Satu gagasan per paragraf', 'One idea per paragraph'),
 ];
+export const SAMPLE_MIN_WORDS = 50;
+export const SAMPLE_GOOD_WORDS = 150;
+export const countWords = (text: string): number => (text.trim().match(/[\p{L}\p{N}]+(?:[-'’.][\p{L}\p{N}]+)*/gu) ?? []).length;
