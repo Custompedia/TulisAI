@@ -1,19 +1,19 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { EXTRA_LIMIT } from "../../src/lib/writing/settings";
-import { buildMessages, buildSystemMessage, buildUserMessage, clipText, compileControlBlock, createOpenRouterProvider, exceedsPreservation, getPromptDefinition, normalizeRuntime, promptHash, PROMPT_VERSION, PROMPTS, promptIds, REASONING_EFFORT, validateGeneration } from "../../src/server/ai/core";
-import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P01_LANGUAGE, P02, P02_LANGUAGE, P03, P03_LANGUAGE, P04, P04_LANGUAGE, P05, P05_LANGUAGE, P06, P06_LANGUAGE, P07, P07_LANGUAGE, P08_CONTROL_BLOCK, P09, P10 } from "../../src/server/ai/core/prompts";
+import { addsIntensifier, buildMessages, buildSystemMessage, buildUserMessage, clipText, compileControlBlock, echoesContext, selectOptions, tidyText, validateProtectedContent, createOpenRouterProvider, exceedsPreservation, getPromptDefinition, normalizeRuntime, promptHash, PROMPT_VERSION, PROMPTS, promptIds, REASONING_EFFORT, validateGeneration } from "../../src/server/ai/core";
+import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P03_ACTIVE, P01, P01_LANGUAGE, P02, P02_LANGUAGE, P03, P03_LANGUAGE, P04, P04_LANGUAGE, P05, P05_LANGUAGE, P06, P06_LANGUAGE, P07, P07_LANGUAGE, P08_CONTROL_BLOCK, P09, P10 } from "../../src/server/ai/core/prompts";
 
 const transform = (text: string, extra: Record<string, unknown> = {}) => ({ transformed_text: text, change_categories: [], warnings: [], no_change_needed: false, ...extra });
 
-describe("prompt registry v4", () => {
+describe("prompt registry v5", () => {
   it("copies every named text block from systemprompt.md verbatim", () => {
     const blocks = Object.fromEntries([...readFileSync("systemprompt.md", "utf8").matchAll(/^```text ([\w.-]+)\n([\s\S]*?)\n```$/gm)].map((match) => [match[1], match[2]]));
     const registry: Record<string, string> = { BASE, BASE_INLINE, BASE_READONLY, "OUTPUT_LANGUAGE.id": OUTPUT_LANGUAGE.id, "OUTPUT_LANGUAGE.en": OUTPUT_LANGUAGE.en, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPT_IDS: promptIds.join("\n") };
     for (const [name, table] of Object.entries({ P01: P01_LANGUAGE, P02: P02_LANGUAGE, P03: P03_LANGUAGE, P04: P04_LANGUAGE, P05: P05_LANGUAGE, P06: P06_LANGUAGE, P07: P07_LANGUAGE })) { registry[`${name}.id`] = table.id; registry[`${name}.en`] = table.en; }
     expect(Object.keys(blocks).sort()).toEqual(Object.keys(registry).sort());
     for (const [name, text] of Object.entries(registry)) expect(blocks[name], name).toBe(text);
-    expect(PROMPT_VERSION).toBe("v4");
+    expect(PROMPT_VERSION).toBe("v5");
   });
   it("keeps each prompt free of unresolved language placeholders after composition", () => {
     for (const id of promptIds) { const rules = LANGUAGE_RULES[id]; expect(PROMPTS[id].includes("{{language_rules}}"), id).toBe(Boolean(rules)); }
@@ -24,7 +24,7 @@ describe("prompt registry v4", () => {
   it("composes templates and records reasoning effort per prompt", async () => {
     expect(PROMPTS.P09_QUALITY_EVALUATION.startsWith(BASE_READONLY)).toBe(true);
     expect(PROMPTS.P08_CUSTOM_TRANSFORM).toBe(`${BASE}\n\n${P01}\n\n${P08_CONTROL_BLOCK}`);
-    expect(REASONING_EFFORT).toMatchObject({ P01_STANDARD_REWRITE: "none", P07_INLINE_ALTERNATIVES: "none", P08_CUSTOM_TRANSFORM: "none", P03_HUMANIZER: "low", P09_QUALITY_EVALUATION: "low", P10_REPAIR: "low" });
+    expect(REASONING_EFFORT).toMatchObject({ P01_STANDARD_REWRITE: "none", P07_INLINE_ALTERNATIVES: "none", P08_CUSTOM_TRANSFORM: "low", P03_HUMANIZER: "low", P09_QUALITY_EVALUATION: "low", P10_REPAIR: "low" });
     expect(await promptHash("P01_STANDARD_REWRITE")).toMatch(/^[0-9a-f]{64}$/);
     expect(getPromptDefinition("P01_STANDARD_REWRITE").responseFormat).toMatchObject({ type: "json_schema" });
     expect(JSON.stringify(getPromptDefinition("P03_HUMANIZER").responseFormat)).not.toContain("maxLength");
@@ -53,9 +53,10 @@ describe("enum mapping", () => {
     for (const [action, intent] of Object.entries(intents)) expect(normalizeRuntime("P07_INLINE_ALTERNATIVES", { ...base, selectedText: "teks", action })).toMatchObject({ intent, n: 3 });
     expect(normalizeRuntime("P09_QUALITY_EVALUATION", { ...base, mode: "academic" })).toMatchObject({ mode: "akademik" });
   });
-  it("runs custom mode as balanced P01 with a request and rejects unknown enums", () => {
-    const runtime = normalizeRuntime("P08_CUSTOM_TRANSFORM", { ...base, strength: "strong", format: "table", length: "shorter", audience: "lecturer", focus: ["clarity"], extra_request: null });
-    expect(runtime).toMatchObject({ strength: "balanced", request: { format: "tabel", length: "lebih singkat", audience: "dosen", focus: ["clarity"], additional_instruction: "" } });
+  it("runs custom mode as P01 with a request, strong only for reshaping formats, and rejects unknown enums", () => {
+    expect(normalizeRuntime("P08_CUSTOM_TRANSFORM", { ...base, strength: "strong", format: "paragraph", length: "same", focus: [] })).toMatchObject({ strength: "balanced" });
+    const runtime = normalizeRuntime("P08_CUSTOM_TRANSFORM", { ...base, strength: "light", format: "table", length: "shorter", audience: "lecturer", focus: ["clarity"], extra_request: null });
+    expect(runtime).toMatchObject({ strength: "strong", request: { format: "tabel", length: "lebih singkat", audience: "dosen", focus: ["clarity"], additional_instruction: "" } });
     expect(normalizeRuntime("P08_CUSTOM_TRANSFORM", runtime)).toEqual(runtime);
     expect(() => normalizeRuntime("P01_STANDARD_REWRITE", { ...base, strength: "invented" })).toThrow();
     expect(() => normalizeRuntime("P01_STANDARD_REWRITE", { ...base, sourceText: "", strength: "light" })).toThrow();
@@ -71,18 +72,20 @@ describe("message assembly", () => {
     const second = normalizeRuntime("P01_STANDARD_REWRITE", { ...controls, sourceText: "Teks lain sama sekali rahasia-dua.", contextBefore: "Sebelum.", contextAfter: "Sesudah." });
     const system = buildSystemMessage("P01_STANDARD_REWRITE", first);
     expect(buildSystemMessage("P01_STANDARD_REWRITE", second)).toBe(system);
-    expect(system).toBe(`${BASE.replace("{{output_language}}", OUTPUT_LANGUAGE.id)}\n\n${P01.replace("{{strength}}", "balanced").replace("{{language_rules}}", P01_LANGUAGE.id)}`);
+    expect(system.startsWith(`${BASE.replace("{{output_language}}", OUTPUT_LANGUAGE.id)}\n\nTASK: rewrite <input>`)).toBe(true);
+    expect(system).toContain("STRENGTH balanced:\n- balanced = "); expect(system).not.toMatch(/^- (light|strong) = /m);
+    expect(system).toContain('<example strength="balanced">'); expect(system).not.toContain('<example strength="light">');
     expect(system).not.toMatch(/rahasia|API v2|\{\{/);
     const english = buildSystemMessage("P01_STANDARD_REWRITE", normalizeRuntime("P01_STANDARD_REWRITE", { ...controls, language: "en", sourceText: "Text." }));
-    expect(english).toContain(OUTPUT_LANGUAGE.en); expect(english).toContain(P01_LANGUAGE.en); expect(english).not.toContain("INDONESIAN"); expect(system).not.toContain("ENGLISH\n");
+    expect(english).toContain(OUTPUT_LANGUAGE.en); expect(english).toContain(P01_LANGUAGE.en.split("\n")[1]!); expect(english).not.toContain("INDONESIAN"); expect(system).not.toContain("ENGLISH\n");
     expect(buildUserMessage("P01_STANDARD_REWRITE", second)).toBe("<protected>\nAPI v2\n</protected>\n<context_before>\nSebelum.\n</context_before>\n<input>\nTeks lain sama sekali rahasia-dua.\n</input>\n<context_after>\nSesudah.\n</context_after>");
   });
   it("uses selection for P07, input only for P09 and violations for P10", () => {
     const p07 = normalizeRuntime("P07_INLINE_ALTERNATIVES", { ...controls, protectedTerms: [], selectedText: "meninjau hasil", contextBefore: "Kami perlu ", action: "formal" });
     const [system, user] = buildMessages("P07_INLINE_ALTERNATIVES", p07);
-    expect(system!.content).toContain("TASK: produce 3 replacement options"); expect(system!.content).toContain("INTENT lebih formal:");
-    expect(system!.content.startsWith(BASE_INLINE.replace("{{output_language}}", OUTPUT_LANGUAGE.id))).toBe(true); expect(system!.content).toContain(P07_LANGUAGE.id); expect(system!.content).not.toContain("transformed_text");
-    expect(user!.content).toBe("<context_before>\nKami perlu \n</context_before>\n<selection>\nmeninjau hasil\n</selection>");
+    expect(system!.content).toContain("TASK: produce 3 replacement options"); expect(system!.content).toContain("INTENT lebih formal:\n- lebih formal = "); expect(system!.content).not.toContain("- lebih singkat = ");
+    expect(system!.content.startsWith(BASE_INLINE.replace("{{output_language}}", OUTPUT_LANGUAGE.id))).toBe(true); expect(system!.content).toContain(P07_LANGUAGE.id.split("\n")[1]!); expect(system!.content).toContain('<example intent="lebih formal">'); expect(system!.content).not.toContain('<example intent="alternatif">'); expect(system!.content).not.toContain("transformed_text");
+    expect(user!.content).toBe("<context_before>\nKami perlu \n</context_before>\n<selection>\nmeninjau hasil\n</selection>\n<in_place>\nKami perlu [[meninjau hasil]]\n</in_place>");
     const p09 = normalizeRuntime("P09_QUALITY_EVALUATION", { language: "en", sourceText: "Some text.", mode: "standard" });
     expect(buildSystemMessage("P09_QUALITY_EVALUATION", p09).startsWith(BASE_READONLY.replace("{{output_language}}", OUTPUT_LANGUAGE.en))).toBe(true);
     expect(buildUserMessage("P09_QUALITY_EVALUATION", p09)).toBe("<input>\nSome text.\n</input>");
@@ -120,9 +123,18 @@ describe("message assembly", () => {
     const custom = normalizeRuntime("P02_ACADEMIC", { ...controls, sourceText: "Teks", academicContext: "journal", custom_request: { format: "paragraph", length: "same", audience: "", focus: [], extra_request: null } });
     expect(buildSystemMessage("P02_ACADEMIC", custom).endsWith(`<request>\nLength: within 10% of the input length\n</request>\n\n${P08_CONTROL_BLOCK.split("\n\n")[1]}`)).toBe(true);
   });
+  it("sends only the active option, its example, and the patterns of the active strength", () => {
+    const humanizer = (strength: string) => buildSystemMessage("P03_HUMANIZER", normalizeRuntime("P03_HUMANIZER", { ...controls, sourceText: "Teks", strength, humanizerContext: "general", preservation: "balanced" }));
+    const light = humanizer("light"); const strong = humanizer("strong");
+    for (const number of [4, 10, 12]) { expect(P03_ACTIVE.light).not.toContain(number); expect(light).not.toMatch(new RegExp(`^${number}[.:] `, "m")); expect(strong).toMatch(new RegExp(`^${number}\\. `, "m")); }
+    expect(light).toContain("REGISTER umum:\n- umum = "); expect(light).not.toContain("- akademik = "); expect(light).toContain('<example strength="light">'); expect(light).not.toContain('<example strength="strong">');
+    for (const audience of ["atasan", "klien", "rekan", "vendor", "umum"]) { const system = buildSystemMessage("P04_PROFESSIONAL", normalizeRuntime("P04_PROFESSIONAL", { ...controls, sourceText: "Teks", audience })); expect(system, audience).toContain(`<example audience="${audience}">`); expect(system.match(/<example /g), audience).toHaveLength(1); }
+    expect(selectOptions("HEAD {{mode}}:\n- a = one\n- b = two\nTAIL", { mode: "b" })).toBe("HEAD {{mode}}:\n- b = two\nTAIL");
+    expect(selectOptions("HEAD {{mode}}:\n- a = one", {})).toBe("HEAD {{mode}}:\n- a = one");
+  });
   it("compiles the control block, omitting empty fields and capping emphasis and author note", () => {
     const block = compileControlBlock({ format: "poin", focus: ["clarity", "formality", "naturalness", "persuasiveness"], additional_instruction: `<b>Tulis\nringkas</b> ${"a".repeat(EXTRA_LIMIT + 100)}` });
-    expect(block).toContain("Format: bullet points where the content is genuinely enumerable; keep continuous argument as prose");
+    expect(block).toContain("Format: bullet points, one item per line starting with '- '");
     expect(block).toContain("Emphasis: clarity, formality, naturalness\n");
     expect(block).not.toMatch(/Length:|Audience:|\{\{|none/);
     const note = block.match(/Author note: (.*)/)![1]!;
@@ -148,10 +160,19 @@ describe("deterministic response safety", () => {
     expect(() => validateGeneration("P04_PROFESSIONAL", "Rapat [tanggal] TBD dengan xxx.", transform("Rapat TBD dengan xxx."), {})).toThrow(/placeholder/);
     expect(validateGeneration("P04_PROFESSIONAL", "Rapat [tanggal] TBD dengan xxx.", transform("Rapat pada [tanggal] TBD bersama xxx."), {}).transformed_text).toContain("[tanggal]");
   });
-  it("rejects dishonest no_change_needed", () => {
+  it("snaps a flagged near-copy back to the source and rejects a dishonest flag", () => {
     const source = "Satu dua tiga empat lima enam tujuh delapan sembilan sepuluh.";
     expect(validateGeneration("P01_STANDARD_REWRITE", source, transform(source, { no_change_needed: true }), {}).no_change_needed).toBe(true);
-    expect(() => validateGeneration("P01_STANDARD_REWRITE", source, transform("Satu dua tiga empat lima enam tujuh delapan sembilan puluh.", { no_change_needed: true }), {})).toThrow(/no_change_needed/);
+    expect(validateGeneration("P01_STANDARD_REWRITE", source, transform("Satu dua tiga empat lima enam tujuh delapan sembilan, sepuluh.", { no_change_needed: true }), {}).transformed_text).toBe(source);
+    expect(() => validateGeneration("P01_STANDARD_REWRITE", source, transform("Tulisan yang sepenuhnya berbeda dari sumbernya.", { no_change_needed: true }), {})).toThrow(/no_change_needed/);
+  });
+  it("treats list markers as layout, relaxes multiplicity for condensed formats, and tidies deletion debris", () => {
+    expect(validateProtectedContent("Matikan server, lalu pantau log 24 jam.", "1. Matikan server.\n2. Pantau log 24 jam.", [], []).valid).toBe(true);
+    expect(validateProtectedContent("Ada 40 peserta. Dari 40 peserta, 12 lulus.", "Dari 40 peserta, 12 lulus.", [], []).valid).toBe(false);
+    expect(validateProtectedContent("Ada 40 peserta. Dari 40 peserta, 12 lulus.", "Dari 40 peserta, 12 lulus.", [], [], true, false, true).valid).toBe(true);
+    expect(validateGeneration("P06_SIMPLIFY", "Plan A costs $20 and includes email support for every single user account.", transform("| Plan | Cost |\n|---|---|\n| Plan A | $20 |"), { request: { format: "tabel", focus: [], additional_instruction: "" } }).transformed_text).toContain("| Plan A |");
+    expect(tidyText("Omzet naik 18% setelah program, .\nSelesai . ")).toBe("Omzet naik 18% setelah program.\nSelesai.");
+    expect(validateGeneration("P09_QUALITY_EVALUATION", "Ada 120 responden.", { clarity: { value: "tinggi", reason: "x" }, academic_fit: { value: "tidak_berlaku", reason: "x" }, naturalness: { value: "sedang", reason: "x" }, formality: { value: "rendah", reason: "x" } }, {})).toBeTruthy();
   });
   it("flags preservation ceilings per level", () => {
     const source = "a b c d e f g h i j"; const output = "a b c d e f g h i z";
@@ -163,7 +184,13 @@ describe("deterministic response safety", () => {
   it("filters P07 options by capitalisation and distinctness and rejects unsafe sets", () => {
     const option = (text: string, variation_level: string) => ({ text, variation_level });
     const result = validateGeneration("P07_INLINE_ALTERNATIVES", "meninjau hasil ini", { alternatives: [option("memeriksa hasil ini", "leksikal"), option("Memeriksa hasil tersebut", "struktur"), option("memeriksa hasil itu", "register"), option("mengkaji ulang hasil ini", "leksikal"), option("hasil ini diperiksa kembali dengan cermat", "panjang")], warnings: [] }, { protectedTerms: [] });
-    expect((result.alternatives as Array<{ text: string }>).map((item) => item.text)).toEqual(["memeriksa hasil ini", "hasil ini diperiksa kembali dengan cermat"]);
+    expect((result.alternatives as Array<{ text: string }>).map((item) => item.text)).toEqual(["memeriksa hasil ini", "memeriksa hasil itu", "mengkaji ulang hasil ini", "hasil ini diperiksa kembali dengan cermat"]);
+    const long = validateGeneration("P07_INLINE_ALTERNATIVES", "kami akan meninjau seluruh hasil survei ini besok", { alternatives: [option("kami akan memeriksa seluruh hasil survei ini besok", "leksikal"), option("kami akan mengkaji seluruh hasil survei ini besok", "leksikal")], warnings: [] }, {});
+    expect(long.alternatives).toHaveLength(1);
+    const guarded = validateGeneration("P07_INLINE_ALTERNATIVES", "bagus", { alternatives: [option("baik", "leksikal"), option("sangat baik", "register"), option("hasilnya memuaskan sekali", "struktur")], warnings: [] }, { contextBefore: "Menurut kami hasilnya ", contextAfter: " sekali." });
+    expect((guarded.alternatives as Array<{ text: string }>).map((item) => item.text)).toEqual(["baik"]);
+    expect(addsIntensifier("very good", "good")).toBe(true); expect(addsIntensifier("sangat baik", "sangat bagus")).toBe(false);
+    expect(echoesContext("peneliti mengumpulkan data tersebut", "dikumpulkan peneliti", "Data tersebut ", " selama tiga bulan.")).toBe(true);
     expect(() => validateGeneration("P07_INLINE_ALTERNATIVES", "meninjau", { alternatives: [option("Memeriksa", "leksikal")], warnings: [] }, {})).toThrow();
     expect(() => validateGeneration("P07_INLINE_ALTERNATIVES", "Technology Acceptance Model works", { alternatives: [option("Technology Acceptance Model", "leksikal"), option("b", "struktur")], warnings: [] }, { protectedTerms: ["Technology Acceptance Model"] })).toThrow();
     expect(() => validateGeneration("P07_INLINE_ALTERNATIVES", "x", { alternatives: [], warnings: [] }, {})).toThrow();

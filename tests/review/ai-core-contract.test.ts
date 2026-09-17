@@ -1,4 +1,6 @@
-import evaluationFixtures from '../../fixtures/prompt-evaluation.json';
+import baseFixtures from '../../fixtures/prompt-evaluation.json';
+import edgeFixtures from '../../fixtures/prompt-edge-cases.json';
+import heldOutFixtures from '../../fixtures/prompt-held-out.json';
 import { describe, expect, it } from "vitest";
 import { normalizeRuntime, type PromptId, type RuntimeInput } from "@/server/ai/core";
 
@@ -33,6 +35,7 @@ describe("AI core runtime contract", () => {
 });
 
 describe('offline evaluation fixture contracts',()=>{
+  const evaluationFixtures=[...baseFixtures,...edgeFixtures,...heldOutFixtures] as Array<{id:string;promptId:string;sourceText:string;runtime:Record<string,unknown>;expected:{meaning:string;facts:string}}>;
   for(const fixture of evaluationFixtures)it(fixture.id,()=>{
     expect(()=>normalizeRuntime(fixture.promptId as PromptId,{...fixture.runtime,sourceText:fixture.sourceText,selectedText:fixture.sourceText,contextBefore:null,contextAfter:null} as RuntimeInput)).not.toThrow();
     expect(fixture.expected.meaning).toBeTruthy();expect(fixture.expected.facts).toBeTruthy();

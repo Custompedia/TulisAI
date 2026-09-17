@@ -3,6 +3,8 @@ import { EXTRA_LIMIT, SAMPLE_LIMIT } from "@/lib/writing/settings";
 
 const warnings = z.array(z.string().max(160)).max(3);
 const transform = z.object({ transformed_text: z.string(), change_categories: z.array(z.string().max(40)).max(3), warnings, no_change_needed: z.boolean() });
+// P03 names the passages it found before it rewrites, so the edit is tied to quoted evidence instead of a general impression.
+const humanize = z.object({ patterns_found: z.array(z.string()).default([]), ...transform.shape });
 const alternatives = z.object({
   alternatives: z.array(z.object({ text: z.string().min(1), variation_level: z.enum(["leksikal", "struktur", "panjang", "register"]) })).min(1).max(5),
   warnings,
@@ -16,7 +18,7 @@ const quality = z.object({ clarity: dimension, academic_fit: dimension, naturaln
 export const responseSchemas = {
   P01_STANDARD_REWRITE: transform,
   P02_ACADEMIC: transform,
-  P03_HUMANIZER: transform,
+  P03_HUMANIZER: humanize,
   P04_PROFESSIONAL: transform,
   P05_CREATIVE: transform,
   P06_SIMPLIFY: transform,
@@ -30,8 +32,8 @@ export type ResponseSchemas = typeof responseSchemas;
 
 // First run of a brand-new notebook only: the same rewrite result plus a short label for the document.
 const titled = transform.extend({ suggested_title: z.string() });
-export const titledResponseSchemas: Partial<Record<keyof ResponseSchemas, typeof titled>> = {
-  P01_STANDARD_REWRITE: titled, P02_ACADEMIC: titled, P03_HUMANIZER: titled, P04_PROFESSIONAL: titled, P05_CREATIVE: titled, P06_SIMPLIFY: titled, P08_CUSTOM_TRANSFORM: titled,
+export const titledResponseSchemas: Partial<Record<keyof ResponseSchemas, z.ZodTypeAny>> = {
+  P01_STANDARD_REWRITE: titled, P02_ACADEMIC: titled, P03_HUMANIZER: humanize.extend({ suggested_title: z.string() }), P04_PROFESSIONAL: titled, P05_CREATIVE: titled, P06_SIMPLIFY: titled, P08_CUSTOM_TRANSFORM: titled,
 };
 
 export const focusValues = ["clarity", "naturalness", "formality", "persuasiveness", "remove_repetition"] as const;
@@ -56,7 +58,7 @@ export const runtimeSchemas = {
   P05_CREATIVE: z.object({ ...rewrite, creativity_strength: z.enum(["ringan", "sedang", "berani"]) }),
   P06_SIMPLIFY: z.object({ ...rewrite, audience: z.enum(["anak sekolah", "umum", "klien", "pemula"]) }),
   P07_INLINE_ALTERNATIVES: z.object({ selected_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, intent: z.enum(["alternatif", "lebih singkat", "lebih jelas", "lebih formal", "lebih natural"]), n: z.number().int().min(3).max(5).default(3), protected_terms: strings, protected_citations: strings }),
-  P08_CUSTOM_TRANSFORM: z.object({ ...rewrite, strength: z.literal("balanced"), request }),
+  P08_CUSTOM_TRANSFORM: z.object({ ...rewrite, strength: z.enum(["balanced", "strong"]), request }),
   P09_QUALITY_EVALUATION: z.object({ source_text: z.string().min(1), language, mode: z.string().min(1) }),
   P10_REPAIR: z.object({ language, failed_output: z.string(), original_scope: z.string().min(1), required_protected_terms: strings, required_protected_citations: strings }),
 } as const;

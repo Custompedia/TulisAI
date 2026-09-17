@@ -3,7 +3,7 @@ import { entitlement, periodKey } from '../usage/quota';
 import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
-import { createOpenRouterProvider, exceedsPreservation, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
+import { createOpenRouterProvider, exceedsPreservation, isCondensed, snapsToSource, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
 import {collapseBlankLines} from '@/lib/editor/document';
@@ -102,10 +102,12 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     catch (error) { throw await rejected(error instanceof Error ? error.message : 'p07', new RequestError('AI_OUTPUT_REJECTED', 'No safe set of alternatives was returned. Your source is unchanged.', 422)); }
   } else {
     output = validateAIResponse(input.promptId,output);
-    const structure = structuralErrors(input.promptId,input.source.text,outputText(output));
+    // The flag is the model's verdict, so the saved source is what the preview shows.
+    if (output.no_change_needed === true && snapsToSource(input.source.text,outputText(output))) output = {...output,transformed_text:input.source.text};
+    const structure = structuralErrors(input.promptId,input.source.text,outputText(output),requestOf(input.promptId,controls));
     if (structure.length) throw await rejected(structure.join('; '), new RequestError('AI_STRUCTURE_REJECTED', 'AI output changed the text structure. Your source is unchanged.', 422));
     const placeholders = input.promptId === 'P04_PROFESSIONAL';
-    const protection = validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders);
+    const protection = validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders,isCondensed(requestOf(input.promptId,controls)));
     if (!protection.valid) {
       const required = [...new Set([...(trusted.protectedTerms??[]),...(placeholders?placeholderTokens(input.source.text):[])])];
       const repairRuntime: RuntimeInput = {language:trusted.language,failedOutput:outputText(output),originalScope:input.source.text,requiredProtectedTerms:required,requiredProtectedCitations:trusted.protectedCitations};

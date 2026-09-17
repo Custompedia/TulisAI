@@ -1,0 +1,634 @@
+[
+ {
+  "id": "h01-id-plan",
+  "promptId": "P01_STANDARD_REWRITE",
+  "sourceText": "Tahun depan kami berencana membuka dua cabang baru di Medan, dan salah satunya mungkin akan berlokasi di dekat kampus USU.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "strength": "strong"
+  },
+  "expected": {
+   "meaning": "Rencana tetap rencana, kemungkinan tetap kemungkinan",
+   "facts": "dua cabang, Medan, USU"
+  },
+  "checks": {
+   "keep": [
+    "Medan",
+    "USU"
+   ],
+   "match": [
+    "rencana|berencana|akan",
+    "mungkin|kemungkinan|barangkali|bisa jadi"
+   ],
+   "absent": [
+    "telah membuka",
+    "sudah membuka"
+   ]
+  }
+ },
+ {
+  "id": "h01-en-casual",
+  "promptId": "P01_STANDARD_REWRITE",
+  "sourceText": "Honestly I dunno why the build keeps failing, it worked fine yesterday and nobody touched the config.",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "strength": "balanced"
+  },
+  "expected": {
+   "meaning": "Colloquial stays colloquial",
+   "facts": "build fails, worked yesterday, config untouched"
+  },
+  "checks": {
+   "match": [
+    "config",
+    "yesterday"
+   ],
+   "absent": [
+    "I do not know",
+    "It is unclear",
+    "nevertheless",
+    "functioned"
+   ]
+  }
+ },
+ {
+  "id": "h01-id-protected",
+  "promptId": "P01_STANDARD_REWRITE",
+  "sourceText": "Sistem ERP Nusantara v3 dipasang di 14 gudang sejak Februari 2026 dan menggantikan pencatatan manual.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [
+    "ERP Nusantara v3"
+   ],
+   "protectedCitations": [],
+   "strength": "light"
+  },
+  "expected": {
+   "meaning": "Istilah terkunci tetap persis",
+   "facts": "14 gudang, Februari 2026"
+  },
+  "checks": {
+   "keep": [
+    "ERP Nusantara v3",
+    "14 gudang",
+    "Februari 2026"
+   ]
+  }
+ },
+ {
+  "id": "h02-id-thesis-claim",
+  "promptId": "P02_ACADEMIC",
+  "sourceText": "Dari tabel 4.2 keliatan kalau nilai rata-rata kelas eksperimen (82,4) lebih gede dari kelas kontrol (74,1). Ini diduga karena siswa lebih aktif pas diskusi kelompok.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "academicContext": "thesis"
+  },
+  "expected": {
+   "meaning": "Ragam akademik; dugaan tetap dugaan",
+   "facts": "82,4 dan 74,1, tabel 4.2"
+  },
+  "checks": {
+   "keep": [
+    "82,4",
+    "74,1",
+    "4.2"
+   ],
+   "match": [
+    "diduga|kemungkinan|tampaknya|dapat disebabkan|mungkin"
+   ],
+   "absent": [
+    "keliatan",
+    "gede",
+    "\\bpas\\b",
+    "membuktikan",
+    "terbukti",
+    "disebabkan oleh fakta"
+   ]
+  }
+ },
+ {
+  "id": "h02-en-journal-wordy",
+  "promptId": "P02_ACADEMIC",
+  "sourceText": "It is worth noting that, based on the analysis that we conducted, there appears to be a possibility that the intervention may have reduced anxiety levels among the 64 participants (Lee & Park, 2022).",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [
+    "(Lee & Park, 2022)"
+   ],
+   "academicContext": "journal"
+  },
+  "expected": {
+   "meaning": "Concise, hedge kept once, citation attached",
+   "facts": "64 participants"
+  },
+  "checks": {
+   "keep": [
+    "64",
+    "(Lee & Park, 2022)"
+   ],
+   "match": [
+    "may|might|appears|suggest"
+   ],
+   "absent": [
+    "worth noting",
+    "reduced anxiety levels among the 64 participants \\(Lee & Park, 2022\\)\\. [A-Z]",
+    "proves",
+    "clearly"
+   ]
+  }
+ },
+ {
+  "id": "h03-en-balanced-email",
+  "promptId": "P03_HUMANIZER",
+  "sourceText": "I hope this email finds you well. I wanted to reach out to share that our Q2 numbers serve as a testament to the team's unwavering dedication. Revenue grew 8%, underscoring the importance of our new pricing. It's not just growth, it's a transformative journey. Overall, exciting times lie ahead.",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "strength": "balanced",
+   "humanizerContext": "professional",
+   "preservation": "flexible"
+  },
+  "expected": {
+   "meaning": "Padding goes, the greeting formula and facts stay",
+   "facts": "Q2, revenue grew 8%, new pricing"
+  },
+  "checks": {
+   "keep": [
+    "8%",
+    "Q2"
+   ],
+   "match": [
+    "I hope this email finds you well"
+   ],
+   "absent": [
+    "testament",
+    "unwavering",
+    "underscoring",
+    "transformative journey",
+    "exciting times"
+   ]
+  }
+ },
+ {
+  "id": "h03-id-academic-hedge",
+  "promptId": "P03_HUMANIZER",
+  "sourceText": "Hasil ini diduga berkaitan dengan rendahnya literasi keuangan responden (Putri, 2020). Namun, temuan tersebut mungkin tidak berlaku bagi responden di perkotaan.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [
+    "(Putri, 2020)"
+   ],
+   "strength": "balanced",
+   "humanizerContext": "academic",
+   "preservation": "balanced"
+  },
+  "expected": {
+   "meaning": "Hedge akademik bukan pola; tidak perlu diubah",
+   "facts": "(Putri, 2020)"
+  },
+  "checks": {
+   "noChange": true
+  }
+ },
+ {
+  "id": "h03-id-strong-rhythm",
+  "promptId": "P03_HUMANIZER",
+  "sourceText": "Aplikasi ini hadir sebagai solusi pencatatan keuangan. Aplikasi ini mencatat pemasukan. Aplikasi ini mencatat pengeluaran. Aplikasi ini membuat laporan bulanan. Tidak dapat dipungkiri bahwa aplikasi ini revolusioner.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "strength": "strong",
+   "humanizerContext": "general",
+   "preservation": "flexible"
+  },
+  "expected": {
+   "meaning": "Ritme seragam diperbaiki, pujian dihapus, fungsi tetap",
+   "facts": "pemasukan, pengeluaran, laporan bulanan"
+  },
+  "checks": {
+   "match": [
+    "pemasukan",
+    "pengeluaran",
+    "laporan bulanan"
+   ],
+   "absent": [
+    "revolusioner",
+    "tidak dapat dipungkiri",
+    "hadir sebagai",
+    "Aplikasi ini\\.",
+    "(Aplikasi ini [^.]+\\. ){3}"
+   ]
+  }
+ },
+ {
+  "id": "h04-id-klien-refuse",
+  "promptId": "P04_PROFESSIONAL",
+  "sourceText": "mohon maaf pak kami ga bisa kasih diskon tambahan soalnya harga yang kemarin itu udah harga paling bawah, tapi kalau bapak ambil di atas 500 unit nanti bisa kami hitung ulang",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "audience": "klien"
+  },
+  "expected": {
+   "meaning": "Penolakan sopan; syarat 500 unit tetap",
+   "facts": "500 unit, harga kemarin sudah terendah"
+  },
+  "checks": {
+   "keep": [
+    "500 unit"
+   ],
+   "match": [
+    "maaf",
+    "[Bb]apak",
+    "hitung|tinjau|pertimbangkan"
+   ],
+   "absent": [
+    "\\bga\\b",
+    "soalnya",
+    "\\budah\\b",
+    "gratis",
+    "bonus",
+    "Hormat kami"
+   ]
+  }
+ },
+ {
+  "id": "h04-en-atasan-decline",
+  "promptId": "P04_PROFESSIONAL",
+  "sourceText": "hey boss, can't make the 3pm sync tomorrow, got a client demo at the same time. can sarah cover for me? i'll send notes before",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "audience": "atasan"
+  },
+  "expected": {
+   "meaning": "Request to a superior stays a request; nothing added",
+   "facts": "3pm tomorrow, client demo, Sarah, notes before"
+  },
+  "checks": {
+   "keep": [
+    "3pm"
+   ],
+   "match": [
+    "Sarah",
+    "demo",
+    "notes",
+    "\\?|[Cc]ould|[Ww]ould|[Pp]lease|[Mm]ay"
+   ],
+   "absent": [
+    "\\bboss\\b",
+    "Best regards",
+    "Sincerely",
+    "apologi[sz]e for any inconvenience"
+   ]
+  }
+ },
+ {
+  "id": "h05-id-berani-service",
+  "promptId": "P05_CREATIVE",
+  "sourceText": "Kami menyediakan jasa cuci sepatu. Pengerjaan 3 hari. Antar jemput tersedia untuk area Bandung. Harga mulai Rp35.000.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "creativity_strength": "strong"
+  },
+  "expected": {
+   "meaning": "Lebih hidup, tanpa klaim baru",
+   "facts": "3 hari, Bandung, Rp35.000, antar jemput"
+  },
+  "checks": {
+   "keep": [
+    "3 hari",
+    "Rp35.000",
+    "Bandung"
+   ],
+   "match": [
+    "[Aa]ntar"
+   ],
+   "absent": [
+    "seperti baru",
+    "bersih maksimal",
+    "terbaik",
+    "profesional",
+    "bergaransi",
+    "garansi",
+    "premium",
+    "tercepat",
+    "kinclong",
+    "wangi"
+   ]
+  }
+ },
+ {
+  "id": "h05-en-ringan-event",
+  "promptId": "P05_CREATIVE",
+  "sourceText": "The workshop covers basic pottery techniques. It runs for two hours. All materials are provided. Tickets cost $30.",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "creativity_strength": "light"
+  },
+  "expected": {
+   "meaning": "Rhythm and verbs only; same order of information; no new claims",
+   "facts": "two hours, materials provided, $30"
+  },
+  "checks": {
+   "keep": [
+    "$30"
+   ],
+   "match": [
+    "two[- ]hours?",
+    "materials"
+   ],
+   "absent": [
+    "expert",
+    "beginner-friendly",
+    "unforgettable",
+    "relax",
+    "fun",
+    "limited",
+    "masterpiece"
+   ]
+  }
+ },
+ {
+  "id": "h06-id-anak-rule",
+  "promptId": "P06_SIMPLIFY",
+  "sourceText": "Siswa yang terlambat lebih dari 15 menit wajib melapor kepada guru piket sebelum memasuki ruang kelas, kecuali apabila keterlambatan disebabkan oleh kendala transportasi yang dapat dibuktikan.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "target_audience": "anak_sekolah"
+  },
+  "expected": {
+   "meaning": "Kalimat pendek, semua syarat tetap",
+   "facts": "15 menit, guru piket, kecuali kendala transportasi yang bisa dibuktikan"
+  },
+  "checks": {
+   "keep": [
+    "15 menit"
+   ],
+   "match": [
+    "guru piket",
+    "transportasi",
+    "bukti|dibuktikan|membuktikan"
+   ],
+   "absent": [
+    "misalnya",
+    "contohnya",
+    "seperti macet"
+   ]
+  }
+ },
+ {
+  "id": "h06-en-klien-sla",
+  "promptId": "P06_SIMPLIFY",
+  "sourceText": "Under the SLA, P1 incidents are acknowledged within 15 minutes and resolved within 4 hours, excluding outages caused by third-party providers.",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "target_audience": "klien"
+  },
+  "expected": {
+   "meaning": "Business terms stay; technical terms glossed; exclusion kept",
+   "facts": "SLA, P1, 15 minutes, 4 hours, third-party exclusion"
+  },
+  "checks": {
+   "keep": [
+    "15 minutes",
+    "4 hours",
+    "SLA",
+    "P1"
+   ],
+   "match": [
+    "third-party|third party",
+    "exclud|except|not (count|cover|apply)|does not"
+   ],
+   "absent": [
+    "for example",
+    "imagine"
+   ]
+  }
+ },
+ {
+  "id": "h07-id-natural",
+  "promptId": "P07_INLINE_ALTERNATIVES",
+  "sourceText": "Bersama surat ini kami bermaksud untuk menginformasikan bahwa kantor tutup pada 17 Agustus.",
+  "selectedText": "kami bermaksud untuk menginformasikan",
+  "runtime": {
+   "selectedText": "kami bermaksud untuk menginformasikan",
+   "language": "id",
+   "action": "natural",
+   "contextBefore": "Bersama surat ini ",
+   "contextAfter": " bahwa kantor tutup pada 17 Agustus.",
+   "protectedTerms": [],
+   "protectedCitations": []
+  },
+  "expected": {
+   "meaning": "Lebih luwes, cocok dengan kalimat",
+   "facts": "Tidak ada fakta baru"
+  },
+  "checks": {
+   "minOptions": 2,
+   "absent": [
+    "17 Agustus",
+    "bahwa"
+   ],
+   "absentExact": [
+    "^[A-Z]"
+   ]
+  }
+ },
+ {
+  "id": "h07-en-shorter",
+  "promptId": "P07_INLINE_ALTERNATIVES",
+  "sourceText": "The report, which was written by the finance team over the course of last week, is ready.",
+  "selectedText": "which was written by the finance team over the course of last week,",
+  "runtime": {
+   "selectedText": "which was written by the finance team over the course of last week,",
+   "language": "en",
+   "action": "shorter",
+   "contextBefore": "The report, ",
+   "contextAfter": " is ready.",
+   "protectedTerms": [],
+   "protectedCitations": []
+  },
+  "expected": {
+   "meaning": "Shorter relative clause that still fits between the commas",
+   "facts": "Tidak ada fakta baru"
+  },
+  "checks": {
+   "minOptions": 2,
+   "match": [
+    "finance team"
+   ],
+   "absent": [
+    "is ready",
+    "The report"
+   ]
+  }
+ },
+ {
+  "id": "h07-id-clearer",
+  "promptId": "P07_INLINE_ALTERNATIVES",
+  "sourceText": "Mahasiswa yang tidak melakukan registrasi ulang hingga batas waktu dianggap mengundurkan diri.",
+  "selectedText": "yang tidak melakukan registrasi ulang hingga batas waktu",
+  "runtime": {
+   "selectedText": "yang tidak melakukan registrasi ulang hingga batas waktu",
+   "language": "id",
+   "action": "clearer",
+   "contextBefore": "Mahasiswa ",
+   "contextAfter": " dianggap mengundurkan diri.",
+   "protectedTerms": [],
+   "protectedCitations": []
+  },
+  "expected": {
+   "meaning": "Lebih jelas; negasi dan batas waktu tetap",
+   "facts": "Tidak ada fakta baru"
+  },
+  "checks": {
+   "minOptions": 2,
+   "match": [
+    "tidak|belum",
+    "batas waktu|tenggat|waktu yang ditentukan"
+   ],
+   "absent": [
+    "dianggap",
+    "^Mahasiswa"
+   ]
+  }
+ },
+ {
+  "id": "h08-id-bullets-enumerable",
+  "promptId": "P08_CUSTOM_TRANSFORM",
+  "sourceText": "Paket pelatihan mencakup modul dasar Excel, modul visualisasi data dengan Power BI, sesi tanya jawab mingguan, dan sertifikat kelulusan.",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "format": "bullets",
+   "length": "same",
+   "audience": "general_public",
+   "focus": []
+  },
+  "expected": {
+   "meaning": "Isi yang memang daftar menjadi poin",
+   "facts": "Excel, Power BI, tanya jawab mingguan, sertifikat"
+  },
+  "checks": {
+   "keep": [
+    "Excel",
+    "Power BI"
+   ],
+   "match": [
+    "^[-•*] ",
+    "[Ss]ertifikat",
+    "minggu"
+   ]
+  }
+ },
+ {
+  "id": "h08-id-email-name",
+  "promptId": "P08_CUSTOM_TRANSFORM",
+  "sourceText": "tolong sampaikan ke Bu Dewi bahwa kontrak sewa ruko diperpanjang sampai 31 Desember 2027 dan uang muka Rp20.000.000 sudah ditransfer tadi pagi. dari Andi",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "format": "email",
+   "audience": "professional",
+   "focus": []
+  },
+  "expected": {
+   "meaning": "Email utuh memakai nama pengirim dari input",
+   "facts": "Bu Dewi, 31 Desember 2027, Rp20.000.000, Andi"
+  },
+  "checks": {
+   "keep": [
+    "Dewi",
+    "31 Desember 2027",
+    "Rp20.000.000",
+    "Andi"
+   ],
+   "absent": [
+    "\\[Nama\\]",
+    "terlampir"
+   ]
+  }
+ },
+ {
+  "id": "h08-en-note-style",
+  "promptId": "P08_CUSTOM_TRANSFORM",
+  "sourceText": "Our Q3 sales went up a bit compared to Q2, mainly because of the new reseller program.",
+  "runtime": {
+   "language": "en",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "format": "paragraph",
+   "length": "same",
+   "audience": "professional",
+   "focus": [
+    "formality"
+   ],
+   "extraRequest": "Make it sound confident, and mention that sales rose 25%"
+  },
+  "expected": {
+   "meaning": "Tone request followed; invented figure refused and reported",
+   "facts": "Q3, Q2, reseller program; no 25%"
+  },
+  "checks": {
+   "keep": [
+    "Q3",
+    "Q2"
+   ],
+   "match": [
+    "reseller"
+   ],
+   "absent": [
+    "25"
+   ],
+   "warns": true
+  }
+ },
+ {
+  "id": "h09-id-akademik-casual",
+  "promptId": "P09_QUALITY_EVALUATION",
+  "sourceText": "jadi intinya penelitian gue tuh nunjukin kalo anak yang sarapan nilainya lebih bagus, gitu sih",
+  "runtime": {
+   "language": "id",
+   "protectedTerms": [],
+   "protectedCitations": [],
+   "mode": "academic"
+  },
+  "expected": {
+   "meaning": "academic_fit rendah, formality rendah",
+   "facts": "Alasan mengutip teks"
+  },
+  "checks": {
+   "match": [
+    "\"academic_fit\": ?\\{\"value\": ?\"rendah\"",
+    "\"formality\": ?\\{\"value\": ?\"rendah\""
+   ],
+   "absent": [
+    "sebaiknya ditulis",
+    "dapat diganti dengan"
+   ]
+  }
+ }
+]

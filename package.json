@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run",
+    "smoke": "tsx scripts/prompt-smoke.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply AI_WRITING_DB --local",
     "cf:check": "wrangler deploy --dry-run",

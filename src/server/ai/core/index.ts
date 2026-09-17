@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { changePercentage } from "@/lib/editor/metrics";
 import { EXTRA_LIMIT, FOCUS_LIMIT, PRESERVATION_CEILING, SAMPLE_LIMIT } from "@/lib/writing/settings";
-import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
+import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P03_ACTIVE, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
 import { responseSchemas, runtimeSchemas, titledResponseSchemas } from "./schemas";
-import { mergeWarnings as mergeWarningList, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
+import { dropFragments, LIST_FORMATS, plainDashes, mergeWarnings as mergeWarningList, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
 import { promptIds, type AIResponse, type ControlRequest, type PromptDefinition, type PromptId, type ProviderResult, type RuntimeInput } from "./types";
 
 // Strict structured outputs reject string length keywords; lengths are clamped before zod parsing instead.
@@ -36,10 +36,25 @@ export const ENUM_MAP = {
   mode: { standard: "standar", academic: "akademik", humanize: "humanize", professional: "profesional", creative: "kreatif", simplify: "sederhanakan" },
 } satisfies Record<string, Table>;
 
-const FORMAT_LINE: Table = { email: "an email in this order, each part on its own line: a greeting line addressed to the recipient named in <input>, or a neutral greeting when <input> names nobody; one opening sentence stating why you are writing; the body in short paragraphs, one topic each; one closing sentence built only from a request or next step already in <input>; a sign-off line followed by the sender name from <input>, or a [Nama] placeholder when <input> has none. Keep a greeting or sign-off <input> already has instead of adding a second one. The greeting line, the sign-off line, and that placeholder are the only details that may be added", poin: "bullet points where the content is genuinely enumerable; keep continuous argument as prose", bernomor: "a numbered list, only where the content has a real sequence", tabel: "a table whose columns come from distinctions already present in the text", ringkasan: "a summary that keeps every claim, at roughly 40% of the input length" };
+const FORMAT_LINE: Table = { email: "an email in this order, each part on its own line: a greeting line addressed to the recipient named in <input>, or a neutral greeting when <input> names nobody; one opening sentence stating why you are writing; the body in short paragraphs, one topic each; one closing sentence built only from a request or next step already in <input>; a sign-off line followed by the sender name from <input>, or a [Nama] placeholder when <input> has none. Keep a greeting or sign-off <input> already has instead of adding a second one. The greeting line, the sign-off line, and that placeholder are the only details that may be added", poin: "bullet points, one item per line starting with '- ', wherever <input> lists items or parallel points, with any lead-in kept as a line above them; a continuous argument whose sentences depend on each other stays prose", bernomor: "a numbered list with exactly one action or item per numbered line: a sentence that joins two actions with a word such as 'then', 'lalu', or 'dan' becomes two lines. Content with no real sequence stays prose", tabel: "a markdown table whose columns come from distinctions already present in the text, with a header row that names each column in words", ringkasan: "a summary that keeps every claim, at roughly 40% of the input length" };
 const LENGTH_LINE: Table = { "lebih singkat": "about 60-75% of the input length, with no claim dropped", sama: "within 10% of the input length", "lebih detail": "about 130-150% of the input length, expanding only what is already present" };
 const AUDIENCE_LINE: Table = { dosen: "a thesis supervisor or journal reviewer", profesional: "a professional colleague", klien: "a client who is not a specialist", umum: "a general reader" };
 const FOCUS_LABEL: Table = { clarity: "clarity", naturalness: "naturalness", formality: "formality", persuasiveness: "persuasiveness", remove_repetition: "removing repetition" };
+
+// Keeps only the active "- value = ..." line under a header naming {{key}}, the <example key="value"> blocks for the active value, and the numbered lines a prompt lists as active, so each call carries one definition per option (IFScale, ManyIFEval).
+export function selectOptions(template: string, values: Record<string, unknown>, activeNumbers?: ReadonlySet<number>): string {
+  const lines = template.replace(/<example ([a-z_]+)="([^"]*)">[\s\S]*?<\/example>\n?/g, (block, key: string, value: string) => (values[key] === undefined || String(values[key]) === value ? block : "")).split("\n");
+  const kept: string[] = []; let active: string | undefined;
+  for (const line of lines) {
+    const option = line.match(/^- ([^=]+?) = /);
+    if (!option) { const key = line.match(/\{\{(\w+)\}\}/)?.[1]; active = key && values[key] !== undefined ? String(values[key]) : undefined; }
+    const numbered = line.match(/^(\d+)[.:] /);
+    if (option && active !== undefined && option[1] !== active) continue;
+    if (numbered && activeNumbers && !activeNumbers.has(Number(numbered[1]))) continue;
+    kept.push(line);
+  }
+  return kept.join("\n").replace(/\n+$/, "");
+}
 
 const fill = (template: string, values: Record<string, unknown>) => template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => { const value = values[key]; if (value === undefined || value === null || value === "") throw new Error(`missing prompt variable: ${key}`); return String(value); });
 
@@ -75,7 +90,8 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     language: input.language, source_text: get("sourceText", "source_text"), selected_text: get("selectedText", "selected_text"),
     context_before: get("contextBefore", "context_before"), context_after: get("contextAfter", "context_after"),
     protected_terms: get("protectedTerms", "protected_terms"), protected_citations: get("protectedCitations", "protected_citations"),
-    strength: id === "P08_CUSTOM_TRANSFORM" ? "balanced" : input.strength,
+    // A list, table, summary, or email has to move sentence boundaries, which only the strong level permits.
+    strength: id === "P08_CUSTOM_TRANSFORM" ? (request && LIST_FORMATS.has(String(request.format)) ? "strong" : "balanced") : input.strength,
     academic_context: lookup(ENUM_MAP.academic_context, get("academicContext", "academic_context")),
     humanizer_context: lookup(ENUM_MAP.humanizer_context, get("humanizerContext", "humanizer_context")),
     preservation: input.preservation,
@@ -106,9 +122,12 @@ export function languageValues(id: PromptId, runtime: Record<string, unknown>): 
 
 // System message holds only prompt text and compiled controls; user text never enters it.
 export function buildSystemMessage(id: PromptId, runtime: Record<string, unknown>): string {
-  const values = { ...runtime, ...languageValues(id, runtime) };
+  const numbers = id === "P03_HUMANIZER" ? P03_ACTIVE[String(runtime.strength)] : undefined;
+  const pick = (text: string) => selectOptions(text, runtime, numbers && new Set(numbers));
+  const language = languageValues(id, runtime);
+  const values = { ...runtime, ...language, ...(language.language_rules ? { language_rules: pick(language.language_rules) } : {}) };
   const base = BASE_OF[id] ?? BASE;
-  const parts = [...(base ? [fill(base, values)] : []), fill(CAPABILITY[id], values)];
+  const parts = [...(base ? [fill(base, values)] : []), fill(pick(CAPABILITY[id]), values)];
   const request = record(runtime.request) as ControlRequest | undefined;
   const block = request ? compileControlBlock(request) : "";
   return (block ? [...parts, block] : parts).join("\n\n");
@@ -132,7 +151,9 @@ export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>)
   const protectedStrings = [...new Set([...strings(runtime.protected_terms), ...strings(runtime.protected_citations)])].join("\n");
   const inline = id === "P07_INLINE_ALTERNATIVES";
   const body = inline ? section("selection", runtime.selected_text) : section("input", runtime.source_text);
-  return [inline ? "" : titleRequestBlock(runtime.suggest_title), inline ? "" : styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after)].filter(Boolean).join("\n");
+  // Separate tags hide what sits right next to the selection, so P07 also gets the span marked in place.
+  const inPlace = inline && (runtime.context_before || runtime.context_after) ? section("in_place", `${runtime.context_before ?? ""}[[${runtime.selected_text}]]${runtime.context_after ?? ""}`) : "";
+  return [inline ? "" : titleRequestBlock(runtime.suggest_title), inline ? "" : styleReferenceBlock(runtime.style_reference), section("protected", protectedStrings), section("context_before", runtime.context_before), body, section("context_after", runtime.context_after), inPlace].filter(Boolean).join("\n");
 }
 
 export function buildMessages(id: PromptId, runtime: Record<string, unknown>) {
@@ -162,8 +183,12 @@ function clampResponse(value: unknown): unknown {
   return clamped;
 }
 
+// Debris a deletion leaves behind: trailing spaces, a space before a full stop, or a comma stranded before one.
+export const tidyText = (text: string) => text.split("\n").map((line) => line.replace(/,\s*\.(?=\s|$)/g, ".").replace(/[ \t]+\.(?=\s|$)/g, ".").replace(/[ \t]+$/, "")).join("\n").trim();
+
 export function validateAIResponse(id: PromptId, value: unknown, wantsTitle = false): AIResponse {
   const parsed = titleAware(id, wantsTitle).parse(clampResponse(value)) as AIResponse;
+  if (typeof parsed.transformed_text === "string") parsed.transformed_text = tidyText(parsed.transformed_text);
   if (id === "P07_INLINE_ALTERNATIVES") {
     if ((parsed.alternatives as Array<{ text: string }>).some((option) => !option.text.trim() || option.text.length > 200000)) throw new Error("P07 alternatives cannot be empty");
     return parsed;
@@ -175,13 +200,24 @@ export function validateAIResponse(id: PromptId, value: unknown, wantsTitle = fa
 }
 
 const tokenSet = (text: string) => new Set(text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
-// Near-duplicate: token Jaccard >= 0.8, or two 3+ token options differing by a single substituted word.
+// Near-duplicate: token Jaccard >= 0.8 or a single substituted word, for options of six words or more; in a shorter span one word is the whole difference, so only identical token sets count.
+const NEAR_DUPLICATE_MIN_WORDS = 6;
 export function nearDuplicate(left: string, right: string): boolean {
   const a = tokenSet(left); const b = tokenSet(right); let shared = 0;
   for (const token of a) if (b.has(token)) shared++;
   const union = a.size + b.size - shared; if (!union) return true;
-  return shared / union >= 0.8 || (Math.min(a.size, b.size) >= 3 && union - shared <= 2);
+  if (Math.min(a.size, b.size) < NEAR_DUPLICATE_MIN_WORDS) return shared === union;
+  return shared / union >= 0.8 || (a.size === b.size && union - shared <= 2);
 }
+const wordsOf = (text: unknown) => (typeof text === "string" ? text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [] : []);
+// An option that repeats the two words touching the selection was written as a whole sentence, not as a replacement span.
+export function echoesContext(option: string, selection: string, before: unknown, after: unknown): boolean {
+  const inOption = wordsOf(option).join(" "); const inSelection = wordsOf(selection).join(" ");
+  return [wordsOf(before).slice(-2), wordsOf(after).slice(0, 2)].some((edge) => edge.length === 2 && inOption.includes(edge.join(" ")) && !inSelection.includes(edge.join(" ")));
+}
+const INTENSIFIERS = new Set(["sangat", "amat", "sekali", "banget", "sungguh", "terlalu", "very", "really", "extremely", "highly", "truly"]);
+// Meaning guard: an option may not add an intensifier the selection does not have.
+export const addsIntensifier = (option: string, selection: string) => { const had = new Set(wordsOf(selection)); return wordsOf(option).some((word) => INTENSIFIERS.has(word) && !had.has(word)); };
 const letterCase = (text: string) => { const first = text.trimStart().charAt(0); return first !== first.toLowerCase() ? "upper" : first !== first.toUpperCase() ? "lower" : null; };
 export const capitalisationMatches = (selection: string, option: string) => { const expected = letterCase(selection); const actual = letterCase(option); return !expected || !actual || expected === actual; };
 
@@ -195,13 +231,17 @@ export function requestOf(id: PromptId, runtime: RuntimeInput): { format?: strin
 
 const REWRITES = new Set<PromptId>(["P01_STANDARD_REWRITE", "P02_ACADEMIC", "P03_HUMANIZER", "P04_PROFESSIONAL", "P05_CREATIVE", "P06_SIMPLIFY", "P08_CUSTOM_TRANSFORM"]);
 // Hard structural checks a protected-content repair cannot fix.
-export function structuralErrors(id: PromptId, original: string, output: string): string[] {
+export function structuralErrors(id: PromptId, original: string, output: string, request?: { format?: string; length?: string }): string[] {
   if (!REWRITES.has(id)) return [];
   const errors: string[] = [];
-  if (id === "P06_SIMPLIFY" && !simplifyLengthKept(original, output)) errors.push("simplified output is shorter than 85% of the input");
+  // A list, table, summary, or shorter-length request legitimately drops words, so the summarisation guard steps aside.
+  const reshaped = Boolean(request?.format && LIST_FORMATS.has(request.format)) || request?.length === "lebih singkat";
+  if (id === "P06_SIMPLIFY" && !reshaped && !simplifyLengthKept(original, output)) errors.push("simplified output is shorter than 85% of the input");
   return errors;
 }
 
+export const NO_CHANGE_DRIFT = 10;
+export const snapsToSource = (original: string, output: string) => changePercentage(original, output) <= NO_CHANGE_DRIFT;
 export { PRESERVATION_CEILING } from "@/lib/writing/settings";
 export const exceedsPreservation = (original: string, output: string, preservation: unknown) => changePercentage(original, output) > (PRESERVATION_CEILING[String(preservation)] ?? 30);
 
@@ -209,6 +249,7 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   if (id === "P10_REPAIR" && repairAttempt !== 1) throw new Error("P10 may run only as the single repair attempt");
   if (id !== "P10_REPAIR" && repairAttempt !== 0) throw new Error("repair attempt requires P10");
   const parsed = validateAIResponse(id, value);
+  if (id === "P09_QUALITY_EVALUATION") return parsed;
   const list = (...values: unknown[]) => (values.find((item) => item !== undefined) ?? []) as string[];
   if (id === "P10_REPAIR") {
     const requiredCitations = list(runtime.requiredProtectedCitations, runtime.required_protected_citations);
@@ -227,17 +268,17 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   const protectedCitations = list(runtime.protectedCitations, runtime.protected_citations);
   if (id === "P07_INLINE_ALTERNATIVES") {
     const options = parsed.alternatives as Array<{ text: string; variation_level: string }>;
-    for (const option of options) {
-      if (protectedTerms.some((term) => option.text.trim() === term.trim())) throw new Error("P07 cannot offer a protected term as a replacement");
-      const check = validateProtectedContent(original, option.text, protectedTerms, protectedCitations, true);
-      if (!check.valid) throw new Error(check.errors.join("; "));
-    }
+    const before = runtime.contextBefore ?? runtime.context_before; const after = runtime.contextAfter ?? runtime.context_after;
+    const safe = options.filter((option) => !echoesContext(option.text, original, before, after) && !addsIntensifier(option.text, original) && !protectedTerms.some((term) => option.text.trim() === term.trim()) && validateProtectedContent(original, option.text, protectedTerms, protectedCitations, true).valid);
     const kept: typeof options = [];
-    for (const option of options) if (capitalisationMatches(original, option.text) && !kept.some((other) => other.variation_level === option.variation_level || nearDuplicate(other.text, option.text))) kept.push(option);
+    for (const option of safe) if (capitalisationMatches(original, option.text) && !kept.some((other) => nearDuplicate(other.text, option.text))) kept.push(option);
     if (!kept.length) throw new Error("P07 returned no distinct alternatives");
     return { ...parsed, alternatives: kept };
   }
-  const text = String(parsed.transformed_text ?? "");
+  // A flagged result that drifts by a comma is snapped back to the source; one that was really rewritten is a dishonest flag.
+  if (parsed.no_change_needed === true) { if (!snapsToSource(original, String(parsed.transformed_text ?? ""))) throw new Error("no_change_needed was set but the text changed"); return { ...parsed, transformed_text: original }; }
+  const cleaned = plainDashes(original, String(parsed.transformed_text ?? ""));
+  const text = id === "P03_HUMANIZER" ? dropFragments(original, cleaned) : cleaned;
   const sample = [runtime.style_reference, runtime.styleSample, runtime.style_sample].find((value) => typeof value === "string");
   let echoWarning: string | null = null;
   if (typeof sample === "string") {
@@ -245,28 +286,30 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
     if (severity === "reject") throw new Error(`style sample copied verbatim: ${runs.join(" | ")}`);
     if (severity === "warn") echoWarning = runtime.language === "en" ? `One phrase resembles the style sample: "${runs[0]}".` : `Satu frasa mirip contoh gaya: "${runs[0]}".`;
   }
-  const check = validateProtectedContent(original, text, protectedTerms, protectedCitations, true, id === "P04_PROFESSIONAL");
+  const check = validateProtectedContent(original, text, protectedTerms, protectedCitations, true, id === "P04_PROFESSIONAL", isCondensed(requestOf(id, runtime)));
   if (!check.valid) throw new Error(check.errors.join("; "));
-  if (parsed.no_change_needed === true && changePercentage(original, text) > 2) throw new Error("no_change_needed was set but the text changed");
-  const structure = structuralErrors(id, original, text);
+  const structure = structuralErrors(id, original, text, requestOf(id, runtime));
   if (structure.length) throw new Error(structure.join("; "));
-  return echoWarning ? { ...parsed, warnings: mergeWarningList(parsed.warnings, [echoWarning]) } : parsed;
+  return { ...parsed, transformed_text: text, ...(echoWarning ? { warnings: mergeWarningList(parsed.warnings, [echoWarning]) } : {}) };
 }
 
 const multiset = (tokens: string[]) => tokens.reduce((map, token) => map.set(token, (map.get(token) ?? 0) + 1), new Map<string, number>());
 const count = (haystack: string, needle: string) => needle ? haystack.split(needle).length - 1 : 0;
-const numericTokens = (text: string) => text.match(/\b\d+(?:[.,]\d+)*\b/g) ?? [];
+// Leading "1." or "2)" list markers are layout, not content, so they stay out of the numeric comparison.
+const numericTokens = (text: string) => text.replace(/^[ \t]*\d+[.)][ \t]+/gmu, "").match(/\b\d+(?:[.,]\d+)*\b/g) ?? [];
 const citationTokens = (text: string): string[] => text.match(/(?:\b[A-Z][A-Za-zÀ-ÿ'’-]+(?:\s+et al\.)?\s*\(\d{4}[a-z]?\)|\([A-Z][A-Za-zÀ-ÿ'’-]+(?:\s+et al\.)?,\s*\d{4}[a-z]?\))/gu) ?? [];
 export const placeholderTokens = (text: string) => text.match(/\[[^\[\]\n]{1,40}\]|\bTBD\b|\b[xX]{3,}\b/g) ?? [];
 
-export function validateProtectedContent(original: string, output: string, protectedTerms: string[], protectedCitations: string[], checkNumbers = true, checkPlaceholders = false) {
+// condensed: a summary or shorter-length request may state a repeated number or term once, so presence is compared instead of multiplicity.
+export const isCondensed = (request?: { format?: string; length?: string }) => request?.format === "ringkasan" || request?.length === "lebih singkat";
+export function validateProtectedContent(original: string, output: string, protectedTerms: string[], protectedCitations: string[], checkNumbers = true, checkPlaceholders = false, condensed = false) {
   const errors: string[] = []; const violations: Array<{ required: string; found: string }> = [];
   const missing = (label: string, token: string) => { errors.push(`${label}: ${token}`); violations.push({ required: token, found: "(missing)" }); };
   const compare = (label: string, expected: Map<string, number>, actual: Map<string, number>, reportMissing: boolean) => {
-    if (reportMissing) for (const [token, amount] of expected) if ((actual.get(token) ?? 0) < amount) missing(`${label} missing`, token);
+    if (reportMissing) for (const [token, amount] of expected) if ((actual.get(token) ?? 0) < (condensed ? 1 : amount)) missing(`${label} missing`, token);
     for (const [token, amount] of actual) if (amount > (expected.get(token) ?? 0)) { errors.push(`new ${label}: ${token}`); violations.push({ required: "(not in original)", found: token }); }
   };
-  for (const term of [...protectedTerms, ...protectedCitations]) if (count(output, term) < count(original, term) && count(original, term) > 0) missing("protected span missing", term);
+  for (const term of [...protectedTerms, ...protectedCitations]) if (count(original, term) > 0 && count(output, term) < (condensed ? 1 : count(original, term))) missing("protected span missing", term);
   if (checkNumbers) compare("numeric token", multiset(numericTokens(original)), multiset(numericTokens(output)), true);
   compare("citation-shaped text", multiset(citationTokens(original)), multiset(citationTokens(output)), false);
   if (checkPlaceholders) for (const [token, amount] of multiset(placeholderTokens(original))) if (count(output, token) < amount) missing("placeholder missing", token);

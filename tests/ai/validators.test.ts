@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { requestOf, structuralErrors, validateGeneration } from "../../src/server/ai/core";
-import { lengthBand, mergeWarnings, paragraphCount, paragraphsPreserved, repairDrift, sentenceLengthDeviation, sentences, simplifyLengthKept, softWarnings, varianceHolds, withinBand, wordCount } from "../../src/server/ai/core/validators";
+import { dropFragments, lengthBand, mergeWarnings, plainDashes, paragraphCount, paragraphsPreserved, repairDrift, sentenceLengthDeviation, sentences, simplifyLengthKept, softWarnings, varianceHolds, withinBand, wordCount } from "../../src/server/ai/core/validators";
 
 const transform = (text: string, extra: Record<string, unknown> = {}) => ({ transformed_text: text, change_categories: [], warnings: [], no_change_needed: false, ...extra });
 const words = (count: number, word = "kata") => Array.from({ length: count }, () => word).join(" ");
@@ -63,9 +63,10 @@ describe("soft warnings", () => {
     expect(softWarnings("P01_STANDARD_REWRITE", long, merged, { language: "id", strength: "light" })).toContain("Jumlah kalimat berubah padahal kekuatan Ringan.");
     expect(softWarnings("P01_STANDARD_REWRITE", long, merged, { language: "en", strength: "strong" })).toEqual([]);
     expect(softWarnings("P01_STANDARD_REWRITE", long, long, { language: "id", strength: "light" })).toEqual([]);
+    expect(softWarnings("P01_STANDARD_REWRITE", long, merged, { language: "id", strength: "balanced" })).toContain("Hasil punya lebih sedikit kalimat dari teks asli; periksa apakah ada yang hilang.");
   });
   it("flags lengths outside the requested band in the runtime language", () => {
-    expect(softWarnings("P01_STANDARD_REWRITE", long, "Migrasi selesai.", { language: "en", strength: "balanced" })).toEqual(["The result length is outside the requested range."]);
+    expect(softWarnings("P01_STANDARD_REWRITE", long, "Migrasi selesai.", { language: "en", strength: "balanced" })).toEqual(["The result has fewer sentences than the original; check that nothing was dropped.", "The result length is outside the requested range."]);
     expect(softWarnings("P02_ACADEMIC", long, "Migrasi selesai.", { language: "id" })).toEqual([]);
     expect(softWarnings("P02_ACADEMIC", long, "Tim kami menyelesaikan migrasi sistem bulan lalu; layanan normal setelah diuji.", { language: "id", request: { length: "lebih singkat" } })).toEqual([]);
     expect(softWarnings("P02_ACADEMIC", long, long, { language: "id", request: { length: "lebih singkat" } })).toEqual(["Panjang hasil di luar rentang yang diminta."]);
@@ -113,5 +114,19 @@ describe("hard validators in validateGeneration", () => {
     expect(requestOf("P01_STANDARD_REWRITE", { custom_request: { format: "short_summary", length: "shorter" } })).toEqual({ format: "ringkasan", length: "lebih singkat" });
     expect(requestOf("P08_CUSTOM_TRANSFORM", { format: "numbered_list" })).toEqual({ format: "bernomor" });
     expect(requestOf("P01_STANDARD_REWRITE", {})).toBeUndefined();
+  });
+});
+
+describe("deterministic output clean-up", () => {
+  it("drops a subject stranded by a deletion and keeps real short sentences", () => {
+    const source = "Aplikasi ini mencatat pemasukan. Tidak dapat dipungkiri bahwa aplikasi ini revolusioner.";
+    expect(dropFragments(source, "Aplikasi ini mencatat pemasukan. Aplikasi ini.")).toBe("Aplikasi ini mencatat pemasukan.");
+    expect(dropFragments("Dengan demikian, pelatihan menjadi langkah penting.", "Pelatihan penting.")).toBe("Pelatihan penting.");
+    expect(dropFragments("Satu.\nDua tiga empat.", "Satu.\nDua tiga empat.")).toBe("Satu.\nDua tiga empat.");
+  });
+  it("removes em dashes only when the source has none", () => {
+    expect(plainDashes("Beratnya 240 gram.", "Beratnya 240 gram\u2014siap dipakai.")).toBe("Beratnya 240 gram, siap dipakai.");
+    expect(plainDashes("A \u2014 B.", "A \u2014 C.")).toBe("A \u2014 C.");
+    expect(validateGeneration("P05_CREATIVE", "Harga 5 ribu.", { transformed_text: "Harga 5 ribu \u2014 murah.", change_categories: [], warnings: [], no_change_needed: false }, {}).transformed_text).toBe("Harga 5 ribu, murah.");
   });
 });

@@ -95,17 +95,27 @@ export const SAMPLE_ECHO_REJECT_WORDS = 12;
 export const sampleEchoSeverity = (runs: string[]): 'none' | 'warn' | 'reject' => runs.length === 0 ? 'none' : runs.length >= 2 || runs.some((run) => words(run).length >= SAMPLE_ECHO_REJECT_WORDS) ? 'reject' : 'warn';
 
 export const emDashCount = (text: string): number => (text.match(/\u2014/g) ?? []).length;
+// Punctuation-only guarantee: a source without em dashes gets an output without them.
+export const plainDashes = (source: string, output: string) => (emDashCount(source) ? output : output.replace(/\s*\u2014\s*/g, ", "));
+// A deletion can strand a subject with no predicate ("Aplikasi ini."): an output sentence of one or two words cut out of a longer source sentence is dropped.
+export function dropFragments(source: string, output: string): string {
+  const flat = (text: string) => words(text).join(' '); const origin = sentences(source).map(flat);
+  const stranded = (sentence: string) => { const body = flat(sentence); const size = words(sentence).length; return size > 0 && size <= 2 && origin.some((whole) => whole !== body && ` ${whole} `.includes(` ${body} `)); };
+  return output.split('\n').map((line) => sentences(line).filter((sentence) => !stranded(sentence)).join(' ')).join('\n');
+}
 type Language = 'id' | 'en';
 const say = (language: Language, id: string, en: string) => (language === 'en' ? en : id);
 // Soft checks never reject; they return short user-facing warnings.
 export function softWarnings(promptId: string, source: string, output: string, runtime: { language?: unknown; strength?: unknown; request?: { format?: string; length?: string } }): string[] {
   const language: Language = runtime.language === 'en' ? 'en' : 'id'; const warnings: string[] = [];
   if (promptId === 'P01_STANDARD_REWRITE' && runtime.strength === 'light' && sentences(source).length !== sentences(output).length) warnings.push(say(language, 'Jumlah kalimat berubah padahal kekuatan Ringan.', 'The sentence count changed at Light strength.'));
+  // Balanced also keeps sentence boundaries, so a lower count there means a sentence was dropped.
+  if (promptId === 'P01_STANDARD_REWRITE' && runtime.strength === 'balanced' && !runtime.request?.format && sentences(output).length < sentences(source).length) warnings.push(say(language, 'Hasil punya lebih sedikit kalimat dari teks asli; periksa apakah ada yang hilang.', 'The result has fewer sentences than the original; check that nothing was dropped.'));
   if (!paragraphsPreserved(source, output, runtime.request?.format)) warnings.push(say(language, 'Jumlah paragraf hasilnya berbeda dari teks asli.', 'The result has a different number of paragraphs than the original.'));
   const band = lengthBand(promptId, runtime.request);
   if (band && !withinBand(source, output, band)) warnings.push(say(language, 'Panjang hasil di luar rentang yang diminta.', 'The result length is outside the requested range.'));
   if (promptId === 'P03_HUMANIZER' && !varianceHolds(source, output)) warnings.push(say(language, 'Panjang kalimat jadi lebih seragam dari teks asli.', 'Sentence lengths became more uniform than the original.'));
-  if (promptId === 'P03_HUMANIZER' && emDashCount(output) > emDashCount(source)) warnings.push(say(language, 'Hasil menambah tanda pisah (—) yang tidak ada di teks asli.', 'The result added em dashes (—) absent from the original.'));
+  if (promptId !== 'P07_INLINE_ALTERNATIVES' && emDashCount(output) > emDashCount(source)) warnings.push(say(language, 'Hasil menambah tanda pisah (—) yang tidak ada di teks asli.', 'The result added em dashes (—) absent from the original.'));
   return warnings;
 }
 
