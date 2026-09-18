@@ -97,7 +97,6 @@ describe('DOCX round trip', () => {
     expect(marks).toEqual(['bold', 'italic', 'underline']);
     expect(result.content.content[2]).toMatchObject({ attrs: { textAlign: 'right' } });
     expect((result.content.content[3]!.content ?? [])[0]!.marks?.[0]).toMatchObject({ type: 'link', attrs: { href: 'https://example.test/x' } });
-    expect(result.warnings).toEqual([]);
   });
 
   it('keeps bullet and ordered lists as lists, not as numbered prose', async () => {
@@ -182,17 +181,15 @@ describe('DOCX import safety', () => {
     const text = JSON.stringify(result.content);
     expect(text).toContain('klik');
     expect(text).not.toContain('javascript:');
-    expect(result.warnings).toContain('unsupported-links-dropped');
   });
 
-  it('reports what it left behind instead of failing', async () => {
+  it('skips images and tracked deletions silently instead of failing', async () => {
     const files = await unzip(await editorDocumentToDocx(doc(paragraph('teks'))));
     const body = new TextDecoder().decode(files.get('word/document.xml')!)
       .replace('<w:body>', '<w:body><w:p><w:r><w:drawing/></w:r></w:p><w:p><w:del><w:r><w:t>dibuang</w:t></w:r></w:del></w:p>');
     const rebuilt = await zip([...files].map(([name, data]) => name === 'word/document.xml' ? { name, data: encode(body) } : { name, data }));
     const result = await docxToEditorDocument(rebuilt);
-    expect(result.warnings).toContain('images-dropped');
-    expect(result.warnings).toContain('tracked-deletions-dropped');
+    expect(JSON.stringify(result.content)).toContain('teks');
     expect(JSON.stringify(result.content)).not.toContain('dibuang');
   });
 });
@@ -210,7 +207,6 @@ describe('DOCX written by another tool', () => {
     ]);
     expect(result.content.content[0]).toMatchObject({ attrs: { level: 1 } });
     expect(result.content.content[1]).toMatchObject({ attrs: { level: 2 } });
-    expect(result.warnings).toEqual([]);
   });
 
   it('recognises a list marked only by its Word style', async () => {
@@ -223,12 +219,15 @@ describe('DOCX written by another tool', () => {
 
   it('keeps marks, alignment, the table and Unicode', async () => {
     const result = await docxToEditorDocument(fixture());
-    const marks = (result.content.content[2]!.content ?? []).flatMap((node) => (node.marks ?? []).map((mark) => mark.type));
+    const marks = (result.content.content[2]!.content ?? []).flatMap((node) => (node.marks ?? []).map((mark) => mark.type)).filter((type) => type !== 'textStyle');
     expect(marks).toEqual(['bold', 'italic', 'underline']);
+    // The file's theme sets Cambria as the body font, so the text carries it the way Word shows it.
+    expect(result.content.content[2]!.content![0]!.marks).toContainEqual({ type: 'textStyle', attrs: { fontFamily: 'Cambria, Caladea' } });
     expect(result.content.content[3]).toMatchObject({ attrs: { textAlign: 'justify' } });
     expect(result.content.content[4]).toMatchObject({ attrs: { textAlign: 'right' } });
     const table = result.content.content.find((node) => node.type === 'table')!;
-    expect(table.content![0]!.content![0]!.type).toBe('tableHeader');
+    // No w:tblHeader in this file, so Word shows the first row as an ordinary row.
+    expect(table.content![0]!.content![0]!.type).toBe('tableCell');
     expect(JSON.stringify(result.content)).toContain('ñ é ü');
   });
 

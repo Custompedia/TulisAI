@@ -3,104 +3,233 @@ import type { EditorDocument, EditorNode } from '../editor/document';
 import { zip, type ZipEntry } from './zip';
 import { element, escapeXml, XML_DECLARATION } from './xml';
 import {
-  alignmentFrom, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, HEADING_FONT, HEADINGS,
-  JUSTIFICATION, LINE_RULE_AUTO, PAGES, pointsToHalfPoints, SPACE_AFTER_TWIPS, SPACE_BEFORE_TWIPS, type PageSize,
+  alignmentFrom, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontFromStack, fontLineFactor, HEADING_FONT, HEADINGS,
+  HIGHLIGHT_COLORS, JUSTIFICATION, LINE_HEIGHT, LINE_RULE_AUTO, PAGES, pointsToHalfPoints, SPACE_AFTER_TWIPS, SPACE_BEFORE_TWIPS, TWIPS_PER_PX,
+  type PageMargins, type PageSize,
 } from './office-defaults';
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
 
-const BULLET_NUM_ID = 1;
-const ORDERED_NUM_ID = 2;
-
 type Mark = NonNullable<EditorNode['marks']>[number];
 type Relationship = { id: string; target: string };
+// One w:num per list node, so every list keeps its own format, start and level.
+type ListDefinition = { id: number; level: number; ordered: boolean; type: string; start: number; bullet: string };
+type Writer = { relationships: Relationship[]; lists: ListDefinition[]; size: PageSize; margins: PageMargins };
 
-// Word keeps significant spaces only when the run says so.
-const textElement = (value: string) => `<w:t xml:space="preserve">${escapeXml(value)}</w:t>`;
+const ORDERED_FORMAT: Record<string, string> = { '1': 'decimal', a: 'lowerLetter', A: 'upperLetter', i: 'lowerRoman', I: 'upperRoman' };
+const BULLETS: Record<string, { glyph: string; font?: string }> = { disc: { glyph: '•' }, circle: { glyph: 'o', font: 'Courier New' }, square: { glyph: '▪' } };
+const HIGHLIGHT_NAMES = new Map(Object.entries(HIGHLIGHT_COLORS).map(([name, hex]) => [hex, name]));
+
+// Word keeps significant spaces only when the run says so; a tab is its own element.
+const textElements = (value: string) => value.split('\t').map((part, index) => `${index ? '<w:tab/>' : ''}${part ? `<w:t xml:space="preserve">${escapeXml(part)}</w:t>` : ''}`).join('');
+
+// CSS colours as OOXML's 6-digit hex; anything unparseable is dropped rather than written wrong.
+export function hexColor(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const color = value.trim();
+  const short = /^#([\da-f])([\da-f])([\da-f])$/iu.exec(color);
+  if (short) return `${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`.toUpperCase();
+  const long = /^#([\da-f]{6})(?:[\da-f]{2})?$/iu.exec(color);
+  if (long) return long[1]!.toUpperCase();
+  const rgb = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/iu.exec(color);
+  return rgb ? rgb.slice(1, 4).map((part) => Math.min(255, Number(part)).toString(16).padStart(2, '0')).join('').toUpperCase() : null;
+}
+
+// CSS lengths as twips; unitless numbers are read as points.
+export function lengthTwips(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(-?[\d.]+)(pt|px|in|cm|mm|em|rem)?$/u.exec(value.trim());
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const perUnit: Record<string, number> = { pt: 20, px: TWIPS_PER_PX, in: 1440, cm: 1440 / 2.54, mm: 144 / 2.54, em: DEFAULT_FONT_POINTS * 20, rem: DEFAULT_FONT_POINTS * 20 };
+  return Number.isFinite(amount) ? Math.round(amount * perUnit[match[2] ?? 'pt']!) : null;
+}
+
+const fontOf = (marks: Mark[] | undefined) => {
+  const style = marks?.find((mark) => mark.type === 'textStyle');
+  return typeof style?.attrs?.fontFamily === 'string' ? fontFromStack(style.attrs.fontFamily) : null;
+};
 
 function runProperties(marks: Mark[] | undefined, link: boolean): string {
+  const byType = new Map((marks ?? []).map((mark) => [mark.type, mark]));
+  const style = byType.get('textStyle')?.attrs ?? {};
   const parts: string[] = [];
-  const types = new Set((marks ?? []).map((mark) => mark.type));
   if (link) parts.push(element('w:rStyle', { 'w:val': 'Hyperlink' }));
-  if (types.has('bold')) parts.push(element('w:b'));
-  if (types.has('italic')) parts.push(element('w:i'));
-  if (types.has('underline')) parts.push(element('w:u', { 'w:val': 'single' }));
+  const font = fontOf(marks);
+  if (font) parts.push(element('w:rFonts', { 'w:ascii': font, 'w:hAnsi': font, 'w:cs': font }));
+  if (byType.has('bold')) parts.push(element('w:b'));
+  if (byType.has('italic')) parts.push(element('w:i'));
+  if (byType.has('strike')) parts.push(element('w:strike'));
+  const color = hexColor(style.color);
+  if (color) parts.push(element('w:color', { 'w:val': color }));
+  const size = lengthTwips(style.fontSize);
+  if (size && size > 0) { const half = Math.round(size / 10); parts.push(element('w:sz', { 'w:val': half }), element('w:szCs', { 'w:val': half })); }
+  const highlight = byType.get('highlight');
+  const highlightHex = highlight ? hexColor(highlight.attrs?.color) ?? HIGHLIGHT_COLORS.yellow! : null;
+  const named = highlightHex ? HIGHLIGHT_NAMES.get(highlightHex) : undefined;
+  if (named) parts.push(element('w:highlight', { 'w:val': named }));
+  if (byType.has('underline')) parts.push(element('w:u', { 'w:val': 'single' }));
+  // A highlight colour Word cannot name, or a background colour, travels as run shading.
+  const shade = (highlightHex && !named ? highlightHex : null) ?? hexColor(style.backgroundColor);
+  if (shade) parts.push(element('w:shd', { 'w:val': 'clear', 'w:color': 'auto', 'w:fill': shade }));
+  if (byType.has('superscript')) parts.push(element('w:vertAlign', { 'w:val': 'superscript' }));
+  else if (byType.has('subscript')) parts.push(element('w:vertAlign', { 'w:val': 'subscript' }));
   return parts.length ? `<w:rPr>${parts.join('')}</w:rPr>` : '';
 }
 
-function runs(node: EditorNode, relationships: Relationship[]): string {
+function runs(node: EditorNode, writer: Writer): string {
   if (node.type === 'hardBreak') return `<w:r>${element('w:br')}</w:r>`;
-  if (node.type !== 'text') return (node.content ?? []).map((child) => runs(child, relationships)).join('');
+  if (node.type !== 'text') return (node.content ?? []).map((child) => runs(child, writer)).join('');
   const text = node.text ?? '';
   if (!text) return '';
   const link = (node.marks ?? []).find((mark) => mark.type === 'link');
   const href = typeof link?.attrs?.href === 'string' ? link.attrs.href : '';
-  const run = `<w:r>${runProperties(node.marks, Boolean(href))}${textElement(text)}</w:r>`;
+  const run = `<w:r>${runProperties(node.marks, Boolean(href))}${textElements(text)}</w:r>`;
   if (!href) return run;
-  const id = `rId${relationships.length + 10}`;
-  relationships.push({ id, target: href });
+  const id = `rId${writer.relationships.length + 10}`;
+  writer.relationships.push({ id, target: href });
   return element('w:hyperlink', { 'r:id': id }, run);
 }
 
-type ParagraphOptions = { style?: string; numId?: number; indent?: number };
+type ParagraphOptions = { style?: string; list?: { numId: number; level: number }; indent?: number; prefix?: string; header?: boolean };
 
-function paragraph(node: EditorNode, relationships: Relationship[], options: ParagraphOptions = {}): string {
+function paragraphProperties(node: EditorNode, options: ParagraphOptions): string {
+  const attrs = node.attrs ?? {};
   const properties: string[] = [];
   if (options.style) properties.push(element('w:pStyle', { 'w:val': options.style }));
-  if (options.numId !== undefined) properties.push(element('w:numPr', {}, `${element('w:ilvl', { 'w:val': 0 })}${element('w:numId', { 'w:val': options.numId })}`));
-  if (options.indent !== undefined) properties.push(element('w:ind', { 'w:left': options.indent }));
-  const align = alignmentFrom(node.attrs?.textAlign);
+  if (options.list) properties.push(element('w:numPr', {}, `${element('w:ilvl', { 'w:val': options.list.level })}${element('w:numId', { 'w:val': options.list.numId })}`));
+  // List items sit tight on the canvas, so once List Paragraph's contextual spacing is off both sides are stated.
+  const listed = options.style === 'ListParagraph' && (attrs.spaceBefore != null || attrs.spaceAfter != null);
+  const before = lengthTwips(attrs.spaceBefore) ?? (listed ? 0 : null); const after = lengthTwips(attrs.spaceAfter) ?? (listed ? 0 : null);
+  let line: Record<string, string | number> = {};
+  // The canvas ratio already includes the font's own line height, which Word multiplies in again.
+  const font = fontOf((node.content ?? []).find((child) => child.type === 'text')?.marks) ?? (node.type === 'heading' ? HEADING_FONT : DEFAULT_FONT);
+  const factor = fontLineFactor(font);
+  if (typeof attrs.lineHeight === 'string') {
+    const exact = lengthTwips(/[a-z%]$/iu.test(attrs.lineHeight) ? attrs.lineHeight : '');
+    const ratio = Number(attrs.lineHeight);
+    if (exact && exact > 0) line = { 'w:line': exact, 'w:lineRule': 'exact' };
+    else if (Number.isFinite(ratio) && ratio > 0) line = { 'w:line': Math.round((ratio / factor) * 240), 'w:lineRule': 'auto' };
+  } else if (factor !== fontLineFactor(DEFAULT_FONT)) line = { 'w:line': Math.round((LINE_HEIGHT / factor) * 240), 'w:lineRule': 'auto' };
+  if (before !== null || after !== null || line['w:line'] !== undefined) properties.push(element('w:spacing', { 'w:before': before ?? undefined, 'w:after': after ?? undefined, ...line }));
+  const left = lengthTwips(attrs.indentLeft) ?? options.indent ?? null; const right = lengthTwips(attrs.indentRight); const first = lengthTwips(attrs.indentFirstLine);
+  if (left !== null || right !== null || first !== null) {
+    properties.push(element('w:ind', { 'w:left': left ?? undefined, 'w:right': right ?? undefined, ...(first !== null ? (first < 0 ? { 'w:hanging': -first } : { 'w:firstLine': first }) : {}) }));
+  }
+  // List Paragraph drops spacing between items; stated spacing has to switch that off to survive.
+  if (listed) properties.push(element('w:contextualSpacing', { 'w:val': 0 }));
+  const align = alignmentFrom(attrs.textAlign);
   if (align) properties.push(element('w:jc', { 'w:val': JUSTIFICATION[align] }));
-  const body = (node.content ?? []).map((child) => runs(child, relationships)).join('');
-  const prefix = properties.length ? `<w:pPr>${properties.join('')}</w:pPr>` : '';
-  return `<w:p>${prefix}${body}</w:p>`;
+  return properties.length ? `<w:pPr>${properties.join('')}</w:pPr>` : '';
 }
 
-function listParagraphs(node: EditorNode, relationships: Relationship[], numId: number): string {
-  return (node.content ?? []).flatMap((item) => (item.content ?? []).map((block, index) =>
-    // The marker belongs to the item's first block; a second block inside the same item is a continuation.
-    block.type === 'paragraph'
-      ? paragraph(block, relationships, index === 0 ? { style: 'ListParagraph', numId } : { style: 'ListParagraph', indent: 720 })
-      : blocks(block, relationships),
-  )).join('');
+function paragraph(node: EditorNode, writer: Writer, options: ParagraphOptions = {}): string {
+  const prefix = options.prefix ? `<w:r>${textElements(options.prefix)}</w:r>` : '';
+  const body = (node.content ?? []).map((child) => runs(child, writer)).join('');
+  return `<w:p>${paragraphProperties(node, options)}${prefix}${body}</w:p>`;
 }
 
-function tableXml(node: EditorNode, relationships: Relationship[], size: PageSize): string {
+function listParagraphs(node: EditorNode, writer: Writer, level: number): string {
+  const ordered = node.type === 'orderedList';
+  const attrs = node.attrs ?? {};
+  const definition: ListDefinition = {
+    id: writer.lists.length + 1, level: Math.min(level, 8), ordered,
+    type: typeof attrs.type === 'string' && ORDERED_FORMAT[attrs.type] ? attrs.type : '1',
+    start: typeof attrs.start === 'number' && attrs.start >= 0 ? Math.floor(attrs.start) : 1,
+    bullet: typeof attrs.listStyle === 'string' && BULLETS[attrs.listStyle] ? attrs.listStyle : 'disc',
+  };
+  writer.lists.push(definition);
+  return (node.content ?? []).flatMap((item) => (item.content ?? []).map((block, index) => {
+    // The marker belongs to the item's first block; later blocks continue the item at its indent.
+    if (block.type === 'paragraph') return paragraph(block, writer, index === 0 ? { style: 'ListParagraph', list: { numId: definition.id, level: definition.level } } : { style: 'ListParagraph', indent: 720 * (definition.level + 1) });
+    if (block.type === 'bulletList' || block.type === 'orderedList') return listParagraphs(block, writer, level + 1);
+    if (block.type === 'taskList') return taskParagraphs(block, writer, level + 1);
+    return blocks(block, writer);
+  })).join('');
+}
+
+// Word has no checklist; a ballot box keeps the state readable.
+function taskParagraphs(node: EditorNode, writer: Writer, level: number): string {
+  return (node.content ?? []).flatMap((item) => (item.content ?? []).map((block, index) => {
+    if (block.type === 'paragraph') return paragraph(block, writer, { indent: level ? 720 * level : undefined, prefix: index === 0 ? (item.attrs?.checked === true ? '☒ ' : '☐ ') : undefined });
+    if (block.type === 'taskList') return taskParagraphs(block, writer, level + 1);
+    if (block.type === 'bulletList' || block.type === 'orderedList') return listParagraphs(block, writer, level + 1);
+    return blocks(block, writer);
+  })).join('');
+}
+
+function tableXml(node: EditorNode, writer: Writer): string {
   const rows = node.content ?? [];
-  const columns = Math.max(1, ...rows.map((row) => (row.content ?? []).length));
-  const total = contentWidth(size);
-  const width = Math.floor(total / columns);
-  const grid = element('w:tblGrid', {}, Array.from({ length: columns }, () => element('w:gridCol', { 'w:w': width })).join(''));
+  const spanOf = (cell: EditorNode) => typeof cell.attrs?.colspan === 'number' && cell.attrs.colspan > 1 ? Math.floor(cell.attrs.colspan) : 1;
+  const rowSpanOf = (cell: EditorNode) => typeof cell.attrs?.rowspan === 'number' && cell.attrs.rowspan > 1 ? Math.floor(cell.attrs.rowspan) : 1;
+
+  // Lay the cells onto a grid first: a rowspan occupies columns in the rows below it, which Word marks with vMerge continuations.
+  const occupied: Array<Map<number, { span: number }>> = rows.map(() => new Map());
+  const placed = rows.map((row, rowIndex) => {
+    let column = 0;
+    return (row.content ?? []).map((cell) => {
+      while (occupied[rowIndex]!.has(column)) column += occupied[rowIndex]!.get(column)!.span;
+      const span = spanOf(cell); const rowspan = rowSpanOf(cell);
+      for (let below = 1; below < rowspan && rowIndex + below < rows.length; below++) occupied[rowIndex + below]!.set(column, { span });
+      const at = column; column += span;
+      return { cell, column: at, span, rowspan };
+    });
+  });
+  const columns = Math.max(1, ...placed.map((row, rowIndex) => Math.max(0, ...row.map((slot) => slot.column + slot.span), ...[...occupied[rowIndex]!].map(([column, slot]) => column + slot.span))));
+
+  const widths: Array<number | null> = Array(columns).fill(null);
+  for (const row of placed) for (const slot of row) {
+    const colwidth = Array.isArray(slot.cell.attrs?.colwidth) ? slot.cell.attrs.colwidth as unknown[] : [];
+    colwidth.forEach((width, offset) => { if (typeof width === 'number' && width > 0 && widths[slot.column + offset] === null) widths[slot.column + offset] = Math.round(width * TWIPS_PER_PX); });
+  }
+  const known = widths.filter((width): width is number => width !== null);
+  const fallback = Math.max(360, Math.floor((contentWidth(writer.size, writer.margins) - known.reduce((sum, width) => sum + width, 0)) / Math.max(1, columns - known.length)));
+  const grid = widths.map((width) => width ?? (known.length === columns ? 0 : fallback));
+
   const borders = element('w:tblBorders', {}, (['top', 'left', 'bottom', 'right', 'insideH', 'insideV'] as const)
     .map((side) => element(`w:${side}`, { 'w:val': 'single', 'w:sz': 4, 'w:space': 0, 'w:color': 'auto' })).join(''));
-  const properties = element('w:tblPr', {}, `${element('w:tblStyle', { 'w:val': 'TableGrid' })}${element('w:tblW', { 'w:w': 0, 'w:type': 'auto' })}${borders}`);
-  const body = rows.map((row) => {
-    const cells = (row.content ?? []).map((cell) => {
-      const span = typeof cell.attrs?.colspan === 'number' && cell.attrs.colspan > 1 ? element('w:gridSpan', { 'w:val': cell.attrs.colspan }) : '';
-      const vMerge = typeof cell.attrs?.rowspan === 'number' && cell.attrs.rowspan > 1 ? element('w:vMerge', { 'w:val': 'restart' }) : '';
-      const cellProperties = element('w:tcPr', {}, `${element('w:tcW', { 'w:w': width, 'w:type': 'dxa' })}${span}${vMerge}`);
-      const content = (cell.content ?? []).map((block) => blocks(block, relationships, cell.type === 'tableHeader')).join('') || '<w:p/>';
-      return element('w:tc', {}, `${cellProperties}${content}`);
-    }).join('');
-    return element('w:tr', {}, cells);
+  const properties = element('w:tblPr', {}, `${element('w:tblStyle', { 'w:val': 'TableGrid' })}${element('w:tblW', { 'w:w': 0, 'w:type': 'auto' })}${borders}${element('w:tblLayout', { 'w:type': 'fixed' })}`);
+  const gridXml = element('w:tblGrid', {}, grid.map((width) => element('w:gridCol', { 'w:w': width })).join(''));
+  const widthOf = (column: number, span: number) => grid.slice(column, column + span).reduce((sum, width) => sum + width, 0);
+
+  const body = placed.map((row, rowIndex) => {
+    const header = row.length > 0 && row.every((slot) => slot.cell.type === 'tableHeader');
+    const continuations = [...occupied[rowIndex]!].map(([column, slot]) => ({ column, span: slot.span, xml: element('w:tc', {},
+      `${element('w:tcPr', {}, `${element('w:tcW', { 'w:w': widthOf(column, slot.span), 'w:type': 'dxa' })}${slot.span > 1 ? element('w:gridSpan', { 'w:val': slot.span }) : ''}${element('w:vMerge')}`)}<w:p/>`) }));
+    const cells = row.map((slot) => {
+      const attrs = slot.cell.attrs ?? {};
+      const shading = hexColor(attrs.background);
+      const vAlign = attrs.verticalAlign === 'middle' ? 'center' : attrs.verticalAlign === 'bottom' ? 'bottom' : null;
+      const cellProperties = element('w:tcPr', {},
+        element('w:tcW', { 'w:w': widthOf(slot.column, slot.span), 'w:type': 'dxa' }) +
+        (slot.span > 1 ? element('w:gridSpan', { 'w:val': slot.span }) : '') +
+        (slot.rowspan > 1 ? element('w:vMerge', { 'w:val': 'restart' }) : '') +
+        (shading ? element('w:shd', { 'w:val': 'clear', 'w:color': 'auto', 'w:fill': shading }) : '') +
+        (vAlign ? element('w:vAlign', { 'w:val': vAlign }) : ''));
+      const content = (slot.cell.content ?? []).map((block) => blocks(block, writer, slot.cell.type === 'tableHeader')).join('') || '<w:p/>';
+      return { column: slot.column, xml: element('w:tc', {}, `${cellProperties}${content}`) };
+    });
+    const ordered = [...cells, ...continuations].sort((a, b) => a.column - b.column).map((cell) => cell.xml).join('');
+    return element('w:tr', {}, `${header ? element('w:trPr', {}, element('w:tblHeader')) : ''}${ordered}`);
   }).join('');
-  return element('w:tbl', {}, `${properties}${grid}${body}`);
+  return element('w:tbl', {}, `${properties}${gridXml}${body}`);
 }
 
-function blocks(node: EditorNode, relationships: Relationship[], header = false, size: PageSize = 'a4'): string {
+function blocks(node: EditorNode, writer: Writer, header = false): string {
   switch (node.type) {
-    case 'paragraph': return paragraph(node, relationships, header ? { style: 'Strong' } : {});
+    case 'paragraph': return paragraph(node, writer, header ? { style: 'Strong' } : {});
     case 'heading': {
       const level = Math.min(6, Math.max(1, typeof node.attrs?.level === 'number' ? node.attrs.level : 1)) as 1 | 2 | 3 | 4 | 5 | 6;
-      return paragraph(node, relationships, { style: `Heading${level}` });
+      return paragraph(node, writer, { style: `Heading${level}` });
     }
-    case 'blockquote': return (node.content ?? []).map((child) => child.type === 'paragraph' ? paragraph(child, relationships, { style: 'Quote' }) : blocks(child, relationships, header, size)).join('');
-    case 'bulletList': return listParagraphs(node, relationships, BULLET_NUM_ID);
-    case 'orderedList': return listParagraphs(node, relationships, ORDERED_NUM_ID);
+    case 'blockquote': return (node.content ?? []).map((child) => child.type === 'paragraph' ? paragraph(child, writer, { style: 'Quote' }) : blocks(child, writer, header)).join('');
+    case 'bulletList': case 'orderedList': return listParagraphs(node, writer, 0);
+    case 'taskList': return taskParagraphs(node, writer, 0);
     case 'horizontalRule': return `<w:p><w:pPr>${element('w:pBdr', {}, element('w:bottom', { 'w:val': 'single', 'w:sz': 6, 'w:space': 1, 'w:color': 'auto' }))}</w:pPr></w:p>`;
-    case 'table': return tableXml(node, relationships, size);
-    default: return (node.content ?? []).map((child) => blocks(child, relationships, header, size)).join('');
+    case 'pageBreak': return `<w:p><w:r>${element('w:br', { 'w:type': 'page' })}</w:r></w:p>`;
+    case 'table': return tableXml(node, writer);
+    default: return (node.content ?? []).map((child) => blocks(child, writer, header)).join('');
   }
 }
 
@@ -130,29 +259,40 @@ function stylesXml(): string {
     element('w:pPr', {}, `${element('w:spacing', { 'w:before': 200, 'w:after': 200 })}${element('w:ind', { 'w:left': 720, 'w:right': 720 })}`) +
     element('w:rPr', {}, `${element('w:i')}${element('w:color', { 'w:val': '404040' })}`));
   const strong = element('w:style', { 'w:type': 'paragraph', 'w:styleId': 'Strong' },
-    `${element('w:name', { 'w:val': 'Strong Paragraph' })}${element('w:basedOn', { 'w:val': 'Normal' })}` + element('w:rPr', {}, element('w:b')));
+    `${element('w:name', { 'w:val': 'Strong Paragraph' })}${element('w:basedOn', { 'w:val': 'Normal' })}` +
+    element('w:pPr', {}, element('w:spacing', { 'w:after': 0 })) + element('w:rPr', {}, element('w:b')));
   const hyperlink = element('w:style', { 'w:type': 'character', 'w:styleId': 'Hyperlink' },
     `${element('w:name', { 'w:val': 'Hyperlink' })}` + element('w:rPr', {}, `${element('w:color', { 'w:val': '0563C1' })}${element('w:u', { 'w:val': 'single' })}`));
-  const tableGrid = element('w:style', { 'w:type': 'table', 'w:styleId': 'TableGrid' }, `${element('w:name', { 'w:val': 'Table Grid' })}${element('w:basedOn', { 'w:val': 'TableNormal' })}`);
+  // Cell paragraphs sit tight in Word's Table Grid, as they do on the canvas.
+  const tableGrid = element('w:style', { 'w:type': 'table', 'w:styleId': 'TableGrid' },
+    `${element('w:name', { 'w:val': 'Table Grid' })}${element('w:pPr', {}, element('w:spacing', { 'w:after': 0 }))}`);
 
   return `${XML_DECLARATION}<w:styles ${W}>${docDefaults}${normal}${headings}${listParagraph}${quote}${strong}${hyperlink}${tableGrid}</w:styles>`;
 }
 
-function numberingXml(): string {
-  const level = (format: string, text: string, symbolFont?: string) => element('w:lvl', { 'w:ilvl': 0 },
-    `${element('w:start', { 'w:val': 1 })}${element('w:numFmt', { 'w:val': format })}${element('w:lvlText', { 'w:val': text })}${element('w:lvlJc', { 'w:val': 'left' })}` +
-    element('w:pPr', {}, element('w:ind', { 'w:left': 720, 'w:hanging': 360 })) +
-    (symbolFont ? element('w:rPr', {}, element('w:rFonts', { 'w:ascii': symbolFont, 'w:hAnsi': symbolFont, 'w:hint': 'default' })) : ''));
-  const abstract = (id: number, body: string) => element('w:abstractNum', { 'w:abstractNumId': id }, `${element('w:multiLevelType', { 'w:val': 'hybridMultilevel' })}${body}`);
-  const num = (id: number, abstractId: number) => element('w:num', { 'w:numId': id }, element('w:abstractNumId', { 'w:val': abstractId }));
-  return `${XML_DECLARATION}<w:numbering ${W}>${abstract(0, level('bullet', '•', 'Symbol'))}${abstract(1, level('decimal', '%1.'))}${num(BULLET_NUM_ID, 0)}${num(ORDERED_NUM_ID, 1)}</w:numbering>`;
+function numberingXml(lists: ListDefinition[]): string {
+  const level = (ilvl: number, list: ListDefinition | null) => {
+    // Levels other than the list's own keep a sensible default, in case Word's UI promotes or demotes an item.
+    const ordered = list ? list.ordered : ilvl % 2 === 1;
+    const format = ordered ? ORDERED_FORMAT[list?.type ?? '1']! : 'bullet';
+    const bullet = BULLETS[list?.bullet ?? 'disc']!;
+    const text = ordered ? `%${ilvl + 1}.` : bullet.glyph;
+    return element('w:lvl', { 'w:ilvl': ilvl },
+      `${element('w:start', { 'w:val': list?.start ?? 1 })}${element('w:numFmt', { 'w:val': format })}${element('w:lvlText', { 'w:val': text })}${element('w:lvlJc', { 'w:val': 'left' })}` +
+      element('w:pPr', {}, element('w:ind', { 'w:left': 720 * (ilvl + 1), 'w:hanging': 360 })) +
+      (!ordered && bullet.font ? element('w:rPr', {}, element('w:rFonts', { 'w:ascii': bullet.font, 'w:hAnsi': bullet.font, 'w:hint': 'default' })) : ''));
+  };
+  const abstracts = lists.map((list) => element('w:abstractNum', { 'w:abstractNumId': list.id },
+    `${element('w:multiLevelType', { 'w:val': 'hybridMultilevel' })}${Array.from({ length: 9 }, (_, ilvl) => level(ilvl, ilvl === list.level ? list : null)).join('')}`)).join('');
+  const nums = lists.map((list) => element('w:num', { 'w:numId': list.id }, element('w:abstractNumId', { 'w:val': list.id }))).join('');
+  return `${XML_DECLARATION}<w:numbering ${W}>${abstracts}${nums}</w:numbering>`;
 }
 
-function sectionProperties(size: PageSize): string {
+function sectionProperties(size: PageSize, margins: PageMargins): string {
   const page = PAGES[size];
   return element('w:sectPr', {},
     element('w:pgSz', { 'w:w': page.width, 'w:h': page.height }) +
-    element('w:pgMar', { 'w:top': page.margin.top, 'w:right': page.margin.right, 'w:bottom': page.margin.bottom, 'w:left': page.margin.left, 'w:header': 720, 'w:footer': 720, 'w:gutter': 0 }) +
+    element('w:pgMar', { 'w:top': margins.top, 'w:right': margins.right, 'w:bottom': margins.bottom, 'w:left': margins.left, 'w:header': 720, 'w:footer': 720, 'w:gutter': 0 }) +
     element('w:cols', { 'w:space': 720 }) +
     element('w:docGrid', { 'w:linePitch': 360 }));
 }
@@ -170,19 +310,19 @@ function documentRels(relationships: Relationship[]): string {
   return `${XML_DECLARATION}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${links}</Relationships>`;
 }
 
-export type ExportOptions = { title?: string; language?: string; pageSize?: PageSize; modified?: Date };
+export type ExportOptions = { title?: string; language?: string; pageSize?: PageSize; margins?: PageMargins | null; modified?: Date };
 
-// The body XML plus the hyperlink relationships it needs; exported separately so tests can read it directly.
-export function documentXml(value: unknown, size: PageSize): { xml: string; relationships: Relationship[] } {
+// The body XML plus what it references; exported separately so tests can read it directly.
+export function documentXml(value: unknown, size: PageSize, margins: PageMargins = PAGES[size].margin): { xml: string; relationships: Relationship[]; numbering: string } {
   const document: EditorDocument = EditorDocumentSchema.parse(value);
-  const relationships: Relationship[] = [];
-  const body = document.content.map((node) => blocks(node, relationships, false, size)).join('') || '<w:p/>';
-  return { xml: `${XML_DECLARATION}<w:document ${W} ${R}><w:body>${body}${sectionProperties(size)}</w:body></w:document>`, relationships };
+  const writer: Writer = { relationships: [], lists: [], size, margins };
+  const body = document.content.map((node) => blocks(node, writer)).join('') || '<w:p/>';
+  return { xml: `${XML_DECLARATION}<w:document ${W} ${R}><w:body>${body}${sectionProperties(size, margins)}</w:body></w:document>`, relationships: writer.relationships, numbering: numberingXml(writer.lists) };
 }
 
 export async function editorDocumentToDocx(value: unknown, options: ExportOptions = {}): Promise<Uint8Array> {
   const size = options.pageSize ?? defaultPageSize(options.language ?? 'id');
-  const { xml, relationships } = documentXml(value, size);
+  const { xml, relationships, numbering } = documentXml(value, size, options.margins ?? PAGES[size].margin);
   const encoder = new TextEncoder();
   const modified = (options.modified ?? new Date()).toISOString().replace(/\.\d{3}Z$/, 'Z');
   const entries: ZipEntry[] = [
@@ -191,7 +331,7 @@ export async function editorDocumentToDocx(value: unknown, options: ExportOption
     { name: 'docProps/core.xml', data: encoder.encode(coreXml(options.title ?? 'Document', modified)) },
     { name: 'word/document.xml', data: encoder.encode(xml) },
     { name: 'word/styles.xml', data: encoder.encode(stylesXml()) },
-    { name: 'word/numbering.xml', data: encoder.encode(numberingXml()) },
+    { name: 'word/numbering.xml', data: encoder.encode(numbering) },
     { name: 'word/_rels/document.xml.rels', data: encoder.encode(documentRels(relationships)) },
   ];
   return zip(entries);

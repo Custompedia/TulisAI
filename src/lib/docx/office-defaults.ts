@@ -24,7 +24,21 @@ export const PAGES: Record<PageSize, PageGeometry> = {
 // Word picks the page size from the editing locale; Letter is the US default, A4 is the default elsewhere.
 export const defaultPageSize = (language: string): PageSize => (language === 'en' ? 'letter' : 'a4');
 
-export const contentWidth = (size: PageSize) => { const page = PAGES[size]; return page.width - page.margin.left - page.margin.right; };
+export type PageMargins = PageGeometry['margin'];
+const MARGIN_SIDES = ['top', 'right', 'bottom', 'left'] as const;
+// Stored in notebook preferences as "top,right,bottom,left" twips, since preferences only hold primitives.
+export const formatMargins = (margins: PageMargins): string => MARGIN_SIDES.map((side) => Math.round(margins[side])).join(',');
+export function parseMargins(value: unknown, size: PageSize = 'a4'): PageMargins | null {
+  if (typeof value !== 'string') return null;
+  const parts = value.split(',').map((part) => Number(part.trim()));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 7200)) return null;
+  const [top, right, bottom, left] = parts as [number, number, number, number];
+  const page = PAGES[size];
+  // A margin set that leaves under an inch of text area is a corrupt value, not a layout.
+  return page.width - left - right >= TWIPS_PER_INCH && page.height - top - bottom >= TWIPS_PER_INCH ? { top, right, bottom, left } : null;
+}
+
+export const contentWidth = (size: PageSize, margins: PageMargins = PAGES[size].margin) => PAGES[size].width - margins.left - margins.right;
 
 export const DEFAULT_FONT = 'Calibri';
 // Calibri cannot be redistributed as a webfont; Carlito has the same metrics, so line breaks land identically.
@@ -68,17 +82,18 @@ export const alignmentOf = (justification: string | null | undefined): Alignment
   justification === 'both' ? 'justify' : justification === 'center' || justification === 'right' || justification === 'left' ? justification : null;
 
 // CSS custom properties for the paged canvas, derived from exactly the numbers above.
-export function pageStyle(size: PageSize): Record<string, string> {
+export function pageStyle(size: PageSize, margins?: PageMargins | null): Record<string, string> {
   const page = PAGES[size];
+  const margin = margins ?? page.margin;
   const px = (twips: number) => `${twipsToPx(twips).toFixed(2)}px`;
   return {
     '--page-width': px(page.width),
     '--page-height': px(page.height),
-    '--page-margin-top': px(page.margin.top),
-    '--page-margin-right': px(page.margin.right),
-    '--page-margin-bottom': px(page.margin.bottom),
-    '--page-margin-left': px(page.margin.left),
-    '--page-content-width': px(contentWidth(size)),
+    '--page-margin-top': px(margin.top),
+    '--page-margin-right': px(margin.right),
+    '--page-margin-bottom': px(margin.bottom),
+    '--page-margin-left': px(margin.left),
+    '--page-content-width': px(contentWidth(size, margin)),
     '--page-font': DEFAULT_FONT_STACK,
     '--page-heading-font': HEADING_FONT_STACK,
     '--page-font-size': `${(DEFAULT_FONT_POINTS * (96 / 72)).toFixed(4)}px`,
@@ -87,3 +102,38 @@ export function pageStyle(size: PageSize): Record<string, string> {
     '--page-tab': px(DEFAULT_TAB_TWIPS),
   };
 }
+
+// Word's "multiple" line spacing scales the font's own line height ((ascent + descent + gap) / em), so a CSS
+// ratio needs that factor too; unknown fonts get a typical 1.15.
+const FONT_LINE_FACTORS: Record<string, number> = {
+  calibri: FONT_LINE_HEIGHT, 'calibri light': FONT_LINE_HEIGHT, carlito: FONT_LINE_HEIGHT, cambria: 1.1719, caladea: 1.1719,
+  'times new roman': 1.1499, tinos: 1.1499, 'liberation serif': 1.1499, arial: 1.1499, arimo: 1.1499, 'liberation sans': 1.1499,
+  'courier new': 1.1328, cousine: 1.1328, georgia: 1.1362, verdana: 1.2153, tahoma: 1.2075, 'segoe ui': 1.3301,
+  garamond: 1.1245, 'book antiqua': 1.1704, 'bookman old style': 1.1699, 'century gothic': 1.2266, 'trebuchet ms': 1.1611,
+};
+export const fontLineFactor = (font: string | null | undefined) => FONT_LINE_FACTORS[(font ?? DEFAULT_FONT).toLowerCase()] ?? 1.15;
+
+// Metric-compatible open fonts, so a document set in an Office font keeps its line breaks where the Office font is missing.
+const FONT_SUBSTITUTES: Record<string, string> = {
+  calibri: 'Carlito', 'calibri light': 'Carlito', cambria: 'Caladea', 'times new roman': 'Tinos', arial: 'Arimo', 'courier new': 'Cousine',
+};
+const GENERIC = /^(?:serif|sans-serif|monospace|cursive|fantasy|system-ui)$/u;
+const quoteFamily = (name: string) => /^[a-z][\w-]*$/iu.test(name) ? name : `'${name}'`;
+// A Word font name as a CSS font-family stack; the Word name leads so an installed Office font wins.
+export function fontStack(name: string): string {
+  const clean = name.replace(/['";{}<>\\]/gu, '').trim().slice(0, 80);
+  const substitute = FONT_SUBSTITUTES[clean.toLowerCase()];
+  return [clean, substitute].filter(Boolean).map((family) => quoteFamily(family!)).join(', ');
+}
+const SUBSTITUTE_OF: Record<string, string> = { carlito: 'Calibri', caladea: 'Cambria', tinos: 'Times New Roman', 'liberation serif': 'Times New Roman', arimo: 'Arial', 'liberation sans': 'Arial', cousine: 'Courier New', 'liberation mono': 'Courier New' };
+// The Word font name back out of a CSS stack: the first real family, with open substitutes mapped to their Office original.
+export function fontFromStack(stack: string): string | null {
+  const first = stack.split(',').map((family) => family.trim().replace(/^['"]|['"]$/gu, '').trim()).find((family) => family && !GENERIC.test(family));
+  return first ? SUBSTITUTE_OF[first.toLowerCase()] ?? first : null;
+}
+
+// The sixteen colours w:highlight can name; anything else travels as run shading.
+export const HIGHLIGHT_COLORS: Record<string, string> = {
+  black: '000000', blue: '0000FF', cyan: '00FFFF', green: '00FF00', magenta: 'FF00FF', red: 'FF0000', yellow: 'FFFF00', white: 'FFFFFF',
+  darkBlue: '000080', darkCyan: '008080', darkGreen: '008000', darkMagenta: '800080', darkRed: '800000', darkYellow: '808000', darkGray: '808080', lightGray: 'C0C0C0',
+};

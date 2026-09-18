@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { documentText, plainTextDocument, replaceTextInDocument, selectionOffsets } from "../../src/lib/editor/document";
 import { EditorDocumentSchema } from "../../src/lib/contracts";
+import { documentSchema } from "../../src/lib/editor/extensions";
 
 describe("editor document serialization", () => {
   it("serializes blocks, adjacent marks, unicode, lists and tables deterministically", () => {
@@ -90,10 +91,28 @@ describe('formatting the toolbar is allowed to offer', () => {
     for (const textAlign of ['left', 'center', 'right', 'justify']) expect(() => parse({ type: 'paragraph', attrs: { textAlign }, content: [text('x')] })).not.toThrow();
   });
 
-  it('rejects per-run font family and size, which is why the toolbar has no font picker', () => {
-    expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'textStyle', attrs: { fontFamily: 'Arial' } }])] })).toThrow();
+  it('accepts run styles and paragraph formatting, and still refuses non-http links', () => {
+    expect(() => parse({ type: 'paragraph', attrs: { lineHeight: '1.5', spaceAfter: '8pt', indentFirstLine: '36pt' }, content: [text('x', [{ type: 'textStyle', attrs: { fontFamily: 'Arial', fontSize: '12pt', color: '#1f3763' } }, { type: 'highlight', attrs: { color: '#ffff00' } }, { type: 'strike' }, { type: 'superscript' }])] })).not.toThrow();
     expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'fontSize', attrs: { size: '18pt' } }])] })).toThrow();
-    // A non-http link is refused too, so the toolbar validates the scheme before applying it.
     expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'link', attrs: { href: 'javascript:alert(1)' } }])] })).toThrow();
+  });
+});
+
+// Regression: the editor's own JSON (every attribute, defaults included) must pass the server schema,
+// otherwise loading a notebook is cancelled and the canvas stays blank.
+describe('editor JSON round-trip', () => {
+  it('accepts what ProseMirror emits for lists, links, tables and styled runs', () => {
+    const doc = { type: 'doc', content: [
+      { type: 'orderedList', attrs: { start: 3, type: 'i' }, content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Satu' }] }, { type: 'bulletList', attrs: { listStyle: 'circle' }, content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Anak' }] }] }] }] }] },
+      { type: 'paragraph', content: [{ type: 'text', text: 'tautan', marks: [{ type: 'link', attrs: { href: 'https://example.com' } }, { type: 'textStyle', attrs: { fontFamily: 'Times New Roman' } }] }] },
+      { type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: true }, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Selesai' }] }] }] },
+      { type: 'pageBreak' },
+      { type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableCell', attrs: { background: '#eeeeee', colwidth: [120] }, content: [{ type: 'paragraph' }] }] }] },
+    ] };
+    const emitted = documentSchema.nodeFromJSON(doc).toJSON();
+    expect(JSON.stringify(emitted)).toContain('"title":null');
+    const parsed = EditorDocumentSchema.parse(emitted);
+    expect(JSON.stringify(parsed)).not.toContain('null');
+    expect(documentText(parsed)).toBe('Satu\nAnak\ntautan\nSelesai\n\n');
   });
 });

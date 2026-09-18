@@ -42,7 +42,7 @@ describe('review: copying keeps the formatting a paste needs', () => {
 
   it('keeps alignment, blank lines and rules that a paste would otherwise lose', () => {
     const html = documentHtml(doc(paragraph('Kanan', { textAlign: 'right' }), { type: 'paragraph' }, { type: 'horizontalRule' }, paragraph('Kiri', { textAlign: 'left' })));
-    expect(html).toMatch(/<p style="[^"]*text-align:right[^"]*">Kanan<\/p>/);
+    expect(html).toMatch(/<p style="[^"]*text-align:right[^"]*"[^>]*>Kanan<\/p>/);
     expect(html).toMatch(/<p[^>]*>&nbsp;<\/p>/);
     expect(html).toContain('<hr style=');
     // Left is the default, so it is never written out.
@@ -103,5 +103,64 @@ describe('review: copying carries the canvas spacing, not the destination defaul
 
   it('defaults to the plain profile when no mode is given', () => {
     expect(documentHtml(sample)).toBe(documentHtml(sample, { mode: 'plain' }));
+  });
+});
+
+// Copying used to drop fonts, colours, spacing and list types, so a paste into Docs or Word no longer matched
+// the canvas. Explicit node attrs now travel as inline CSS layered on top of the mode profile.
+describe('review: copying carries every format the canvas can show', () => {
+  const styled = (text: string, marks: unknown[]) => ({ type: 'text', text, marks });
+
+  it('writes fonts, colours, highlight, strike and scripts', () => {
+    const html = documentHtml(doc({ type: 'paragraph', content: [
+      styled('Serif', [{ type: 'textStyle', attrs: { fontFamily: 'Times New Roman', fontSize: '14pt', color: '#ff0000', backgroundColor: null } }]),
+      styled('Stabilo', [{ type: 'highlight', attrs: { color: '#fef08a' } }]),
+      styled('Coret', [{ type: 'strike' }]),
+      styled('2', [{ type: 'superscript' }]),
+      styled('i', [{ type: 'subscript' }]),
+    ] }), { mode: 'paged' });
+    expect(html).toContain('<span style="font-family:Times New Roman;font-size:14pt;color:#ff0000;">Serif</span>');
+    expect(html).toContain('<mark data-color="#fef08a" style="background-color:#fef08a;color:inherit;">Stabilo</mark>');
+    expect(html).toMatch(/<s style="text-decoration:line-through">Coret<\/s>/);
+    expect(html).toContain('<sup>2</sup>');
+    expect(html).toContain('<sub>i</sub>');
+  });
+
+  it('never writes an unsafe value into a style attribute', () => {
+    const html = documentHtml(doc({ type: 'paragraph', content: [styled('x', [{ type: 'textStyle', attrs: { fontFamily: 'a;background:url(https://evil.test)', color: 'red;x' } }])] }));
+    expect(html).not.toContain('evil');
+    expect(html).toContain('>x<');
+  });
+
+  it('layers paragraph spacing, indents and line height over the profile', () => {
+    const html = documentHtml(doc(paragraph('Rapat', { lineHeight: '1.5', spaceBefore: '12pt', spaceAfter: '6pt', indentLeft: '36pt', indentRight: '0pt', indentFirstLine: '-18pt', textAlign: 'justify' })), { mode: 'paged' });
+    const style = /<p style="([^"]*)"/u.exec(html)![1]!;
+    // Explicit attrs come after the profile margin so they win in CSS.
+    expect(style.indexOf('margin:0 0')).toBeLessThan(style.indexOf('margin-top:12pt'));
+    expect(style).toContain('line-height:1.5;margin-top:12pt;margin-bottom:6pt;margin-left:36pt;margin-right:0pt;text-indent:-18pt;text-align:justify;');
+  });
+
+  it('writes list types, bullet styles, start numbers and task checkboxes', () => {
+    const html = documentHtml(doc(
+      { type: 'orderedList', attrs: { start: 4, type: 'i' }, content: [{ type: 'listItem', content: [paragraph('Empat'), { type: 'bulletList', attrs: { listStyle: 'square' }, content: [{ type: 'listItem', content: [paragraph('Anak')] }] }] }] },
+      { type: 'taskList', content: [{ type: 'taskItem', attrs: { checked: true }, content: [paragraph('Selesai')] }, { type: 'taskItem', attrs: { checked: false }, content: [paragraph('Belum')] }] },
+    ));
+    expect(html).toMatch(/<ol start="4" type="i" style="[^"]*list-style-type:lower-roman;"/u);
+    expect(html).toMatch(/<li><p[^>]*>Empat<\/p><ul style="[^"]*list-style-type:square;"/u);
+    expect(html).toContain('\u2611 </span>Selesai');
+    expect(html).toContain('\u2610 </span>Belum');
+    expect(html).toContain('list-style-type:none');
+  });
+
+  it('writes column widths, spans, shading and page breaks', () => {
+    const cell = (text: string, attrs: Record<string, unknown>) => ({ type: 'tableCell', attrs, content: [paragraph(text)] });
+    const html = documentHtml(doc(
+      { type: 'table', content: [{ type: 'tableRow', content: [cell('A', { colwidth: [120] }), cell('B', { colspan: 2, colwidth: [80, 100], background: '#fce5cd', verticalAlign: 'middle' })] }] },
+      { type: 'pageBreak' },
+      paragraph('Halaman dua'),
+    ), { mode: 'paged' });
+    expect(html).toContain('<colgroup><col width="120" style="width:120px" /><col width="80" style="width:80px" /><col width="100" style="width:100px" /></colgroup>');
+    expect(html).toMatch(/<td colspan="2" colwidth="80,100" width="180" style="[^"]*width:180px;background-color:#fce5cd;vertical-align:middle;"/u);
+    expect(html).toContain('<br clear="all" style="mso-special-character:line-break;page-break-before:always" />');
   });
 });

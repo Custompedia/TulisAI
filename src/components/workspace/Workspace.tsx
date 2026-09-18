@@ -2,9 +2,6 @@
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import TextAlign from '@tiptap/extension-text-align';
-import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import type { JSONContent } from '@tiptap/core';
 import { del, get, set } from 'idb-keyval';
 import { ClipboardPaste, CopyPlus, PanelRightOpen, Redo2, RefreshCw, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
@@ -14,7 +11,9 @@ import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { guardedPush, leaveHref, leavesPath, setLeaveGuard } from '@/lib/client/navigation-guard';
 import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/document';
-import { copyRichText } from '@/lib/editor/clipboard';
+import { copyRichText, handleClipboardEvent } from '@/lib/editor/clipboard';
+import { normalizePastedHtml, plainTextSlice } from '@/lib/editor/paste-normalize';
+import { documentExtensions } from '@/lib/editor/extensions';
 import { countWords } from '@/lib/editor/metrics';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
@@ -23,8 +22,8 @@ import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useEntitlements, useSessionGuard, type UserSettings } from '@/components/app/AppShell';
 import { PlansDialog } from '@/components/app/PlansDialog';
-import { ADVANCED_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
-import { defaultPageSize, pageStyle } from '@/lib/docx/office-defaults';
+import { ADVANCED_PREFERENCE, PAGE_MARGINS_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
+import { defaultPageSize, pageStyle, parseMargins } from '@/lib/docx/office-defaults';
 import { docxFilename } from '@/lib/docx/export';
 import { Toast } from '@/components/ui/Toast';
 import { Button, IconButton, pressGreen, raisedGreen } from '@/components/ui/Button';
@@ -39,6 +38,10 @@ import { documentLimits } from './document-limits';
 import { paragraphGutterExtension, paragraphGutterKey, targetAtPosition } from './paragraph-gutter';
 import { InstructionDock } from './InstructionDock';
 import { FormattingToolbar } from './FormattingToolbar';
+import { usePageZoom } from './toolbar/zoom';
+import { paginationExtension } from '@/lib/editor/extensions/pagination';
+import { SearchExtension } from '@/lib/editor/extensions/search';
+import { spellcheckExtension } from '@/lib/editor/extensions/spellcheck';
 import { HistoryPanel } from './HistoryPanel';
 import { ANALYTICS_SECTION_ID, InfoPanel } from './InfoPanel';
 import { InlineResult, type InlineStatus } from './InlineResult';
@@ -49,6 +52,7 @@ import { protectionExtension } from './protection';
 import { SaveStatus } from './SaveStatus';
 import { planInstruction, planSelectionCommand, planStyleCommand, type SelectionCommand, type SelectionPlan } from './selection-commands';
 import { SelectionMenu } from './SelectionMenu';
+import { TableContextMenu } from './toolbar/TableTools';
 import { StudioPanel, StudioStrip, type StudioTab } from './StudioPanel';
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Surface, type Term, type Version } from './types';
 import { versionLabel } from './versions';
@@ -152,10 +156,12 @@ export default function Workspace() {
   const englishRef = useRef(english);
   // The gutter extension is built once, so it reads the current mode through a ref.
   const pagedRef = useRef(false);
+  const canvasRef = useRef<HTMLDivElement>(null);
   // Advanced mode is stored in the notebook's preferences and gated on the server; the client only renders it.
   const advanced = (settings as unknown as Record<string, unknown>)[ADVANCED_PREFERENCE] === true;
   const paged = advanced && has('advanced_notebook');
   pagedRef.current = paged;
+  const pageZoom = usePageZoom(canvasRef, paged);
   const contentRef = useRef<JSONContent | null>(null);
   const rightPanel = usePanelRef();
   const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
@@ -177,16 +183,23 @@ export default function Workspace() {
   const editor = useEditor({
     immediatelyRender: false,
     extensions: [
-      StarterKit.configure({ code: false, codeBlock: false, strike: false, link: { openOnClick: false, autolink: true, protocols: ['http', 'https'] } }),
-      TextAlign.configure({ types: ['heading', 'paragraph'] }),
-      Table.configure({ resizable: false }), TableRow, TableHeader, TableCell,
+      ...documentExtensions,
       protectionExtension(() => termsRef.current, () => protectedLabel.current),
+      SearchExtension, paginationExtension({ enabled: () => pagedRef.current }), spellcheckExtension(() => pagedRef.current),
       inlineTargetExtension,
       paragraphGutterExtension({ enabled: () => pagedRef.current, label: () => englishRef.current ? 'Act on this paragraph' : 'Tindakan untuk paragraf ini' }),
       documentLimits(() => setNotice({ tone: 'error', message: englishRef.current ? 'This content exceeds the document limit or uses unsupported formatting.' : 'Isi melewati batas dokumen atau memakai format yang belum didukung.' })),
     ],
     content: plainTextDocument(''),
-    editorProps: { attributes: { class: 'focus:outline-none', 'aria-label': t('Isi dokumen', 'Document content'), spellcheck: 'true' } },
+    editorProps: {
+      attributes: { class: 'focus:outline-none', 'aria-label': t('Isi dokumen', 'Document content') },
+      transformPastedHTML: (html) => normalizePastedHtml(html),
+      clipboardTextParser: (text, $context) => plainTextSlice(text, $context),
+      handleDOMEvents: {
+        copy: (view, event) => handleClipboardEvent(view, event, { mode: pagedRef.current ? 'paged' : 'plain' }),
+        cut: (view, event) => handleClipboardEvent(view, event, { mode: pagedRef.current ? 'paged' : 'plain', cut: true }),
+      },
+    },
     onUpdate: ({ editor: instance }) => {
       if (initializing.current) return;
       dirty.current = true; stamp.current++; setEditStamp(stamp.current);
@@ -615,9 +628,17 @@ export default function Workspace() {
   async function pasteClipboard() {
     if (!editor) return;
     try {
-      const value = (await navigator.clipboard.readText()).trim();
-      if (!value) return;
-      editor.chain().focus().insertContent(value.split(/\n+/).map((line) => ({ type: 'paragraph', content: line.trim() ? [{ type: 'text', text: line }] : [] }))).run();
+      // Rich HTML first so a paste from Docs or Word keeps its formatting; plain text when the browser refuses read().
+      let html = '', text = '';
+      try {
+        for (const item of await navigator.clipboard.read()) {
+          if (!html && item.types.includes('text/html')) html = await (await item.getType('text/html')).text();
+          if (!text && item.types.includes('text/plain')) text = await (await item.getType('text/plain')).text();
+        }
+      } catch { text = await navigator.clipboard.readText(); }
+      if (!html.trim() && !text.trim()) return;
+      editor.commands.focus();
+      if (html.trim()) editor.view.pasteHTML(html); else editor.view.pasteText(text);
     } catch { setNotice({ tone: 'error', message: t('Browser tidak mengizinkan akses clipboard. Tempel dengan Ctrl+V.', 'The browser blocked clipboard access. Paste with Ctrl+V.') }); }
   }
 
@@ -800,8 +821,11 @@ export default function Workspace() {
   }
 
   // An imported notebook keeps the page size of its source file; otherwise Word's locale default applies.
-  const storedPageSize = (settings as unknown as Record<string, unknown>)[PAGE_SIZE_PREFERENCE];
+  // normalizeSettings keeps only writing controls, so the page layout is read from the stored preferences too.
+  const pageLayout: Record<string, unknown> = { ...(doc?.preferences ?? {}), ...(settings as unknown as Record<string, unknown>) };
+  const storedPageSize = pageLayout[PAGE_SIZE_PREFERENCE];
   const pageSize = storedPageSize === 'a4' || storedPageSize === 'letter' ? storedPageSize : defaultPageSize(settings.language === 'auto' ? locale : settings.language);
+  const pageMargins = parseMargins(pageLayout[PAGE_MARGINS_PREFERENCE], pageSize);
   // Recomputed per render so the dock always names the current target; cheap next to the editor itself.
   const dockRange = loaded ? instructionRange() : null;
   const instructionTarget = dockRange
@@ -868,19 +892,19 @@ export default function Workspace() {
         <span className="hidden shrink-0 rounded-md bg-paper-deep px-2 py-0.5 text-xs text-ink-600 tabular-nums sm:inline"><b className="font-semibold text-ink-800">{numberFormat(words, locale)}</b> {t('kata', 'words')}</span>
         <SaveStatus state={loaded ? save : 'loading'} />
       </header>
-      {paged && !compare && <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} />}
+      {paged && !compare && <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} zoom={pageZoom.zoom} onZoom={pageZoom.setZoom} />}
       {compare ? (
         <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''} applying={busy === 'apply'}
-          paged={paged} pageStyle={paged ? (pageStyle(pageSize) as React.CSSProperties) : undefined}
+          paged={paged} pageStyle={paged ? (pageStyle(pageSize, pageMargins) as React.CSSProperties) : undefined}
           onChange={(a, b) => void openCompare(a, b)} onExit={exitCompare}
           onRestore={(versionId) => { const version = versions.find((item) => item.id === versionId); if (version) setDialog({ kind: 'restore', version }); }}
           onApplyPreview={preview && !preview.output.alternatives && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
       ) : null}
       <div className={`relative min-h-0 flex-1 ${compare ? 'hidden' : ''}`}>
-      <div className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? (pageStyle(pageSize) as React.CSSProperties) : undefined}>
-        <article className={paged ? 'ww-page relative' : 'editor-plain relative mx-auto min-h-full max-w-[760px]'}>
-          {!loaded && <LoadingBlock label={arriving ? t('Menyiapkan notebook…', 'Preparing your notebook…') : t('Memuat notebook…', 'Loading notebook…')} />}
-          {loaded && !text.trim() && (
+      <div ref={canvasRef} className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? (pageStyle(pageSize, pageMargins) as React.CSSProperties) : undefined}>
+        <article className={paged ? 'ww-page-frame relative' : 'editor-plain relative mx-auto min-h-full max-w-[760px]'} style={paged ? ({ '--page-zoom': pageZoom.scale } as React.CSSProperties) : undefined}>
+          {/* Lanjutan shows a bare page like Docs; the hint and paste button belong to Dasar only. */}
+          {loaded && !paged && !text.trim() && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
               <p aria-hidden="true" className="text-[16px] leading-[1.75] text-ink-500">{t('Tulis atau tempel teks yang terasa seperti tulisan AI…', 'Write or paste text that sounds AI-written…')}</p>
               {!frozen && !recovery && (
@@ -890,7 +914,11 @@ export default function Workspace() {
               )}
             </div>
           )}
-          <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
+          <div className={paged ? 'ww-page' : undefined}>
+            {!loaded && <LoadingBlock label={arriving ? t('Menyiapkan notebook…', 'Preparing your notebook…') : t('Memuat notebook…', 'Loading notebook…')} />}
+            <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
+          </div>
+          {editor && loaded && <TableContextMenu editor={editor} disabled={busy !== '' || !!compare || !!recovery} />}
           {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} onCommand={selectionCommand} onStyle={styleCommand} />}
           {editor && loaded && inline && (
             <InlineResult

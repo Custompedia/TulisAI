@@ -8,7 +8,7 @@ import { guardedPush } from '@/lib/client/navigation-guard';
 import { documentText } from '@/lib/editor/document';
 import { defaults, modeFromPrompt } from '@/lib/writing/settings';
 import { DOCX_CONTENT_TYPE } from '@/lib/docx/export';
-import { ADVANCED_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
+import { ADVANCED_PREFERENCE, PAGE_MARGINS_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
 import type { EditorDocument } from '@/lib/editor/document';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -19,7 +19,7 @@ import { useSessionGuard, useShell } from './AppShell';
 const MAX_BYTES = 5_000_000;
 const PREVIEW_CHARACTERS = 1_200;
 
-type Extraction = { title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; warnings: Array<{ code: string; message: string }> };
+type Extraction = { title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; pageMargins: string };
 
 // Two steps on purpose: the file is extracted and shown first, and only a confirmed preview creates a notebook.
 export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
@@ -50,10 +50,10 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
     setBusy('creating'); setError('');
     try {
       const mode = modeFromPrompt(prefs.defaultMode) ?? 'humanize';
-      // Advanced mode on and the file's own page size stored, so the notebook opens looking like the document.
+      // Advanced mode on and the file's own page size and margins stored, so the notebook opens looking like the document.
       const preferences = {
         ...defaults, mode, language: prefs.writingLanguage, context: prefs.humanizerContext,
-        [ADVANCED_PREFERENCE]: true, [PAGE_SIZE_PREFERENCE]: extraction.pageSize,
+        [ADVANCED_PREFERENCE]: true, [PAGE_SIZE_PREFERENCE]: extraction.pageSize, [PAGE_MARGINS_PREFERENCE]: extraction.pageMargins,
       };
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title: extraction.title, language: prefs.writingLanguage, content: extraction.content, preferences }, newKey());
       if (!guardedPush(router, `/notebooks/${doc.id}`)) onClose();
@@ -70,7 +70,7 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal size="lg" busy={busy !== ''} onClose={onClose}
       title={t('Impor dokumen Word', 'Import a Word document')}
-      description={t('Teks, judul, daftar dan tabel dibawa masuk. Periksa hasilnya sebelum notebook dibuat.', 'Text, headings, lists and tables come across. Check the result before the notebook is created.')}
+      description={t('Teks, judul, daftar, tabel dan formatnya dibawa masuk. Periksa hasilnya sebelum notebook dibuat.', 'Text, headings, lists, tables and their formatting come across. Check the result before the notebook is created.')}
       footer={<>
         <Button onClick={onClose} disabled={busy !== ''}>{t('Batal', 'Cancel')}</Button>
         {extraction && <Button onClick={() => { setExtraction(null); setFile(null); input.current?.click(); }} disabled={busy !== ''}>{t('Ganti berkas', 'Choose another file')}</Button>}
@@ -87,7 +87,7 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
             className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line-strong bg-paper px-6 py-10 text-center transition-colors hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60">
             <Upload size={22} aria-hidden="true" className="text-ink-500" />
             <span className="text-[14px] font-semibold text-ink-900">{busy === 'reading' ? t('Membaca berkas…', 'Reading the file…') : t('Pilih berkas .docx', 'Choose a .docx file')}</span>
-            <span className="text-[12.5px] text-ink-500">{t('Maksimal 5 MB. Gambar, header dan komentar tidak dibawa.', 'Up to 5 MB. Images, headers and comments are not imported.')}</span>
+            <span className="text-[12.5px] text-ink-500">{t('Maksimal 5 MB. Teks dan formatnya dibawa seperti di Word.', 'Up to 5 MB. Text and its formatting come across as in Word.')}</span>
           </button>
         )}
 
@@ -104,14 +104,6 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
                 </p>
               </div>
             </div>
-
-            {extraction.warnings.length > 0 && (
-              <Alert tone="warning" title={t('Yang tidak ikut terbawa', 'What was left behind')}>
-                <ul className="list-disc space-y-0.5 pl-4">
-                  {extraction.warnings.map((warning) => <li key={warning.code}>{warning.message}</li>)}
-                </ul>
-              </Alert>
-            )}
 
             {!characters ? (
               <Alert tone="error" title={t('Tidak ada teks yang terbaca', 'No readable text')}>

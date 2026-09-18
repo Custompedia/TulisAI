@@ -67,8 +67,8 @@
 .editor-prose .ProseMirror h1 { font-size: 1.9rem; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
 .editor-prose .ProseMirror h2 { font-size: 1.45rem; line-height: 1.3; font-weight: 600; }
 .editor-prose .ProseMirror h3 { font-size: 1.2rem; line-height: 1.4; font-weight: 600; }
-.editor-prose .ProseMirror ul { list-style: disc; padding-left: 1.5em; }
-.editor-prose .ProseMirror ol { list-style: decimal; padding-left: 1.5em; }
+.editor-prose .ProseMirror ul { list-style-type: disc; padding-left: 1.5em; }
+.editor-prose .ProseMirror ol { list-style-type: decimal; padding-left: 1.5em; }
 .editor-prose .ProseMirror li > p { margin: 0.2em 0; }
 .editor-prose .ProseMirror blockquote { border-left: 3px solid var(--color-line-strong); padding-left: 1em; color: var(--color-ink-600); }
 .editor-prose .ProseMirror a { color: var(--color-brand-600); text-decoration: underline; text-underline-offset: 3px; }
@@ -77,14 +77,51 @@
 .editor-prose .ProseMirror th, .editor-prose .ProseMirror td { border: 1px solid var(--color-line-strong); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
 .editor-prose .ProseMirror th { background: var(--color-paper); font-weight: 600; }
 .editor-prose .ProseMirror[contenteditable="false"] { cursor: default; }
-.editor-plain .ProseMirror { outline: none; min-height: 60vh; font-family: var(--font-sans); font-size: 16px; line-height: 1.75; color: var(--color-ink-900); overflow-wrap: anywhere; }
+.editor-plain .ProseMirror { outline: none; min-height: 60vh; font-family: var(--font-sans); font-size: 16px; line-height: 1.75; color: var(--color-ink-900); overflow-wrap: anywhere; tab-size: 4; }
 .editor-plain .ProseMirror > * + * { margin-top: 0.75em; }
-.editor-plain .ProseMirror ul { list-style: disc; padding-left: 1.5em; }
-.editor-plain .ProseMirror ol { list-style: decimal; padding-left: 1.5em; }
+.editor-plain .ProseMirror ul { list-style-type: disc; padding-left: 1.5em; }
+.editor-plain .ProseMirror ol { list-style-type: decimal; padding-left: 1.5em; }
 .editor-plain .ProseMirror li > p { margin: 0.15em 0; }
 .editor-plain .ProseMirror table { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
 .editor-plain .ProseMirror th, .editor-plain .ProseMirror td { border: 1px solid var(--color-line-strong); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
 .editor-plain .ProseMirror a { color: var(--color-brand-600); text-decoration: underline; }
+
+/* Rich content shared by both canvases: nested list glyphs, list numbering types, checklists, highlights, page breaks. */
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ul ul { list-style-type: circle; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ul ul ul { list-style-type: square; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol ol:not([type]) { list-style-type: lower-alpha; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol ol ol:not([type]) { list-style-type: lower-roman; }
+/* HTML matches `type` case-insensitively, so the upper-case variants need the `s` flag to win. */
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol[type="1"] { list-style-type: decimal; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol[type="a"] { list-style-type: lower-alpha; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol[type="A" s] { list-style-type: upper-alpha; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol[type="i"] { list-style-type: lower-roman; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ol[type="I" s] { list-style-type: upper-roman; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ul[data-type="taskList"] { list-style: none; padding-left: 0; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror ul[data-type="taskList"] ul[data-type="taskList"] { padding-left: 1.5em; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror li[data-type="taskItem"] { display: flex; align-items: flex-start; gap: 0.5em; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror li[data-type="taskItem"] > label { flex: none; display: inline-flex; align-items: center; height: 1lh; user-select: none; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror li[data-type="taskItem"] > label input { width: 0.95em; height: 0.95em; margin: 0; accent-color: var(--color-brand-700); cursor: pointer; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror li[data-type="taskItem"] > div { flex: 1; min-width: 0; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror li[data-type="taskItem"][data-checked="true"] > div { color: #6b6b6b; text-decoration: line-through; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror mark { background-color: #fff2cc; color: inherit; padding: 0; border-radius: 0; }
+/* Tables: fixed layout so stored column widths hold, visible cell selection, and a drag handle for column width. */
+/* Bottom only: the top comes from each canvas's sibling rule, which this selector would otherwise outrank. */
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .tableWrapper { overflow-x: auto; margin-bottom: var(--page-space-after, 0.75em); }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .tableWrapper > table { margin: 0; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror table { table-layout: fixed; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror :is(td, th) { position: relative; min-width: 1em; box-sizing: border-box; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror :is(td, th) > * { margin-bottom: 0; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .selectedCell::after { content: ""; position: absolute; inset: 0; background: rgb(93 115 80 / 0.18); pointer-events: none; z-index: 1; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .column-resize-handle { position: absolute; top: 0; bottom: -1px; right: -2px; width: 4px; background: var(--color-brand-400); pointer-events: none; z-index: 2; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror.resize-cursor { cursor: col-resize; }
+.ProseMirror .ww-page-break { height: 0; margin: 0.75em 0; border-top: 1px dashed var(--color-ink-300); }
+.ProseMirror .ww-page-break.ProseMirror-selectednode { outline: 2px solid var(--color-brand-300); outline-offset: 3px; }
+
+/* Find & replace matches; the current one is stronger so it stays visible among many. */
+.ww-search-match { background: #fce8b2; box-decoration-break: clone; }
+.ww-search-current { background: #f7c35f; box-shadow: 0 0 0 1px #d99e1a; }
+html[data-ww-painting] .ProseMirror { cursor: copy; }
 
 /* Paged canvas: Word's Normal template, so the preview matches the exported DOCX.
    Every number comes from src/lib/docx/office-defaults.ts via the inline custom properties. */
@@ -94,8 +131,11 @@
 @font-face { font-family: 'Carlito'; src: url('/fonts/Carlito-BoldItalic.ttf') format('truetype'); font-weight: 700; font-style: italic; font-display: swap; }
 
 /* Flat page on a grey surround, the way a word processor shows it: no rounded card, no heavy shadow. */
-.editor-paged { display: flex; justify-content: center; padding: 28px 16px 64px; background: #f4f5f2; }
+.editor-paged { display: flex; justify-content: safe center; padding: 28px 16px 64px; background: #f4f5f2; }
+/* The frame holds the overlays (selection card, inline result) unzoomed; only the sheet inside it scales. */
+.editor-paged .ww-page-frame { flex: none; }
 .editor-paged .ww-page {
+  position: relative; zoom: var(--page-zoom, 1);
   width: var(--page-width); min-height: var(--page-height); box-sizing: border-box;
   padding: var(--page-margin-top) var(--page-margin-right) var(--page-margin-bottom) var(--page-margin-left);
   background: #fff; border: 1px solid #d6d8d1; border-radius: 0;
@@ -104,7 +144,7 @@
 .editor-paged .ProseMirror {
   outline: none; width: var(--page-content-width); max-width: 100%;
   font-family: var(--page-font); font-size: var(--page-font-size); line-height: var(--page-line-height);
-  color: #000; overflow-wrap: break-word; tab-size: 4; text-align: left;
+  color: #000; overflow-wrap: break-word; tab-size: var(--page-tab); text-align: left;
 }
 /* Word's Normal style: 8pt after a paragraph, nothing before. */
 .editor-paged .ProseMirror > p { margin: 0 0 var(--page-space-after); }
@@ -119,10 +159,12 @@
 .editor-paged .ProseMirror h3 { font-size: 16px; padding-top: 2.67px; color: #1f3763; }
 .editor-paged .ProseMirror h4, .editor-paged .ProseMirror h5 { font-size: 14.67px; padding-top: 2.67px; }
 .editor-paged .ProseMirror h6 { font-size: 14.67px; padding-top: 2.67px; color: #1f3763; }
+/* An imported heading carries its own space-before; the canvas padding would double it. */
+.editor-paged .ProseMirror :is(h1, h2, h3, h4, h5, h6)[style*="margin-top"] { padding-top: 0; }
 /* Word's List Paragraph: 0.5 inch indent, no spacing between items in the same list. */
 .editor-paged .ProseMirror ul, .editor-paged .ProseMirror ol { margin: 0 0 var(--page-space-after); padding-left: var(--page-tab); }
-.editor-paged .ProseMirror ul { list-style: disc; }
-.editor-paged .ProseMirror ol { list-style: decimal; }
+.editor-paged .ProseMirror ul { list-style-type: disc; }
+.editor-paged .ProseMirror ol { list-style-type: decimal; }
 .editor-paged .ProseMirror li > p { margin: 0; }
 .editor-paged .ProseMirror blockquote { margin: 13.33px var(--page-tab); font-style: italic; color: #404040; border: 0; padding: 0; }
 .editor-paged .ProseMirror hr { border: 0; border-top: 1px solid #000; margin: 0 0 var(--page-space-after); }
@@ -134,9 +176,18 @@
 /* Below the page width there is nothing to gain from a fixed page, so it becomes a plain column. */
 @media (max-width: 860px) {
   .editor-paged { padding: 12px 0 32px; }
-  .editor-paged .ww-page { width: 100%; min-height: 0; border-left: 0; border-right: 0; padding: 20px 18px; box-shadow: none; }
+  .editor-paged .ww-page-frame { width: 100%; }
+  .editor-paged .ww-page { width: 100%; min-height: 0; border-left: 0; border-right: 0; padding: 20px 18px; box-shadow: none; zoom: 1; }
   .editor-paged .ProseMirror { width: 100%; }
 }
+
+/* Separate sheets: widget spacers from the pagination plugin push content to the next page and draw the grey gap between. */
+@media (min-width: 861px) { .editor-paged .ww-page-break { margin: 0; border-top-color: transparent; } }
+.ww-page-gap { position: relative; margin: 0 calc(var(--page-margin-right) * -1) 0 calc(var(--page-margin-left) * -1); pointer-events: none; user-select: none; }
+.ww-page-gap-band { position: absolute; left: -4px; right: -4px; background: #f4f5f2; }
+.ww-page-gap-band::before, .ww-page-gap-band::after { content: ""; position: absolute; left: 3px; right: 3px; height: 1px; background: #d6d8d1; }
+.ww-page-gap-band::before { top: 0; box-shadow: 0 1px 3px rgb(31 32 29 / 0.10); }
+.ww-page-gap-band::after { bottom: 0; }
 
 /* Read-only page surface, so Compare shows the document the way the paged canvas does. */
 .ww-paged-surface { background: #f4f5f2; }

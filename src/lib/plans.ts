@@ -29,6 +29,8 @@ export const ADVANCED_PREFERENCE = 'advanced';
 // Page size of an imported document, so the paged preview matches the file the user brought in
 // instead of falling back to the locale default.
 export const PAGE_SIZE_PREFERENCE = 'pageSize';
+// Page margins of an imported document as "top,right,bottom,left" twips (see formatMargins in docx/office-defaults).
+export const PAGE_MARGINS_PREFERENCE = 'pageMargins';
 
 export const isTier = (value: unknown): value is Tier => typeof value === 'string' && (TIERS as readonly string[]).includes(value);
 export const asTier = (value: unknown): Tier => (isTier(value) ? value : 'free');

@@ -1,24 +1,13 @@
-import { Schema, Fragment, Slice, type Node as PMNode } from '@tiptap/pm/model';
+import { Fragment, Slice, type Node as PMNode } from '@tiptap/pm/model';
 import { Transform } from '@tiptap/pm/transform';
 import { EditorDocumentSchema } from '../contracts';
+import { documentSchema } from './extensions';
 
 export type EditorDocument = ReturnType<typeof EditorDocumentSchema.parse>;
 export type EditorNode = EditorDocument['content'][number];
 export type PlainRange = {from:number;to:number};
-const schema = new Schema({
-  nodes: {
-    doc:{content:'block+'}, text:{group:'inline'},
-    paragraph:{group:'block',content:'inline*',attrs:{textAlign:{default:null}}},
-    heading:{group:'block',content:'inline*',attrs:{level:{default:1},textAlign:{default:null}}},
-    blockquote:{group:'block',content:'block+'}, horizontalRule:{group:'block'},
-    hardBreak:{group:'inline',inline:true},
-    bulletList:{group:'block',content:'listItem+'},orderedList:{group:'block',content:'listItem+',attrs:{start:{default:1}}},
-    listItem:{content:'paragraph block*'},table:{group:'block',content:'tableRow+'},tableRow:{content:'(tableCell | tableHeader)+'},
-    tableCell:{content:'block+',attrs:{colspan:{default:1},rowspan:{default:1},colwidth:{default:null}}},
-    tableHeader:{content:'block+',attrs:{colspan:{default:1},rowspan:{default:1},colwidth:{default:null}}},
-  },
-  marks:{bold:{},italic:{},underline:{},link:{attrs:{href:{},target:{default:null},rel:{default:null},class:{default:null}}}},
-});
+// The same schema the editor builds, so server-side edits never drop or reject an attribute the editor wrote.
+const schema = documentSchema;
 function parsed(value:unknown):PMNode {
   const json=EditorDocumentSchema.parse(value);
   const doc=schema.nodeFromJSON(json.content.length?json:{type:'doc',content:[{type:'paragraph'}]});

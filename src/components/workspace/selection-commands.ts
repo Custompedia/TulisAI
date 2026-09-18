@@ -48,7 +48,6 @@ export function planInstruction(instruction: string, selection: SelectionRange, 
   if (!text) return { kind: 'error', label, message: t('Tulis dulu perintahnya.', 'Type an instruction first.') };
   const length = selection.text.length;
   if (length > limits.runLimit) return tooLong(label, length, limits.runLimit, t, format);
-  if (selection.text.includes('\n')) return { kind: 'error', label, message: t('Perintah bebas bekerja pada satu paragraf. Pilih bagian yang lebih kecil.', 'A free-form instruction works on one paragraph. Select a smaller part.') };
   return { kind: 'generate', label, instruction: text, override: plain(base, { customized: true }) };
 }
 

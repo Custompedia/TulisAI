@@ -4,7 +4,7 @@ import { assertFeature } from '../usage/features';
 import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
-import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejected, rejectionOf, snapsToSource, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
+import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejected, rejectionOf, snapsToSource, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, validateLockedTerms, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
@@ -97,9 +97,11 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const locks = await listLocks(ownerId, input.documentId);
   if(input.promptId==='P07_INLINE_ALTERNATIVES'&&locks.some(lock=>lock.term===input.source.text))throw new RequestError('PROTECTED_SELECTION','A locked term cannot be replaced.',422);
   const citations = detectedCitations(input.source.text);
+  // A dock instruction is free to change anything it asks for; only terms the author locked still bind it.
+  const freeform = input.promptId === 'P08_CUSTOM_TRANSFORM';
   // A title is asked for only on the first run of a whole new notebook, and never for an inline selection.
   const wantsTitle = input.suggestTitle === true && !anchor && input.promptId !== 'P07_INLINE_ALTERNATIVES';
-  const trusted: RuntimeInput = {...input.runtime, userInstruction:instruction, user_instruction:undefined, suggestTitle:wantsTitle || undefined, suggest_title:undefined, sourceText:input.source.text, selectedText:input.source.text, contextBefore:anchor ? source.text.slice(Math.max(0,anchor.from-300),anchor.from) : null, contextAfter:anchor ? source.text.slice(anchor.to,anchor.to+300) : null, protectedTerms:locks.map(lock=>lock.term).filter(term=>input.source.text.includes(term)), protectedCitations:[...new Set(citations)], language:input.runtime.language};
+  const trusted: RuntimeInput = {...input.runtime, userInstruction:instruction, user_instruction:undefined, suggestTitle:wantsTitle || undefined, suggest_title:undefined, sourceText:input.source.text, selectedText:input.source.text, contextBefore:anchor ? source.text.slice(Math.max(0,anchor.from-300),anchor.from) : null, contextAfter:anchor ? source.text.slice(anchor.to,anchor.to+300) : null, protectedTerms:locks.map(lock=>lock.term).filter(term=>input.source.text.includes(term)), protectedCitations:freeform ? [] : [...new Set(citations)], language:input.runtime.language};
   let controls: RuntimeInput;
   try { controls = normalizeRuntime(input.promptId, trusted) as RuntimeInput; } catch { throw new RequestError('INVALID_REQUEST', 'The selected AI controls are invalid.'); }
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
@@ -148,7 +150,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     const structure = structuralErrors(input.promptId,input.source.text,outputText(output),requestOf(input.promptId,controls));
     if (structure.length) throw await rejected(structure.join('; '), new RequestError('AI_STRUCTURE_REJECTED', 'AI output changed the text structure. Your source is unchanged.', 422));
     const placeholders = input.promptId === 'P04_PROFESSIONAL';
-    const protection = validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders,isCondensed(requestOf(input.promptId,controls)));
+    const protection = freeform ? validateLockedTerms(input.source.text,outputText(output),trusted.protectedTerms??[]) : validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders,isCondensed(requestOf(input.promptId,controls)));
     if (!protection.valid) {
       const required = [...new Set([...(trusted.protectedTerms??[]),...(placeholders?placeholderTokens(input.source.text):[])])];
       const repairRuntime: RuntimeInput = {language:trusted.language,failedOutput:outputText(output),originalScope:input.source.text,requiredProtectedTerms:required,requiredProtectedCitations:trusted.protectedCitations};
@@ -165,7 +167,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     }
     try { output = validateGeneration(input.promptId,input.source.text,output,{...trusted,request:controls.request}); }
     catch (error) { throw await refuse(error, 'validation failed'); }
-    const soft = output.no_change_needed === true ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
+    const soft = output.no_change_needed === true || freeform ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
     if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
   }
@@ -203,7 +205,8 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
     const code = typed?.cause === 'term' ? 'AI_LOCKED_TERM_REJECTED' : typed?.cause === 'number' ? 'AI_NUMBER_REJECTED' : typed?.cause === 'citation' ? 'AI_CITATION_REJECTED' : 'AI_OUTPUT_REJECTED';
     throw new RequestError(code,'This preview no longer meets protected-content requirements.',422, typed?.token ? {token:typed.token} : undefined);
   }
-  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,collapseBlankLines(outputText(output,selectedAlternative)),requestedFormat(preview.prompt_id,controls));
+  // A dock instruction over several paragraphs gets its lines back as paragraphs, not as line breaks inside one.
+  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,collapseBlankLines(outputText(output,selectedAlternative)),preview.prompt_id==='P08_CUSTOM_TRANSFORM'&&preview.source_text.includes('\n')?'paragraph':requestedFormat(preview.prompt_id,controls));
   return saveDocument(ownerId,preview.document_id,expectedRevision,{content},'ai_apply',null,{previewId,expectedLockIds:locks.map(lock=>lock.id),promptId:preview.prompt_id,scopeType:anchor?'selection':'document'});
 }
 export async function discardPreview(ownerId:string,previewId:string) {

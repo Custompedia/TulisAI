@@ -3,8 +3,8 @@ import { handleRouteError, RequestError } from "@/server/http";
 import { requireFeature } from "@/server/usage/features";
 import { getDocument } from "@/server/documents/service";
 import { DOCX_CONTENT_TYPE, docxFilename, editorDocumentToDocx } from "@/lib/docx/export";
-import { defaultPageSize, type PageSize } from "@/lib/docx/office-defaults";
-import { PAGE_SIZE_PREFERENCE } from "@/lib/plans";
+import { defaultPageSize, parseMargins, type PageSize } from "@/lib/docx/office-defaults";
+import { PAGE_MARGINS_PREFERENCE, PAGE_SIZE_PREFERENCE } from "@/lib/plans";
 
 const asPageSize = (value: string | null, language: string): PageSize =>
   value === "a4" || value === "letter" ? value : defaultPageSize(language);
@@ -22,10 +22,12 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     // The notebook's stored page size wins, so an exported file matches what the paged preview showed.
     const stored = document.preferences?.[PAGE_SIZE_PREFERENCE];
     const requested = url.searchParams.get("pageSize") ?? (typeof stored === "string" ? stored : null);
+    const pageSize = asPageSize(requested, language);
     const bytes = await editorDocumentToDocx(document.content, {
       title: document.title,
       language,
-      pageSize: asPageSize(requested, language),
+      pageSize,
+      margins: parseMargins(document.preferences?.[PAGE_MARGINS_PREFERENCE], pageSize),
     });
     return new Response(bytes as unknown as BodyInit, {
       headers: {
