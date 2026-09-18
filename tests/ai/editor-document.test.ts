@@ -116,3 +116,44 @@ describe('editor JSON round-trip', () => {
     expect(documentText(parsed)).toBe('Satu\nAnak\ntautan\nSelesai\n\n');
   });
 });
+
+// Regression: a multi-line P08 result is applied with the 'paragraph' format; a selection that starts and ends
+// mid-paragraph must splice into the surrounding text, not strand "Alpha " and " delta" as paragraphs of their own.
+describe('paragraph-format replacement of a partial range', () => {
+  const p = (text: string) => ({ type: 'paragraph', content: [{ type: 'text', text }] });
+  const span = (doc: unknown) => { const text = documentText(doc); return [text.indexOf('beta'), text.indexOf('Gamma') + 5] as const; };
+
+  it('joins the first and last lines to the text around the selection', () => {
+    const doc = { type: 'doc', content: [p('Alpha beta'), { ...p('Gamma delta'), attrs: { textAlign: 'center' } }] };
+    const result = replaceTextInDocument(doc, ...span(doc), 'X one\nY two', 'paragraph');
+    expect(result.content).toEqual([p('Alpha X one'), { ...p('Y two delta'), attrs: { textAlign: 'center' } }]);
+  });
+
+  it('keeps the heading, list and table around the selection valid', () => {
+    const cell = (text: string) => ({ type: 'tableCell', content: [p(text)] });
+    const docs = [
+      { type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Alpha beta' }] }, p('Gamma delta')] },
+      { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Alpha beta' }, { type: 'hardBreak' }, { type: 'text', text: 'Gamma delta' }] }] },
+      { type: 'doc', content: [{ type: 'bulletList', content: [{ type: 'listItem', content: [p('Alpha beta')] }, { type: 'listItem', content: [p('Gamma delta')] }] }] },
+      { type: 'doc', content: [p('Alpha beta'), { type: 'pageBreak' }, p('Gamma delta')] },
+      { type: 'doc', content: [{ type: 'table', content: [{ type: 'tableRow', content: [cell('Alpha beta'), cell('A2')] }, { type: 'tableRow', content: [cell('Gamma delta'), cell('B2')] }] }] },
+    ];
+    for (const doc of docs) {
+      const result = replaceTextInDocument(doc, ...span(doc), 'X one\nY two', 'paragraph');
+      expect(() => documentSchema.nodeFromJSON(result).check()).not.toThrow();
+      expect(documentText(result)).toContain('Alpha X one\nY two delta');
+    }
+    const single = replaceTextInDocument(docs[0]!, ...span(docs[0]!), 'Satu baris', 'paragraph');
+    expect(documentText(single)).toBe('Alpha Satu baris delta');
+    expect(single.content[0]).toMatchObject({ type: 'heading', attrs: { level: 2 } });
+  });
+});
+
+// Regression: the inline limit counted UTF-16 units, so a non-ASCII body could pass it yet exceed D1's 2 MB row size.
+describe('stored body size limit', () => {
+  const body = (char: string) => ({ type: 'doc', content: Array.from({ length: 4 }, () => ({ type: 'paragraph', content: [{ type: 'text', text: char.repeat(180_000) }] })) });
+  it('counts UTF-8 bytes, not UTF-16 units', () => {
+    expect(() => EditorDocumentSchema.parse(body('a'))).not.toThrow();
+    expect(() => EditorDocumentSchema.parse(body('中'))).toThrow(/inline safety limit/);
+  });
+});

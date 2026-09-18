@@ -36,6 +36,22 @@ async function through(bytes: Uint8Array, transform: TransformStream<Uint8Array,
 export const deflateRaw = (bytes: Uint8Array) => through(bytes, new CompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>);
 export const inflateRaw = (bytes: Uint8Array) => through(bytes, new DecompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>);
 
+// The declared size is attacker-controlled, so inflation stops the moment the output passes it.
+async function inflateBounded(bytes: Uint8Array, limit: number, name: string): Promise<Uint8Array> {
+  const reader = new Blob([bytes as BlobPart]).stream().pipeThrough(new DecompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>).getReader();
+  const chunks: Uint8Array[] = []; let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > limit) { await reader.cancel().catch(() => undefined); throw new ZipError(`ZIP entry ${name} is larger than it declares.`); }
+    chunks.push(value);
+  }
+  const output = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { output.set(chunk, offset); offset += chunk.length; }
+  return output;
+}
+
 // Reads the central directory rather than scanning local headers, so a truncated or lying entry is caught by bounds checks.
 export async function unzip(bytes: Uint8Array, limits: ZipLimits = ZIP_LIMITS): Promise<Map<string, Uint8Array>> {
   if (bytes.length < EOCD_SIZE) throw new ZipError('Not a ZIP archive.');
@@ -82,8 +98,8 @@ export async function unzip(bytes: Uint8Array, limits: ZipLimits = ZIP_LIMITS): 
     if (end > bytes.length) throw new ZipError(`ZIP entry ${name} is truncated.`);
     const raw = bytes.subarray(start, end);
 
-    if (method === 0) files.set(name, raw);
-    else if (method === 8) files.set(name, await inflateRaw(raw));
+    if (method === 0) { if (raw.length > uncompressedSize) throw new ZipError(`ZIP entry ${name} is larger than it declares.`); files.set(name, raw); }
+    else if (method === 8) files.set(name, await inflateBounded(raw, uncompressedSize, name));
     else throw new ZipError(`ZIP entry ${name} uses unsupported compression method ${method}.`);
   }
   return files;

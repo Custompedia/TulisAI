@@ -67,7 +67,9 @@ export function replaceTextInDocument(document:unknown,from:number,to:number,rep
   if(!start||!end)throw new Error('Selection falls outside editable text.');
   const pmFrom=start.pmFrom+Math.min(from-start.from,start.to-start.from);const pmTo=end.pmFrom+Math.max(0,to-end.from);
   let slice:Slice;
-  if(format){slice=new Slice(parsed(formatted(replacement,format)).content,0,0);}
+  // Plain paragraphs open at both ends, so the first and last lines join the text around a mid-paragraph selection; the last keeps its block's type and attrs.
+  if(format==='paragraph'){let content=parsed(formatted(replacement,format)).content;const tail=doc.resolve(pmTo).parent;if(content.childCount>1&&tail.isTextblock)content=content.replaceChild(content.childCount-1,tail.type.create(tail.attrs,content.lastChild!.content));slice=new Slice(content,1,1);}
+  else if(format){slice=new Slice(parsed(formatted(replacement,format)).content,0,0);}
   else {
     const marks=doc.resolve(pmFrom).nodeAfter?.marks??doc.resolve(pmFrom).marks();
     const nodes=inline(replacement).map(node=>node.type==='text'?schema.text(node.text!,marks):schema.node('hardBreak'));

@@ -108,6 +108,7 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     user_instruction: sanitizeInstruction(get("userInstruction", "user_instruction")),
     failed_output: get("failedOutput", "failed_output"), original_scope: get("originalScope", "original_scope"),
     required_protected_terms: get("requiredProtectedTerms", "required_protected_terms"), required_protected_citations: get("requiredProtectedCitations", "required_protected_citations"),
+    locked_only: id === "P10_REPAIR" && get("lockedOnly", "locked_only") === true ? true : undefined,
   };
   const defined = Object.fromEntries(Object.entries(candidate).filter(([, value]) => value !== undefined));
   return runtimeSchemas[id].parse(defined) as Record<string, unknown>;
@@ -154,7 +155,7 @@ export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>)
   if (id === "P09_QUALITY_EVALUATION") return section("input", runtime.source_text);
   if (id === "P10_REPAIR") {
     const original = String(runtime.original_scope); const failed = String(runtime.failed_output);
-    const { violations } = validateProtectedContent(original, failed, strings(runtime.required_protected_terms), strings(runtime.required_protected_citations), true);
+    const { violations } = runtime.locked_only === true ? validateLockedTerms(original, failed, strings(runtime.required_protected_terms)) : validateProtectedContent(original, failed, strings(runtime.required_protected_terms), strings(runtime.required_protected_citations), true);
     return [section("violations", violations.map((item) => `required: ${item.required} | appeared instead: ${item.found}`).join("\n")), section("failed_output", failed), section("original", original)].filter(Boolean).join("\n");
   }
   const protectedStrings = [...new Set([...strings(runtime.protected_terms), ...strings(runtime.protected_citations)])].join("\n");
@@ -264,11 +265,14 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
     const requiredCitations = list(runtime.requiredProtectedCitations, runtime.required_protected_citations);
     const requiredTerms = list(runtime.requiredProtectedTerms, runtime.required_protected_terms);
     const corrected = String(parsed.corrected_text ?? "");
-    const check = validateProtectedContent(original, corrected, [...requiredTerms, ...requiredCitations], requiredCitations, true);
+    // A P08 repair restores locked terms only: the instruction was free to change numbers and citations.
+    const lockedOnly = runtime.lockedOnly === true || runtime.locked_only === true;
+    const verify = (text: string, terms: string[]) => lockedOnly ? validateLockedTerms(original, text, terms) : validateProtectedContent(original, text, terms, requiredCitations, true);
+    const check = verify(corrected, [...requiredTerms, ...requiredCitations]);
     if (!check.valid) throw rejectionOf(check.violations, check.errors);
     const failed = runtime.failedOutput ?? runtime.failed_output;
     if (typeof failed === "string") {
-      const drift = repairDrift(failed, corrected, validateProtectedContent(original, failed, requiredTerms, requiredCitations, true).violations);
+      const drift = repairDrift(failed, corrected, verify(failed, requiredTerms).violations);
       if (drift.length) throw new Error(drift.join("; "));
     }
     return parsed;

@@ -11,10 +11,13 @@ const ORDERED: Record<string, '1' | 'a' | 'A' | 'i' | 'I'> = { decimal: '1', low
 const GLYPHS: Record<string, string> = { '': '•', '': '▪', '': '■', '': '➢', '': '❖', '': '✓', '': '☐', '': '➔', '': '-', '': '—' };
 export const normalizeGlyphs = (text: string) => text.replace(/[-]/gu, (char) => GLYPHS[char] ?? '•');
 
+// Word caps a list start at 32767; an unbounded one would make letter labels ("AAAA…") allocate without limit.
+const startValue = (value: string | undefined) => Math.max(0, Math.min(32767, Math.trunc(Number(value ?? '1')) || 0));
+
 const levelFrom = (node: XmlNode): Level => {
   const value = (name: string) => attr(firstNamed(node, name), 'w:val');
   return {
-    start: Number(value('w:start') ?? '1') || 0, format: value('w:numFmt') ?? 'decimal', text: value('w:lvlText') ?? '', suffix: value('w:suff') ?? 'tab',
+    start: startValue(value('w:start')), format: value('w:numFmt') ?? 'decimal', text: value('w:lvlText') ?? '', suffix: value('w:suff') ?? 'tab',
     isLgl: isOn(firstNamed(node, 'w:isLgl')), restart: value('w:lvlRestart') !== '0', pPr: firstNamed(node, 'w:pPr'), rPr: firstNamed(node, 'w:rPr'),
   };
 };
@@ -41,7 +44,7 @@ export function parseNumbering(root: XmlNode | null, styles: Styles): Numbering 
     const overrides = new Map<number, { start?: number; level?: Level }>();
     for (const override of childrenNamed(num, 'w:lvlOverride')) {
       const start = attr(firstNamed(override, 'w:startOverride'), 'w:val'); const lvl = firstNamed(override, 'w:lvl');
-      overrides.set(Number(attr(override, 'w:ilvl') ?? '0'), { ...(start !== undefined ? { start: Number(start) || 0 } : {}), ...(lvl ? { level: levelFrom(lvl) } : {}) });
+      overrides.set(Number(attr(override, 'w:ilvl') ?? '0'), { ...(start !== undefined ? { start: startValue(start) } : {}), ...(lvl ? { level: levelFrom(lvl) } : {}) });
     }
     numbering.nums.set(id, { abstractId, overrides });
   }

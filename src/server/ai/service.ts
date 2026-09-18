@@ -84,7 +84,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     assertFeature(rights, 'freeform_prompt');
     if (!input.source.anchor) throw new RequestError('INVALID_REQUEST', 'A free-form instruction needs a selected passage.');
     if (input.promptId !== 'P08_CUSTOM_TRANSFORM') throw new RequestError('INVALID_REQUEST', 'A free-form instruction runs as a custom transform.');
-  }
+  } else if (input.promptId === 'P08_CUSTOM_TRANSFORM') throw new RequestError('INVALID_REQUEST', 'A custom transform needs an instruction.');
   const limit = scopeLimit(input.promptId, Boolean(input.source.anchor), rights.limits);
   if (input.source.text.length > limit) throw new RequestError('SCOPE_TOO_LARGE', `Select at most ${limit} characters for this AI action.`, 422, {limit, length: input.source.text.length});
   const source = await currentText(ownerId, input.documentId);
@@ -153,7 +153,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     const protection = freeform ? validateLockedTerms(input.source.text,outputText(output),trusted.protectedTerms??[]) : validateProtectedContent(input.source.text,outputText(output),trusted.protectedTerms??[],trusted.protectedCitations??[],true,placeholders,isCondensed(requestOf(input.promptId,controls)));
     if (!protection.valid) {
       const required = [...new Set([...(trusted.protectedTerms??[]),...(placeholders?placeholderTokens(input.source.text):[])])];
-      const repairRuntime: RuntimeInput = {language:trusted.language,failedOutput:outputText(output),originalScope:input.source.text,requiredProtectedTerms:required,requiredProtectedCitations:trusted.protectedCitations};
+      const repairRuntime: RuntimeInput = {language:trusted.language,failedOutput:outputText(output),originalScope:input.source.text,requiredProtectedTerms:required,requiredProtectedCitations:trusted.protectedCitations,...(freeform?{lockedOnly:true}:{})};
       // If the repair pass cannot run or cannot be trusted, the honest answer is the violation that caused it,
       // not a generic provider error: that is what the user has to act on.
       const original = rejectionOf(protection.violations, protection.errors);

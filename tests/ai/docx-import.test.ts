@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { docxToEditorDocument, DocxError } from '../../src/lib/docx/import';
 import { editorDocumentToDocx } from '../../src/lib/docx/export';
-import { zip } from '../../src/lib/docx/zip';
+import { unzip, zip, ZipError } from '../../src/lib/docx/zip';
+import { parseXml, XML_LIMITS } from '../../src/lib/docx/xml';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
 import { documentSchema } from '../../src/lib/editor/extensions';
 import { formatMargins, pageStyle, parseMargins } from '../../src/lib/docx/office-defaults';
@@ -366,6 +367,62 @@ describe('DOCX import: section and limits', () => {
     // More than 5000 inline nodes cannot be stored; the importer says so rather than a generic failure.
     expect(result).toBeInstanceOf(DocxError);
     expect((result as Error).message).toMatch(/too large or too complex/);
+  });
+});
+
+// Regressions: every hostile or minimal package ends as a clear DocxError or a valid import, never a 500 or a runaway Worker.
+describe('DOCX import: hostile and minimal packages', () => {
+  const failure = async (bytes: Uint8Array) => docxToEditorDocument(bytes).catch((caught: unknown) => caught);
+
+  it('imports a package with no styles, numbering or theme part', async () => {
+    const result = await docxToEditorDocument(await docx(p(r('Polos')) + p(r('Satu'), '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="3"/></w:numPr>')));
+    expect(result.content.content.map(textOf)).toEqual(['Polos', 'Satu']);
+  });
+
+  it('stops inflating an entry that is larger than its central directory says', async () => {
+    const bytes = await docx(p(r('x'.repeat(50_000))));
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    // Rewrite the declared uncompressed size of word/document.xml to 100 bytes, as a zip bomb would.
+    for (let index = 0; index + 46 < bytes.length; index++) {
+      if (view.getUint32(index, true) !== 0x02014b50) continue;
+      const nameLength = view.getUint16(index + 28, true);
+      if (new TextDecoder().decode(bytes.subarray(index + 46, index + 46 + nameLength)) === 'word/document.xml') view.setUint32(index + 24, 100, true);
+    }
+    await expect(unzip(bytes)).rejects.toThrowError(ZipError);
+    const error = await failure(bytes);
+    expect(error).toBeInstanceOf(DocxError);
+    expect((error as Error).message).toMatch(/larger than it declares/);
+  });
+
+  it('refuses a part nested or repeated past the parser limits as a DocxError', async () => {
+    for (const body of ['<w:sdt>'.repeat(20_000) + p(r('dalam')), p(r('a')) + '<w:bookmarkEnd/>'.repeat(XML_LIMITS.maxNodes + 1)]) {
+      const error = await failure(await docx(body));
+      expect(error).toBeInstanceOf(DocxError);
+      expect((error as Error).message).toMatch(/too large or too complex/);
+    }
+  });
+
+  it('parses unterminated comments and stray closing tags in linear time', () => {
+    const started = Date.now();
+    parseXml('<!--'.repeat(500_000));
+    parseXml('<a>'.repeat(200) + '</b>'.repeat(500_000));
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(parseXml('<r><a><b>x</b></a></c><d/></r>').children[0]!.children.map((child) => child.name)).toEqual(['a', 'd']);
+  });
+
+  it('clamps an absurd list start instead of building a gigantic letter label', async () => {
+    const numbering = '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="4000000000"/><w:numFmt w:val="upperLetter"/><w:lvlText w:val="%1)"/></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const result = await load(p(r('Butir'), '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>'), { numbering });
+    expect(result.content.content[0]).toMatchObject({ type: 'orderedList', attrs: { start: 32767, type: 'A' } });
+  });
+
+  it('counts table separators against the stored-document limit', async () => {
+    const cell = `<w:tc>${p(r('x'.repeat(40)))}</w:tc>`;
+    const table = `<w:tbl>${`<w:tr>${cell.repeat(10)}</w:tr>`.repeat(480)}</w:tbl>`;
+    // 192,000 characters of text, but 480 rows x 9 " | " separators take the saved text past 200,000.
+    const error = await failure(await docx(table));
+    expect(error).toBeInstanceOf(DocxError);
+    expect((error as Error).message).toMatch(/200,000/);
   });
 });
 

@@ -1,5 +1,5 @@
 import { EditorDocumentSchema } from '../contracts';
-import type { EditorDocument, EditorNode } from '../editor/document';
+import { documentText, type EditorDocument, type EditorNode } from '../editor/document';
 import { documentSchema } from '../editor/extensions';
 import { unzip, ZipError, type ZipLimits } from './zip';
 import { DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontLineFactor, HEADING_FONT, HEADINGS, LINE_HEIGHT, PAGES, parseMargins, formatMargins, SPACE_AFTER_TWIPS, type PageMargins, type PageSize } from './office-defaults';
@@ -293,42 +293,45 @@ export async function docxToEditorDocument(bytes: Uint8Array, options: ImportOpt
   let files: Map<string, Uint8Array>;
   try { files = await unzip(bytes, options.limits); }
   catch (error) { throw new DocxError(error instanceof ZipError ? error.message : 'This .docx file could not be read.'); }
-  if (!files.has('[Content_Types].xml')) throw new DocxError('This file is not a .docx document.');
-
-  const main = resolvePart('', relationshipsOf(files, '_rels/.rels').byType.get('officeDocument') ?? 'word/document.xml');
-  const documentPath = files.has(main) ? main : 'word/document.xml';
-  const root = readXml(files, documentPath);
-  const body = root && findDeep(root, 'w:body');
-  if (!body) throw new DocxError('This .docx file has no document body.');
-
-  const relsPath = `${documentPath.replace(/[^/]+$/u, '')}_rels/${documentPath.split('/').pop()}.rels`;
-  const rels = relationshipsOf(files, relsPath);
-  const part = (type: string, fallback: string) => { const target = rels.byType.get(type); return target ? resolvePart(documentPath, target) : fallback; };
-  const theme = parseTheme(readXml(files, part('theme', 'word/theme/theme1.xml')));
-  const styles: Styles = parseStyles(readXml(files, part('styles', 'word/styles.xml')), theme);
-  const context: Context = {
-    styles, numbering: parseNumbering(readXml(files, part('numbering', 'word/numbering.xml')), styles),
-    relationships: rels.byId, fields: [], notes: [], noteCounts: { footnote: 0, endnote: 0 }, textBoxes: [],
-  };
-  const language = options.language ?? 'id';
-
-  let content: EditorDocument;
+  // Every part is attacker-shaped: any failure past the ZIP layer is reported as an unreadable file, never a 500.
   try {
+    if (!files.has('[Content_Types].xml')) throw new DocxError('This file is not a .docx document.');
+
+    const main = resolvePart('', relationshipsOf(files, '_rels/.rels').byType.get('officeDocument') ?? 'word/document.xml');
+    const documentPath = files.has(main) ? main : 'word/document.xml';
+    const root = readXml(files, documentPath);
+    const body = root && findDeep(root, 'w:body');
+    if (!body) throw new DocxError('This .docx file has no document body.');
+
+    const relsPath = `${documentPath.replace(/[^/]+$/u, '')}_rels/${documentPath.split('/').pop()}.rels`;
+    const rels = relationshipsOf(files, relsPath);
+    const part = (type: string, fallback: string) => { const target = rels.byType.get(type); return target ? resolvePart(documentPath, target) : fallback; };
+    const theme = parseTheme(readXml(files, part('theme', 'word/theme/theme1.xml')));
+    const styles: Styles = parseStyles(readXml(files, part('styles', 'word/styles.xml')), theme);
+    const context: Context = {
+      styles, numbering: parseNumbering(readXml(files, part('numbering', 'word/numbering.xml')), styles),
+      relationships: rels.byId, fields: [], notes: [], noteCounts: { footnote: 0, endnote: 0 }, textBoxes: [],
+    };
+    const language = options.language ?? 'id';
+
     const blocks = assemble(entriesFrom(body, context, true));
     context.fields.length = 0;
     const notes = notesSection(files, context, { footnote: part('footnotes', 'word/footnotes.xml'), endnote: part('endnotes', 'word/endnotes.xml') }, language);
     const all = tidyBreaks([...blocks, ...notes]);
+    const tooLong = (characters: number) => new DocxError(`This document has ${characters.toLocaleString('en-US')} characters of text; the limit is ${MAX_IMPORT_CHARACTERS.toLocaleString('en-US')}. Split it into smaller files first.`);
     const characters = all.reduce((sum, node) => sum + textOf(node).length, 0);
     if (!characters) throw new DocxError('This document has no readable text.');
-    if (characters > MAX_IMPORT_CHARACTERS) throw new DocxError(`This document has ${characters.toLocaleString('en-US')} characters of text; the limit is ${MAX_IMPORT_CHARACTERS.toLocaleString('en-US')}. Split it into smaller files first.`);
+    if (characters > MAX_IMPORT_CHARACTERS) throw tooLong(characters);
     // Both the stored-document contract and the editor schema must accept the result, or the notebook would not open.
-    content = EditorDocumentSchema.parse({ type: 'doc', content: all });
+    const content = EditorDocumentSchema.parse({ type: 'doc', content: all });
     documentSchema.nodeFromJSON(content).check();
+    // The saved-document limit counts block and cell separators too, so an import it would refuse is refused here.
+    const stored = documentText(content).length;
+    if (stored > MAX_IMPORT_CHARACTERS) throw tooLong(stored);
+    return { content, title: titleFrom(files) || titleFromContent(content.content) || 'Untitled document', ...pageFrom(body, language) };
   } catch (error) {
     if (error instanceof DocxError) throw error;
     throw new DocxError('This document is too large or too complex to import. Split it into smaller files and try again.');
   }
-
-  return { content, title: titleFrom(files) || titleFromContent(content.content) || 'Untitled document', ...pageFrom(body, language) };
 }
 

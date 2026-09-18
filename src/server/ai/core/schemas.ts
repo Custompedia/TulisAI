@@ -61,5 +61,5 @@ export const runtimeSchemas = {
   P07_INLINE_ALTERNATIVES: z.object({ selected_text: z.string().min(1), context_before: z.string().nullable().default(null), context_after: z.string().nullable().default(null), language, intent: z.enum(["alternatif", "lebih singkat", "lebih jelas", "lebih formal", "lebih natural"]), n: z.number().int().min(3).max(5).default(3), protected_terms: strings, protected_citations: strings }),
   P08_CUSTOM_TRANSFORM: z.object({ ...rewrite, strength: z.enum(["balanced", "strong"]), request }),
   P09_QUALITY_EVALUATION: z.object({ source_text: z.string().min(1), language, mode: z.string().min(1) }),
-  P10_REPAIR: z.object({ language, failed_output: z.string(), original_scope: z.string().min(1), required_protected_terms: strings, required_protected_citations: strings }),
+  P10_REPAIR: z.object({ language, failed_output: z.string(), original_scope: z.string().min(1), required_protected_terms: strings, required_protected_citations: strings, locked_only: z.literal(true).optional() }),
 } as const;

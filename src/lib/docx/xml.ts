@@ -26,15 +26,21 @@ function attributes(source: string): Record<string, string> {
   return attrs;
 }
 
-// Tags, comments, CDATA and processing instructions; anything else is character data.
-const TOKEN = /<!--[\s\S]*?-->|<!\[CDATA\[([\s\S]*?)\]\]>|<\?[\s\S]*?\?>|<!\w[\s\S]*?>|<\/([\w:.-]+)\s*>|<([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
+// Tags, comments, CDATA and processing instructions; anything else is character data. An unterminated
+// comment, CDATA or instruction runs to the end, so a file full of them cannot make the scan quadratic.
+const TOKEN = /<!--[\s\S]*?(?:-->|$)|<!\[CDATA\[([\s\S]*?)(?:\]\]>|$)|<\?[\s\S]*?(?:\?>|$)|<!\w[^>]*>?|<\/([\w:.-]+)\s*>|<([\w:.-]+)((?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*)\s*(\/?)>/g;
+
+export class XmlError extends Error {}
+// A real DOCX part stays far below both; the node cap keeps a crafted part inside a Worker's memory.
+export const XML_LIMITS = { maxNodes: 250_000, maxDepth: 256 };
 
 // A single pass over the document; unbalanced closing tags are ignored rather than throwing, because a
 // stray tag in one paragraph should not lose the whole file.
-export function parseXml(source: string): XmlNode {
+export function parseXml(source: string, limits = XML_LIMITS): XmlNode {
   const root: XmlNode = { name: '#root', attrs: {}, children: [], text: '' };
   const stack: XmlNode[] = [root];
-  let cursor = 0;
+  const open = new Map<string, number>();
+  let cursor = 0; let nodes = 0;
   const addText = (value: string) => { if (value) stack[stack.length - 1]!.text += decodeXml(value); };
 
   for (const match of source.matchAll(TOKEN)) {
@@ -43,16 +49,18 @@ export function parseXml(source: string): XmlNode {
     cursor = index + match[0].length;
     if (match[1] !== undefined) { addText(match[1]); continue; }
     if (match[2] !== undefined) {
-      // Close the nearest matching open tag; a mismatch closes nothing.
-      for (let depth = stack.length - 1; depth > 0; depth--) {
-        if (stack[depth]!.name === match[2]) { stack.length = depth; break; }
-      }
+      // Close the nearest matching open tag; a mismatch closes nothing (and costs nothing).
+      if (!open.get(match[2])) continue;
+      while (stack.length > 1) { const closed = stack.pop()!; open.set(closed.name, open.get(closed.name)! - 1); if (closed.name === match[2]) break; }
       continue;
     }
     if (match[3] === undefined) continue;
+    if (++nodes > limits.maxNodes) throw new XmlError('XML part has too many elements.');
     const node: XmlNode = { name: match[3], attrs: attributes(match[4] ?? ''), children: [], text: '' };
     stack[stack.length - 1]!.children.push(node);
-    if (match[5] !== '/') stack.push(node);
+    if (match[5] === '/') continue;
+    if (stack.length > limits.maxDepth) throw new XmlError('XML part is nested too deeply.');
+    stack.push(node); open.set(node.name, (open.get(node.name) ?? 0) + 1);
   }
   addText(source.slice(cursor));
   return root;

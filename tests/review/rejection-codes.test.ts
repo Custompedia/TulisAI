@@ -182,6 +182,30 @@ describe('review: a free-form instruction is paid, scoped and free', () => {
     expect(body!.messages[1]!.content).not.toContain('<protected>\n');
   });
 
+  // Regression: the P10 repair used the full rewrite checks, so a translation that also changed a figure or a citation could never be repaired.
+  it('repairs a dropped locked term without restoring the numbers and citations the instruction changed', async () => {
+    paid('payer-g');
+    const source = 'Sistem Merdeka memiliki 10 unit gudang (Pratama, 2024).';
+    const doc = await createDocument('payer-g', { title: 'F', language: 'id', content: content(source) });
+    await createLock('payer-g', doc.id, 'Sistem Merdeka');
+    const bodies: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+    const replies = [transform('The Independent System has 12 warehouse units (Pratama et al., 2024).'), { corrected_text: 'Sistem Merdeka has 12 warehouse units (Pratama et al., 2024).', unrepairable_spans: [] }];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => { bodies.push(JSON.parse(init.body)); return reply(replies[bodies.length - 1]); }));
+    const preview = await instruct('payer-g', doc.id, doc.revision, source, 'inggriskan dan ganti angkanya jadi 12');
+    expect(preview.output.transformed_text).toBe('Sistem Merdeka has 12 warehouse units (Pratama et al., 2024).');
+    expect(bodies[1]!.messages[1]!.content).toContain('<violations>\nrequired: Sistem Merdeka | appeared instead: (missing)\n</violations>');
+  });
+
+  it('refuses a custom transform that carries no instruction', async () => {
+    paid('payer-h');
+    const source = 'Kami memiliki 10 unit gudang.';
+    const doc = await createDocument('payer-h', { title: 'F', language: 'id', content: content(source) });
+    const transport = vi.fn();
+    vi.stubGlobal('fetch', transport);
+    await expect(instruct('payer-h', doc.id, doc.revision, source, '')).rejects.toMatchObject({ code: 'INVALID_REQUEST' });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
   it('accepts a translation that keeps the figure, spelled out or not', async () => {
     paid('payer-d');
     const source = 'Kami memiliki 10 unit gudang.';

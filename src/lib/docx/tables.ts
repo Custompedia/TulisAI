@@ -65,11 +65,14 @@ export function tableFrom(table: XmlNode, styles: Styles, base: { run: RunProps;
   const headerCount = headerRows < 0 ? rows.length : headerRows;
   const lastColumn = Math.max(0, ...slots.map((row) => row.reduce((end, slot) => Math.max(end, slot.column + slot.span), 0))) - 1;
   const bodyStart = look.firstRow ? 1 : 0;
+  // First row holding a merged cell per grid column, so a continuation check is O(1) instead of a scan of every row above.
+  const firstMerge = new Map<number, number>();
+  slots.forEach((row, rowIndex) => { for (const cell of row) if (cell.merge && !firstMerge.has(cell.column)) firstMerge.set(cell.column, rowIndex); });
 
   const output = slots.map((row, rowIndex) => {
     const cells = row.flatMap((slot): EditorNode[] => {
       // A continuation cell exists only to be covered by the restart cell above it.
-      if (slot.merge === 'continue' && rowIndex > 0 && slots.slice(0, rowIndex).some((above) => above.some((cell) => cell.column === slot.column && cell.merge))) return [];
+      if (slot.merge === 'continue' && (firstMerge.get(slot.column) ?? rowIndex) < rowIndex) return [];
       let rowspan = 1;
       if (slot.merge === 'restart') while (slots[rowIndex + rowspan]?.some((cell) => cell.column === slot.column && cell.merge === 'continue')) rowspan++;
 
