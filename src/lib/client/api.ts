@@ -2,14 +2,16 @@ export class ApiError extends Error {
   constructor(public code: string, public status: number, public details?: unknown) { super(code); this.name = 'ApiError'; }
 }
 
-export async function request<T>(path: string, method = 'GET', body?: unknown, key?: string): Promise<T> {
+// `contentType` switches the body from JSON to raw bytes, which is what a file upload needs.
+export async function request<T>(path: string, method = 'GET', body?: unknown, key?: string, contentType?: string): Promise<T> {
   let response: Response;
+  const binary = contentType !== undefined;
   try {
     response = await fetch(path, {
       method,
       credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      headers: { 'Content-Type': contentType ?? 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
+      ...(body === undefined ? {} : { body: binary ? (body as BodyInit) : JSON.stringify(body) }),
     });
   } catch {
     throw new ApiError('NETWORK_ERROR', 0);
@@ -45,9 +47,18 @@ export function authErrorCode(result: { code?: unknown; message?: unknown; error
 export const newKey = () => crypto.randomUUID();
 export const isUnauthenticated = (error: unknown) => error instanceof ApiError && error.status === 401;
 
+// The offending string the server named, quoted into the message so the user can see what blocked the result.
+const offending = (error: unknown): string | null => {
+  const details = error instanceof ApiError ? error.details : null;
+  const token = details && typeof details === 'object' && 'token' in details ? (details as { token?: unknown }).token : null;
+  return typeof token === 'string' && token.trim() ? token.trim().slice(0, 60) : null;
+};
+
 export function errorText(error: unknown, english: boolean): string {
   const code = error instanceof ApiError ? error.code : '';
   const t = (id: string, en: string) => (english ? en : id);
+  const token = offending(error);
+  const about = (id: string, en: string) => (token ? t(`${id} (“${token}”)`, `${en} (“${token}”)`) : t(id, en));
   switch (true) {
     case code === 'UNAUTHENTICATED': return t('Sesi berakhir. Masuk kembali untuk melanjutkan.', 'Your session expired. Sign in again to continue.');
     case code === 'NETWORK_ERROR': return t('Koneksi terputus. Periksa internet lalu coba lagi.', 'Connection lost. Check your internet and try again.');
@@ -69,12 +80,17 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'SERVICE_UNAVAILABLE': return t('Layanan akun sedang tidak tersedia. Coba lagi nanti.', 'Account services are temporarily unavailable. Try again later.');
     case code === 'REVISION_CONFLICT' || code === 'SOURCE_MISMATCH': return t('Dokumen berubah di tempat lain. Tulisanmu tetap aman; muat ulang atau simpan sebagai salinan.', 'The document changed elsewhere. Your writing is safe; reload or save a copy.');
     case code.includes('CONFIGURATION'): return t('Layanan AI belum dikonfigurasi. Tulisanmu tetap tersedia.', 'The AI service is not configured yet. Your writing is still available.');
-    case code === 'QUOTA_EXCEEDED': return t('Batas pemakaian AI bulan ini tercapai. Coba lagi nanti.', 'You have reached this month’s AI limit. Try again later.');
+    case code === 'QUOTA_EXCEEDED': return t('Kuota karakter AI bulan ini habis. Persingkat teks, tunggu bulan depan, atau naikkan paket.', 'This month’s AI character quota is used up. Shorten the text, wait for next month, or upgrade.');
+    case code === 'FEATURE_LOCKED': return t('Fitur ini tersedia di paket berbayar.', 'This feature is available on a paid plan.');
     case code === 'RATE_LIMITED': return t('Terlalu banyak permintaan. Tunggu sebentar lalu coba lagi.', 'Too many requests. Wait a moment and try again.');
     case code === 'SCOPE_TOO_LARGE' || code === 'PAYLOAD_TOO_LARGE': return t('Teks terlalu panjang untuk sekali proses. Pilih paragraf atau bagian tertentu.', 'The text is too long for one run. Select a paragraph or a shorter passage.');
     case code === 'STYLE_SAMPLE_COPIED': return t('Hasil menyalin kalimat dari contoh tulisan skill, jadi dibatalkan. Coba lagi atau ganti contohnya dengan teks yang lebih umum.', 'The result copied sentences from the skill’s writing sample, so it was discarded. Try again or use a more generic sample.');
     case code === 'AI_STRUCTURE_REJECTED': return t('Susunan paragraf hasilnya beda dari teks asli, padahal format yang dipilih menjaga jumlah paragraf. Kalau hasilnya memang harus berbentuk email atau poin, ganti Format di Sesuaikan.', 'The result’s paragraph count differs from the source, but the chosen format keeps it. If the result should be an email or a list, change Format in Customize.');
-    case code === 'AI_OUTPUT_REJECTED': return t('Hasil ini mengubah istilah yang dikunci atau angka. Teks belum diterapkan.', 'This result changed a locked term or number. Nothing was applied.');
+    case code === 'AI_LOCKED_TERM_REJECTED': return about('Hasil ini menghilangkan istilah yang kamu kunci, jadi belum diterapkan. Buka kuncinya kalau istilah itu memang boleh berubah.', 'The result dropped a term you locked, so nothing was applied. Unlock it if that term may change.');
+    case code === 'AI_NUMBER_REJECTED': return about('Hasil ini mengubah salah satu angka, jadi belum diterapkan. Coba jalankan ulang.', 'The result changed one of the numbers, so nothing was applied. Try running it again.');
+    case code === 'AI_CITATION_REJECTED': return about('Hasil ini mengubah atau menambah sitasi, jadi belum diterapkan.', 'The result altered or added a citation, so nothing was applied.');
+    case code === 'AI_PLACEHOLDER_REJECTED': return about('Hasil ini menghilangkan bagian yang masih harus kamu isi sendiri, jadi belum diterapkan.', 'The result dropped a placeholder you still need to fill in, so nothing was applied.');
+    case code === 'AI_OUTPUT_REJECTED': return t('Hasil ini tidak lolos pemeriksaan keamanan. Teks belum diterapkan.', 'This result did not pass the safety checks. Nothing was applied.');
     case code === 'PROTECTED_SELECTION': return t('Istilah yang dikunci tidak bisa diganti. Buka kuncinya dulu.', 'A locked term cannot be replaced. Unlock it first.');
     case code === 'AI_UNAVAILABLE': return t('AI gagal memproses. Teksmu tidak berubah — coba lagi.', 'The AI could not finish. Your text is unchanged — try again.');
     case code === 'LOCK_EXISTS': return t('Istilah ini sudah dikunci.', 'This term is already locked.');

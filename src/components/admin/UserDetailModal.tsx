@@ -16,10 +16,10 @@ import { actionLabel, detailSummary, operationLabel, shortId, statusLabel, TIERS
 
 type Tab = 'overview' | 'settings' | 'log' | 'sessions' | 'account';
 type Props = { userId: string; summary: AdminSummary | null; onClose: () => void; onChange: (user: AdminUser) => void; onDeleted: (id: string) => void; notify: (notice: { tone: 'success' | 'error'; message: string }) => void };
-type Form = { name: string; emailVerified: boolean; role: Role; tier: Tier; aiLimitOverride: string; adminNote: string };
+type Form = { name: string; emailVerified: boolean; role: Role; tier: Tier; aiLimitOverride: string; aiCharacterLimitOverride: string; adminNote: string };
 type Confirm = { kind: 'role'; role: Role } | { kind: 'ban' } | { kind: 'unban' } | { kind: 'password' } | { kind: 'revoke-all' } | { kind: 'delete' };
 
-const formOf = (user: AdminUser): Form => ({ name: user.name, emailVerified: user.emailVerified, role: user.role, tier: user.tier, aiLimitOverride: user.aiLimitOverride === null ? '' : String(user.aiLimitOverride), adminNote: user.adminNote ?? '' });
+const formOf = (user: AdminUser): Form => ({ name: user.name, emailVerified: user.emailVerified, role: user.role, tier: user.tier, aiLimitOverride: user.aiLimitOverride === null ? '' : String(user.aiLimitOverride), aiCharacterLimitOverride: user.aiCharacterLimitOverride === null ? '' : String(user.aiCharacterLimitOverride), adminNote: user.adminNote ?? '' });
 
 export function StatusBadge({ user, t }: { user: AdminUser; t: (id: string, en: string) => string }) {
   return user.banned
@@ -91,6 +91,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
   async function save(roleDone = false) {
     if (!form || !user) return;
     const override = form.aiLimitOverride.trim() === '' ? null : Number(form.aiLimitOverride);
+    const characterOverride = form.aiCharacterLimitOverride.trim() === '' ? null : Number(form.aiCharacterLimitOverride);
     if (override !== null && (!Number.isInteger(override) || override < 1)) { setFormError(t('Batas khusus harus bilangan bulat positif.', 'The custom limit must be a positive whole number.')); return; }
     if (!roleDone && form.role !== user.role) { setConfirm({ kind: 'role', role: form.role }); return; }
     const patch: Record<string, unknown> = {};
@@ -98,6 +99,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
     if (form.emailVerified !== user.emailVerified) patch.emailVerified = form.emailVerified;
     if (form.tier !== user.tier) patch.tier = form.tier;
     if (override !== user.aiLimitOverride) patch.aiLimitOverride = override;
+    if (characterOverride !== user.aiCharacterLimitOverride) patch.aiCharacterLimitOverride = characterOverride;
     if ((form.adminNote.trim() || null) !== (user.adminNote ?? null)) patch.adminNote = form.adminNote.trim() || null;
     if (!Object.keys(patch).length) return;
     setBusy('save'); setFormError('');
@@ -164,7 +166,8 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
                 <Fact label={t('Bergabung', 'Joined')}>{dateTime(user.createdAt, locale)}</Fact>
                 <Fact label={t('Terakhir aktif', 'Last active')}>{user.lastActiveAt ? relativeTime(user.lastActiveAt, locale) : '—'}</Fact>
                 <Fact label="Notebook">{numberFormat(user.documents, locale)}</Fact>
-                <Fact label={t('AI bulan ini', 'AI this month')}>{numberFormat(user.requestsThisMonth, locale)} / {limitText(user)}</Fact>
+                <Fact label={t('Karakter AI bulan ini', 'AI characters this month')}>{numberFormat(user.charactersThisMonth, locale)} / {user.unlimited ? '∞' : numberFormat(user.characterLimit, locale)}</Fact>
+                <Fact label={t('Permintaan bulan ini', 'Requests this month')}>{numberFormat(user.requestsThisMonth, locale)} / {limitText(user)}</Fact>
                 <Fact label={t('Gagal bulan ini', 'Failed this month')}>{numberFormat(user.failedThisMonth, locale)}</Fact>
                 <Fact label={t('Token bulan ini', 'Tokens this month')}>{numberFormat(user.tokensThisMonth, locale)}</Fact>
                 <Fact label={t('Batas efektif', 'Effective limit')}>{user.unlimited ? t('Tanpa batas (admin)', 'Unlimited (admin)') : user.aiLimitOverride ? t(`${numberFormat(user.aiLimitOverride, locale)} (khusus)`, `${numberFormat(user.aiLimitOverride, locale)} (custom)`) : t(`${numberFormat(user.requestLimit, locale)} (tier ${tierLabel(user.tier, t)})`, `${numberFormat(user.requestLimit, locale)} (${tierLabel(user.tier, t)} tier)`)}</Fact>
@@ -185,7 +188,8 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
                 <div><FieldLabel htmlFor="u-name">{t('Nama', 'Name')}</FieldLabel><input id="u-name" className={inputClass} value={form.name} maxLength={100} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
                 <div><FieldLabel htmlFor="u-role" hint={self ? t('role sendiri terkunci', 'own role is locked') : undefined}>Role</FieldLabel><HintSelect id="u-role" label="Role" value={form.role} disabled={self} onChange={(value) => setForm({ ...form, role: value })} options={[{ value: 'user', label: 'User', hint: t('Akses biasa, ikut batas tier', 'Regular access, tier limits apply') }, { value: 'admin', label: 'Admin', hint: t('Panel admin dan AI tanpa batas', 'Admin panel and unlimited AI') }]} /></div>
                 <div><FieldLabel htmlFor="u-tier">Tier</FieldLabel><HintSelect id="u-tier" label="Tier" value={form.tier} onChange={(value) => setForm({ ...form, tier: value })} options={TIERS.map((tier) => ({ value: tier, label: tierLabel(tier, t), hint: summary ? `${numberFormat(summary.tierLimits[tier], locale)} ${t('permintaan AI / bulan', 'AI requests / month')}` : undefined }))} /></div>
-                <div><FieldLabel htmlFor="u-limit" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Batas AI khusus / bulan', 'Custom AI limit / month')}</FieldLabel><input id="u-limit" type="number" min={1} step={1} inputMode="numeric" className={inputClass} value={form.aiLimitOverride} placeholder={summary ? String(summary.tierLimits[form.tier]) : ''} onChange={(event) => setForm({ ...form, aiLimitOverride: event.target.value })} /></div>
+                <div><FieldLabel htmlFor="u-chars" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Kuota karakter khusus / bulan', 'Custom character quota / month')}</FieldLabel><input id="u-chars" type="number" min={1} step={1000} inputMode="numeric" className={inputClass} value={form.aiCharacterLimitOverride} placeholder={summary ? String(summary.tierCharacterLimits[form.tier]) : ''} onChange={(event) => setForm({ ...form, aiCharacterLimitOverride: event.target.value })} /></div>
+                <div><FieldLabel htmlFor="u-limit" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Batas permintaan khusus / bulan', 'Custom request limit / month')}</FieldLabel><input id="u-limit" type="number" min={1} step={1} inputMode="numeric" className={inputClass} value={form.aiLimitOverride} placeholder={summary ? String(summary.tierLimits[form.tier]) : ''} onChange={(event) => setForm({ ...form, aiLimitOverride: event.target.value })} /></div>
               </div>
               <label className="flex cursor-pointer items-center gap-2.5 text-sm text-ink-800"><input type="checkbox" checked={form.emailVerified} onChange={(event) => setForm({ ...form, emailVerified: event.target.checked })} className="h-4 w-4 accent-brand-600" />{t('Email sudah terverifikasi', 'Email is verified')}</label>
               <div><FieldLabel htmlFor="u-note" hint={t('hanya terlihat oleh admin', 'visible to admins only')}>{t('Catatan admin', 'Admin note')}</FieldLabel><textarea id="u-note" rows={3} maxLength={500} className={`${inputClass} h-auto py-2`} value={form.adminNote} onChange={(event) => setForm({ ...form, adminNote: event.target.value })} /></div>

@@ -3,6 +3,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { Gauge } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
+import { numberFormat } from '@/lib/client/format';
 import { ApiError, errorText, isUnauthenticated, request } from '@/lib/client/api';
 import { resetStyles } from '@/lib/client/styles-store';
 import { StatusScreen, statusIcons } from '@/components/ui/StatusScreen';
@@ -11,15 +12,26 @@ import { AccountMenu } from './AccountMenu';
 import { PlansDialog } from './PlansDialog';
 import { Sidebar } from './Sidebar';
 import { LoadingBlock } from '@/components/ui/Spinner';
+import { hasFeature, PLAN_LIMITS, type Feature, type PlanLimits, type Tier } from '@/lib/plans';
 
 export type SessionUser = { id: string; name: string; email: string; username?: string | null; image?: string | null; role?: 'user' | 'admin' };
 export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: 'academic' | 'professional' | 'general'; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; onboarded: boolean; updatedAt: string | null };
-export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; unlimited?: boolean; tier?: 'free' | 'plus' | 'pro' | 'team' };
+export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; charactersUsed: number; characterLimit: number; charactersRemaining: number; unlimited?: boolean; tier?: Tier; limits?: PlanLimits; features?: Feature[] };
 export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
 
 type Shell = { user: SessionUser; settings: UserSettings; usage: Usage | null; setSettings: (settings: UserSettings) => void; refresh: () => Promise<void> };
 const ShellContext = createContext<Shell | null>(null);
 export const useShell = () => { const value = useContext(ShellContext); if (!value) throw new Error('useShell must be used inside AppShell'); return value; };
+
+// Limits and gates resolved from the account, with the free plan as the answer until /api/usage has replied.
+// Client gates only shape the UI; every paid surface is enforced again on the server.
+export function useEntitlements() {
+  const { usage } = useShell();
+  const tier: Tier = usage?.tier ?? 'free';
+  const limits = usage?.limits ?? PLAN_LIMITS[tier];
+  const features = usage?.features ?? limits.features;
+  return { tier, limits, features, has: (feature: Feature) => hasFeature(features, feature) };
+}
 
 export function useSignOut() {
   const router = useRouter();
@@ -92,18 +104,18 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
 }
 
 function TopBar() {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { usage } = useShell();
   const [plans, setPlans] = useState(false);
-  const low = usage !== null && !usage.unlimited && usage.requestsRemaining <= Math.max(1, Math.round(usage.requestLimit * 0.1));
+  const low = usage !== null && !usage.unlimited && usage.charactersRemaining <= Math.max(1, Math.round(usage.characterLimit * 0.1));
 
   return (
     <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-shell px-4 md:pl-[18px]">
       <Logo href="/app" mark="h-9 w-9" />
       <div className="ml-auto flex items-center gap-2.5">
         {usage && (
-          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={t('Pemakaian AI bulan ini', 'AI usage this month')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
-            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{usage.requestsUsed}/{usage.unlimited ? '∞' : usage.requestLimit}</span>{t('AI bulan ini', 'AI this month')}
+          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={t('Karakter AI terpakai bulan ini', 'AI characters used this month')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
+            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span>{t('karakter bulan ini', 'characters this month')}
           </button>
         )}
         <AccountMenu />

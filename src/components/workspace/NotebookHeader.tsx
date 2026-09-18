@@ -1,8 +1,9 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { ChartNoAxesColumn, Columns2, Copy, EllipsisVertical, Plus, Save, Trash2, type LucideIcon } from 'lucide-react';
+import { AlignLeft, ChartNoAxesColumn, Columns2, Copy, Download, EllipsisVertical, FileText, Lock, Plus, Save, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { Button, IconButton } from '@/components/ui/Button';
+import { Segmented } from '@/components/ui/Field';
 import { Logo } from '@/components/ui/Logo';
 import { AccountMenu } from '@/components/app/AccountMenu';
 import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
@@ -10,18 +11,43 @@ import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
 type Props = {
   title: string; onTitle: (title: string) => void; disabled: boolean; comparing: boolean; canCopy: boolean;
   onCopy: () => void; onCompare: () => void; onAnalytics: () => void; onSaveVersion: () => void; onDelete: () => void;
+  /** Paid surfaces: locked entries stay visible and open the plans dialog instead of vanishing. */
+  canExport: boolean; exporting: boolean; onExport: () => void;
+  canAdvanced: boolean; advanced: boolean; onAdvanced: (next: boolean) => void;
+  onUpgrade: () => void;
 };
 
-function MenuItem({ icon: Icon, label, onClick, danger, disabled }: { icon: LucideIcon; label: string; onClick: () => void; danger?: boolean; disabled?: boolean }) {
+// Compact toolbar control. A locked paid feature shows a grey padlock instead of its own icon and opens the
+// plans dialog on click, so nothing disappears on the free plan.
+function ToolButton({ icon: Icon, label, onClick, active, locked, disabled }: { icon: LucideIcon; label: string; onClick: () => void; active?: boolean; locked?: boolean; disabled?: boolean }) {
+  const tone = locked
+    ? 'border-line bg-white text-ink-400 hover:border-line-strong hover:bg-paper'
+    : active
+      ? 'border-brand-300 bg-brand-50 text-brand-800 ring-2 ring-brand-200'
+      : 'border-line bg-white text-ink-700 hover:border-line-strong hover:bg-paper hover:text-ink-900';
   return (
-    <button type="button" role="menuitem" disabled={disabled} onClick={onClick}
-      className={`flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium outline-none transition-colors disabled:opacity-40 ${danger ? 'text-red-700 hover:bg-red-50 focus-visible:bg-red-50' : 'text-ink-700 hover:bg-paper-deep focus-visible:bg-paper-deep'}`}>
-      <Icon size={15} aria-hidden="true" className="shrink-0" />{label}
+    <button type="button" title={label} aria-label={label} aria-pressed={locked ? undefined : active} disabled={disabled} onClick={onClick}
+      className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[13px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${tone}`}>
+      {locked ? <Lock size={15} aria-hidden="true" /> : <Icon size={15} aria-hidden="true" />}
     </button>
   );
 }
 
-export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, onCopy, onCompare, onAnalytics, onSaveVersion, onDelete }: Props) {
+// `locked` is a paid feature the free plan cannot use: greyed out with a padlock, but still clickable so it
+// can explain itself through the plans dialog.
+function MenuItem({ icon: Icon, label, onClick, danger, disabled, locked }: { icon: LucideIcon; label: string; onClick: () => void; danger?: boolean; disabled?: boolean; locked?: boolean }) {
+  const tone = danger ? 'text-red-700 hover:bg-red-50 focus-visible:bg-red-50' : locked ? 'text-ink-500 hover:bg-paper-deep focus-visible:bg-paper-deep' : 'text-ink-700 hover:bg-paper-deep focus-visible:bg-paper-deep';
+  return (
+    <button type="button" role="menuitem" disabled={disabled} onClick={onClick}
+      className={`flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] font-medium outline-none transition-colors disabled:opacity-40 ${tone}`}>
+      <Icon size={15} aria-hidden="true" className={`shrink-0 ${locked ? 'text-ink-400' : ''}`} />
+      <span className="min-w-0 flex-1 truncate">{label}</span>
+      {locked && <Lock size={13} aria-hidden="true" className="shrink-0 text-ink-400" />}
+    </button>
+  );
+}
+
+export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, onCopy, onCompare, onAnalytics, onSaveVersion, onDelete, canExport, exporting, onExport, canAdvanced, advanced, onAdvanced, onUpgrade }: Props) {
   const { t } = useLocale();
   const [menu, setMenu] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -54,6 +80,22 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
             <Columns2 size={15} aria-hidden="true" />{t('Bandingkan', 'Compare')}
           </button>
           <Button size="sm" variant="ghost" icon={Save} disabled={disabled} onClick={onSaveVersion}>{t('Simpan versi', 'Save version')}</Button>
+          <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-line" />
+          {/* Both canvases are shown side by side, so the current one is readable without hovering. */}
+          <div className="shrink-0">
+            <Segmented<'basic' | 'advanced'> fit label={t('Tampilan kanvas', 'Canvas layout')}
+              value={advanced ? 'advanced' : 'basic'} disabled={disabled}
+              onChange={(next) => onAdvanced(next === 'advanced')} onLocked={onUpgrade}
+              options={[
+                { value: 'basic', label: t('Dasar', 'Basic'), icon: AlignLeft },
+                { value: 'advanced', label: t('Lanjutan', 'Advanced'), icon: FileText, locked: !canAdvanced, lockedHint: t('Mode lanjutan — paket berbayar', 'Advanced mode — paid plan') },
+              ]} />
+          </div>
+          <ToolButton icon={Download} locked={!canExport} disabled={exporting}
+            label={canExport
+              ? (exporting ? t('Mengekspor…', 'Exporting…') : t('Ekspor ke DOCX', 'Export to DOCX'))
+              : t('Ekspor DOCX — paket berbayar', 'DOCX export — paid plan')}
+            onClick={canExport ? onExport : onUpgrade} />
         </div>
         <div className="relative" ref={menuRef}>
           <IconButton icon={EllipsisVertical} label={t('Menu lainnya', 'More')} aria-haspopup="menu" aria-expanded={menu} active={menu} onClick={() => setMenu(!menu)} />
@@ -66,6 +108,14 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
                 <MenuItem icon={Copy} label={t('Salin semua teks', 'Copy all text')} disabled={!canCopy} onClick={pick(onCopy)} />
                 <MenuItem icon={Columns2} label={compareLabel} onClick={pick(onCompare)} />
                 <MenuItem icon={Save} label={t('Simpan versi', 'Save version')} disabled={disabled} onClick={pick(onSaveVersion)} />
+                <MenuItem icon={FileText} locked={!canAdvanced}
+                  label={canAdvanced ? (advanced ? t('Mode lanjutan: aktif', 'Advanced mode: on') : t('Mode lanjutan: nonaktif', 'Advanced mode: off')) : t('Mode lanjutan', 'Advanced mode')}
+                  disabled={disabled && canAdvanced}
+                  onClick={pick(canAdvanced ? () => onAdvanced(!advanced) : onUpgrade)} />
+                <MenuItem icon={Download} locked={!canExport}
+                  label={exporting ? t('Mengekspor…', 'Exporting…') : t('Ekspor ke DOCX', 'Export to DOCX')}
+                  disabled={exporting}
+                  onClick={pick(canExport ? onExport : onUpgrade)} />
               </div>
               <MenuItem icon={ChartNoAxesColumn} label={t('Analisis', 'Analytics')} onClick={pick(onAnalytics)} />
               <div className="my-1 h-px bg-line" />

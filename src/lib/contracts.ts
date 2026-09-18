@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { INSTRUCTION_LIMIT } from "@/lib/writing/instruction";
 import { NotebookAppearanceSchema } from "@/lib/notebook/appearance";
 
 export const ApiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) });
@@ -20,7 +21,10 @@ export const GenerateSchema = z.object({
   source: z.object({ text: z.string().min(1).max(200000), anchor: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional() }),
   runtime: z.record(z.string(), z.unknown()), expectedRevision: z.number().int().min(0),
   // Set once, on the first run of a brand-new notebook, so the rewrite call also returns a short title.
-  suggestTitle: z.boolean().optional()
+  suggestTitle: z.boolean().optional(),
+  // Free-form instruction typed by the writer. Kept at the top level, outside `runtime`, because it is
+  // untrusted text: the server sanitises it and sends it as its own USER block, never as a control.
+  instruction: z.string().max(INSTRUCTION_LIMIT).optional(),
 });
 export const ApplyPreviewSchema = z.object({ expectedRevision: z.number().int().min(0), selectedAlternative: z.number().int().min(0).max(4).optional() });
 export const AnalyzeQualitySchema = z.object({ documentId: z.string().uuid(), expectedRevision: z.number().int().min(0), source: z.object({ text: z.string().min(1).max(20000), anchor: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional() }), language: z.enum(["id", "en"]), context: z.enum(["standard", "academic", "humanize", "professional", "creative", "simplify"]) });

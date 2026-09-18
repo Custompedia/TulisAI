@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { applyMigrations } from '../helpers/migrations';
 
 const state = vi.hoisted(() => ({ env: {} as Record<string, unknown> }));
 vi.mock('../../src/server/runtime', () => ({ runtime: () => state.env, requiredSetting: (value: string) => value, ConfigurationError: class extends Error {} }));
@@ -28,7 +28,7 @@ const addUsage = (owner: string, status: string, tokens: [number, number], at = 
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  for (const file of ['0000_initial', '0001_username_auth', '0002_workspace_metadata', '0003_notebook_appearance', '0004_writing_styles', '0005_user_role', '0006_admin_panel', '0007_usage_created_index', '0008_style_description', '0009_usage_cost']) db.exec(readFileSync(`migrations/${file}.sql`, 'utf8'));
+  applyMigrations(db);
   state.env = { DB: { prepare: (sql: string) => new Statement(sql) }, AI_MONTHLY_REQUEST_LIMIT: '100', AI_PUBLIC_ENABLED: 'true', OPENROUTER_MODEL: 'openai/gpt-5.6-luna' };
 });
 afterEach(() => db.close());

@@ -85,7 +85,7 @@ export function Composer() {
   const words = countWords(text);
   const detected = detectLanguage(text);
   const tooLong = text.length > AI_SCOPE_LIMIT;
-  const outOfQuota = usage !== null && !usage.unlimited && usage.requestsRemaining <= 0;
+  const outOfQuota = usage !== null && !usage.unlimited && usage.charactersRemaining <= 0;
   const needsLanguage = settings.language === 'auto' && words >= MIN_WORDS && !detected;
   const ready = words >= MIN_WORDS;
   const canSend = ready && !busy && !needsLanguage && !(outOfQuota && !tooLong);

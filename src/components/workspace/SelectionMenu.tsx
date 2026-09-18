@@ -6,7 +6,8 @@ import { BubbleMenu } from '@tiptap/react/menus';
 import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Minimize2, ScanText, Shuffle, SlidersHorizontal, Smile, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
-import { INLINE_LIMIT, SELECTION_LIMIT } from '@/lib/writing/settings';
+import { INLINE_LIMIT } from '@/lib/writing/settings';
+import { useEntitlements } from '@/components/app/AppShell';
 import type { WritingStyle } from '@/lib/writing/styles';
 import { StyleMark } from '@/components/writing/StyleMark';
 import { commandLabel, type SelectionCommand } from './selection-commands';
@@ -44,8 +45,9 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles,
   const ref = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const placement = useAutoSide(more, ref, moreRef);
-  const overInline = chars > INLINE_LIMIT; const overSelection = chars > SELECTION_LIMIT;
-  const limit = overSelection ? SELECTION_LIMIT : INLINE_LIMIT;
+  const { limits } = useEntitlements();
+  const overInline = chars > INLINE_LIMIT; const overSelection = chars > limits.runLimit;
+  const limit = overSelection ? limits.runLimit : INLINE_LIMIT;
   const hint = overInline ? t(`${numberFormat(chars, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan`, `${numberFormat(chars, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection`) : '';
 
   useEffect(() => {

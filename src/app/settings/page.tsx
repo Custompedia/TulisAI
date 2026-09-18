@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ArrowUpRight, Gauge, Palette, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
 import { delMany, keys } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
+import { numberFormat } from '@/lib/client/format';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { AppShell, useSessionGuard, useShell, type UserSettings } from '@/components/app/AppShell';
 import { Avatar } from '@/components/ui/Avatar';
@@ -117,7 +118,7 @@ function SettingsView() {
     } catch (caught) { if (!guard(caught)) setNotice({ tone: 'error', title: t('Akun belum terhapus', 'Account not deleted'), message: errorText(caught, en) }); setConfirmDelete(false); setDeleting(false); }
   }
 
-  const usedPercent = usage ? Math.min(100, Math.round((usage.requestsUsed / Math.max(1, usage.requestLimit)) * 100)) : 0;
+  const usedPercent = usage ? Math.min(100, Math.round((usage.charactersUsed / Math.max(1, usage.characterLimit)) * 100)) : 0;
   const nav: Array<{ id: Tab; icon: LucideIcon; label: string }> = [
     { id: 'profil', icon: UserRound, label: t('Profil', 'Profile') },
     { id: 'skills', icon: Palette, label: 'Skills' },
@@ -190,7 +191,7 @@ function SettingsView() {
             <Card title={t('Pemakaian AI', 'AI usage')} description={usage ? `${t('Periode', 'Period')} ${usage.period} (UTC)` : undefined}>
               {usage ? (
                 <>
-                  <div className="flex items-end justify-between"><p className="text-3xl font-bold text-ink-950">{usage.requestsUsed}<span className="text-base font-medium text-ink-400"> / {usage.unlimited ? '∞' : usage.requestLimit}</span></p><p className="text-sm text-ink-500">{usage.unlimited ? t('Tanpa batas', 'Unlimited') : `${usage.requestsRemaining} ${t('tersisa', 'remaining')}`}</p></div>
+                  <div className="flex items-end justify-between"><p className="text-3xl font-bold text-ink-950">{numberFormat(usage.charactersUsed, locale)}<span className="text-base font-medium text-ink-400"> / {usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span></p><p className="text-sm text-ink-500">{usage.unlimited ? t('Tanpa batas', 'Unlimited') : `${numberFormat(usage.charactersRemaining, locale)} ${t('karakter tersisa', 'characters remaining')}`}</p></div>
                   {!usage.unlimited && <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper-deep"><div className={`h-full rounded-full ${usedPercent >= 90 ? 'bg-amber-500' : 'bg-brand-600'}`} style={{ width: `${usedPercent}%` }} /></div>}
                   <p className="mt-3 text-[13px] text-ink-500">{t('Termasuk perbaikan otomatis dan percobaan yang gagal. Mengetik, riwayat, dan perbandingan tidak dihitung.', 'Includes automatic repairs and failed attempts. Typing, history, and comparisons are never counted.')}</p>
                 </>

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { applyMigrations } from '../helpers/migrations';
 
 const state = vi.hoisted(() => ({ env: {} as Record<string, unknown> }));
 vi.mock('../../src/server/runtime', () => ({
@@ -12,7 +12,8 @@ vi.mock('../../src/server/runtime', () => ({
 import { autosaveDocument, createDocument, getDocument, getVersion, listDocuments, listVersions, restoreVersion, saveDocument } from '../../src/server/documents/service';
 import { documentText, replaceTextInDocument } from '../../src/server/documents/serialize';
 import { generatePreview, applyPreview, discardPreview } from '../../src/server/ai/service';
-import { runtimeControls, defaults } from '../../src/lib/writing/settings';
+import { runtimeControls, defaults, INLINE_LIMIT } from '../../src/lib/writing/settings';
+import { PLAN_LIMITS } from '../../src/lib/plans';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
 
 let db: DatabaseSync;
@@ -29,8 +30,7 @@ class Statement {
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  db.exec(readFileSync('migrations/0000_initial.sql', 'utf8')); db.exec(readFileSync('migrations/0001_username_auth.sql', 'utf8')); db.exec(readFileSync('migrations/0002_workspace_metadata.sql', 'utf8')); db.exec(readFileSync('migrations/0003_notebook_appearance.sql', 'utf8')); db.exec(readFileSync('migrations/0004_writing_styles.sql', 'utf8')); db.exec(readFileSync('migrations/0005_user_role.sql', 'utf8')); db.exec(readFileSync('migrations/0006_admin_panel.sql', 'utf8')); db.exec(readFileSync('migrations/0007_usage_created_index.sql', 'utf8')); db.exec(readFileSync('migrations/0008_style_description.sql', 'utf8')); db.exec(readFileSync('migrations/0009_usage_cost.sql', 'utf8'));
-  objects = new Map(); objectReads = 0;
+  applyMigrations(db); objects = new Map(); objectReads = 0;
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => {
       db.exec('BEGIN');
@@ -104,7 +104,10 @@ describe('review: scoped editor replacement', () => {
 });
 
 describe('review: actual AI pipeline with mocked provider transport',()=>{
-  function enable(){state.env.AI_PUBLIC_ENABLED='true';state.env.OPENROUTER_API_KEY='test-key';state.env.AI_MONTHLY_REQUEST_LIMIT='100';}
+  function enable(){state.env.AI_PUBLIC_ENABLED='true';state.env.OPENROUTER_API_KEY='test-key';state.env.AI_MONTHLY_REQUEST_LIMIT='100';state.env.AI_MONTHLY_CHARACTER_LIMIT='100000';}
+  const ledger=()=>db.prepare('SELECT status,charge_characters AS charge,error_code AS reason FROM usage_ledger ORDER BY created_at,id').all() as Array<{status:string;charge:number;reason:string|null}>;
+  const held=()=>Number((db.prepare('SELECT COALESCE(SUM(charge_characters),0) AS total FROM usage_ledger').get() as {total:number}).total);
+  const tierRow=(id:string,tier:string)=>db.prepare(`INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('${id}','U','${id}@example.test','${id}','user','${tier}',1,1)`).run();
   const response=(output:unknown)=>Response.json({id:'provider-test',choices:[{message:{content:JSON.stringify(output)},finish_reason:'stop'}],usage:{prompt_tokens:12,completion_tokens:7}});
   const input=(doc:{id:string;revision:number},text='Sumber asli.')=>({documentId:doc.id,promptId:'P01_STANDARD_REWRITE' as const,source:{text},runtime:runtimeControls({...defaults,mode:'standard',language:'id'},'id'),expectedRevision:doc.revision});
   it('privacy gate makes zero provider calls',async()=>{
@@ -120,14 +123,41 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Tulisan awal.');expect((await listVersions('owner-a',doc.id)).items).toHaveLength(2);
     expect(db.prepare('SELECT input_tokens FROM usage_ledger').get()).toMatchObject({input_tokens:12});
   });
-  it('enforces the monthly cap for users and lifts it for admins',async()=>{
-    enable();state.env.AI_MONTHLY_REQUEST_LIMIT='1';const doc=await create();
+  it('enforces the monthly character cap for users and lifts it for admins',async()=>{
+    // 'Sumber asli.' is 12 characters, so a quota of 12 pays for exactly one run.
+    enable();state.env.AI_MONTHLY_CHARACTER_LIMIT='12';const doc=await create();
     const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
     await generatePreview('owner-a','first',input(doc));
+    expect(held()).toBe(12);
     await expect(generatePreview('owner-a','second',input(doc))).rejects.toMatchObject({code:'QUOTA_EXCEEDED'});
     db.prepare("INSERT INTO user (id,name,email,username,role,created_at,updated_at) VALUES ('owner-a','Admin','admin@example.test','admin','admin',1,1)").run();
     const preview=await generatePreview('owner-a','third',input(doc));
     expect(preview.id).toBeTruthy();expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it('charges characters only for a run that returned usable output',async()=>{
+    enable();const doc=await create();
+    // A provider failure releases its hold.
+    vi.stubGlobal('fetch',vi.fn(async()=>Response.json({error:'upstream'},{status:502})));
+    await expect(generatePreview('owner-a','provider-fail',input(doc))).rejects.toMatchObject({code:'AI_UNAVAILABLE'});
+    expect(ledger()).toMatchObject([{status:'failed',charge:0}]);
+    expect(held()).toBe(0);
+    // A refused result releases its hold too, and records why.
+    vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Berbeda total tanpa sumber.',change_categories:[],warnings:[],no_change_needed:false})));
+    await expect(generatePreview('owner-a','rejected',{...input(doc,'Kami memiliki 10 unit.'),documentId:(await createDocument('owner-a',{title:'N',language:'id',content:content('Kami memiliki 10 unit.')})).id})).rejects.toThrow();
+    expect(held()).toBe(0);
+    // A successful run does hold its characters.
+    vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false})));
+    await generatePreview('owner-a','ok',input(doc));
+    expect(held()).toBe(12);
+  });
+  it('never charges the repair pass it triggers itself',async()=>{
+    enable();const doc=await createDocument('owner-a',{title:'Numbers',language:'id',content:content('Kami memiliki 10 unit.')});
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValueOnce(response({transformed_text:'Kami memiliki unit.',change_categories:[],warnings:[],no_change_needed:false})).mockResolvedValueOnce(response({corrected_text:'Terdapat 10 unit milik kami.',unrepairable_spans:[]})));
+    await generatePreview('owner-a','repair-charge',input(doc,'Kami memiliki 10 unit.'));
+    const rows=ledger();
+    expect(rows).toHaveLength(2);
+    expect(rows.filter(row=>row.charge>0)).toHaveLength(1);
+    expect(held()).toBe('Kami memiliki 10 unit.'.length);
   });
   it('prevents a concurrent idempotency key from spending twice',async()=>{
     enable();const doc=await create();let resolve:((response:Response)=>void)|undefined;
@@ -177,13 +207,21 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     enable();const doc=await create();vi.stubGlobal('fetch',vi.fn(async()=>response({transformed_text:'Tulisan yang sepenuhnya berbeda.',change_categories:[],warnings:[],no_change_needed:true})));
     await expect(generatePreview('owner-a','honesty',input(doc))).rejects.toMatchObject({code:'AI_OUTPUT_REJECTED',status:422});
   });
-  it('enforces inline, selection and document scope limits with 422 before any AI call',async()=>{
+  it('enforces the per-tier run limit and the inline limit with 422 before any AI call',async()=>{
     enable();const transport=vi.fn();vi.stubGlobal('fetch',transport);
-    const inline='a'.repeat(601);const selection='b'.repeat(5_001);const whole='c '.repeat(10_001);
+    const free=PLAN_LIMITS.free.runLimit;const pro=PLAN_LIMITS.pro.runLimit;
+    const inline='a'.repeat(INLINE_LIMIT+1);const overFree='b'.repeat(free+1);
     const doc=await createDocument('owner-a',{title:'Long',language:'id',content:content(inline)});
-    await expect(generatePreview('owner-a','inline-limit',{...input(doc,inline),promptId:'P07_INLINE_ALTERNATIVES',source:{text:inline,anchor:{from:0,to:601}},runtime:runtimeControls(defaults,'id','shorter')})).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:600}});
-    await expect(generatePreview('owner-a','selection-limit',{...input(doc,selection),source:{text:selection,anchor:{from:0,to:5_001}}})).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:5_000}});
-    await expect(generatePreview('owner-a','document-limit',input(doc,whole))).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:20_000}});
+    // Inline actions keep their own small cap, whatever the plan.
+    await expect(generatePreview('owner-a','inline-limit',{...input(doc,inline),promptId:'P07_INLINE_ALTERNATIVES',source:{text:inline,anchor:{from:0,to:inline.length}},runtime:runtimeControls(defaults,'id','shorter')})).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:INLINE_LIMIT}});
+    // A free account gets the same run limit for a selection and for the whole notebook.
+    const freeDoc=await createDocument('owner-a',{title:'Free',language:'id',content:content(overFree)});
+    await expect(generatePreview('owner-a','free-selection',{...input(freeDoc,overFree),source:{text:overFree,anchor:{from:0,to:overFree.length}}})).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:free}});
+    await expect(generatePreview('owner-a','free-document',input(freeDoc,overFree))).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:free}});
+    // A paid account gets the bigger one, and is refused only past it.
+    tierRow('owner-pro','pro');
+    const proDoc=await createDocument('owner-pro',{title:'Pro',language:'id',content:content('d'.repeat(pro+1))});
+    await expect(generatePreview('owner-pro','pro-document',input(proDoc,'d'.repeat(pro+1)))).rejects.toMatchObject({code:'SCOPE_TOO_LARGE',status:422,details:{limit:pro}});
     expect(transport).not.toHaveBeenCalled();expect(db.prepare('SELECT COUNT(1) AS n FROM usage_ledger').get()).toMatchObject({n:0});
   });
   it('rejects stale Apply and discard never mutates the source',async()=>{

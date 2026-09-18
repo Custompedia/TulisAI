@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { applyMigrations } from '../helpers/migrations';
 
 const state = vi.hoisted(() => ({ env: {} as Record<string, unknown> }));
 vi.mock('../../src/server/runtime', () => ({
@@ -27,8 +27,7 @@ class Statement {
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
-  db.exec(readFileSync('migrations/0000_initial.sql', 'utf8')); db.exec(readFileSync('migrations/0001_username_auth.sql', 'utf8')); db.exec(readFileSync('migrations/0002_workspace_metadata.sql', 'utf8')); db.exec(readFileSync('migrations/0003_notebook_appearance.sql', 'utf8')); db.exec(readFileSync('migrations/0004_writing_styles.sql', 'utf8')); db.exec(readFileSync('migrations/0005_user_role.sql', 'utf8')); db.exec(readFileSync('migrations/0006_admin_panel.sql', 'utf8')); db.exec(readFileSync('migrations/0007_usage_created_index.sql', 'utf8')); db.exec(readFileSync('migrations/0008_style_description.sql', 'utf8'));
-  objects = new Map(); objectReads = 0;
+  applyMigrations(db); objects = new Map(); objectReads = 0;
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => {
       db.exec('BEGIN');

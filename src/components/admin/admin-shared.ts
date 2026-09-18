@@ -3,10 +3,10 @@ export type Tier = 'free' | 'plus' | 'pro' | 'team';
 export type T = (id: string, en: string) => string;
 export type AdminUser = {
   id: string; name: string; email: string; username: string | null; image: string | null; role: Role; tier: Tier; emailVerified: boolean; createdAt: string; updatedAt: string;
-  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; adminNote: string | null; requestLimit: number; unlimited: boolean;
-  requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
+  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; unlimited: boolean;
+  requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
 };
-export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; tierLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
+export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; monthlyCharacterLimit: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
 export type AuditEntry = { id: string; actorId: string; actorName: string | null; targetUserId: string | null; targetName: string | null; action: string; details: Record<string, unknown>; createdAt: string };
 export type UsageEntry = { id: string; operation: string; promptId: string | null; status: string; sourceCharacters: number | null; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; errorCode: string | null; createdAt: string; completedAt: string | null };
 export type SessionEntry = { id: string; token: string; createdAt: string; expiresAt: string; ipAddress: string | null; userAgent: string | null };

@@ -33,7 +33,6 @@ export const FOCUS_LIMIT = 3;
 // Share of words that may change before a Humanize result counts as over its limit.
 export const PRESERVATION_CEILING: Record<string, number> = { conservative: 15, balanced: 30, flexible: 50 };
 export const AI_SCOPE_LIMIT = 20_000;
-export const SELECTION_LIMIT = 5_000;
 export const INLINE_LIMIT = 600;
 export const MIN_WORDS = 3;
 

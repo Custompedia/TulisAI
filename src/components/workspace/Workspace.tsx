@@ -14,13 +14,18 @@ import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { guardedPush, leaveHref, leavesPath, setLeaveGuard } from '@/lib/client/navigation-guard';
 import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/document';
+import { copyRichText } from '@/lib/editor/clipboard';
 import { countWords } from '@/lib/editor/metrics';
-import { AI_SCOPE_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
+import { AI_SCOPE_LIMIT, INLINE_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
 import { suggestStyle } from '@/lib/writing/suggest';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
-import { useSessionGuard, type UserSettings } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard, type UserSettings } from '@/components/app/AppShell';
+import { PlansDialog } from '@/components/app/PlansDialog';
+import { ADVANCED_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
+import { defaultPageSize, pageStyle } from '@/lib/docx/office-defaults';
+import { docxFilename } from '@/lib/docx/export';
 import { Toast } from '@/components/ui/Toast';
 import { Button, IconButton, pressGreen, raisedGreen } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
@@ -31,6 +36,9 @@ import { AnalyticsPanel } from './AnalyticsPanel';
 import { AssistantPanel } from './AssistantPanel';
 import { CompareView } from './CompareView';
 import { documentLimits } from './document-limits';
+import { paragraphGutterExtension, paragraphGutterKey, targetAtPosition } from './paragraph-gutter';
+import { InstructionDock } from './InstructionDock';
+import { FormattingToolbar } from './FormattingToolbar';
 import { HistoryPanel } from './HistoryPanel';
 import { ANALYTICS_SECTION_ID, InfoPanel } from './InfoPanel';
 import { InlineResult, type InlineStatus } from './InlineResult';
@@ -39,18 +47,18 @@ import { NotebookHeader } from './NotebookHeader';
 import { PreviewCard } from './PreviewCard';
 import { protectionExtension } from './protection';
 import { SaveStatus } from './SaveStatus';
-import { planSelectionCommand, planStyleCommand, type SelectionCommand, type SelectionPlan } from './selection-commands';
+import { planInstruction, planSelectionCommand, planStyleCommand, type SelectionCommand, type SelectionPlan } from './selection-commands';
 import { SelectionMenu } from './SelectionMenu';
 import { StudioPanel, StudioStrip, type StudioTab } from './StudioPanel';
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Surface, type Term, type Version } from './types';
 import { versionLabel } from './versions';
 
-type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; suggestTitle?: boolean };
+type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; suggestTitle?: boolean; instruction?: string };
 // One quick action started from the selection toolbar; its result is shown on the text, not in the panel.
 type InlineSession = { label: string; status: InlineStatus; message: string };
 type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'delete' | 'reload'; version?: Version };
 type LoadError = { code: string; message: string };
-type Notice = { tone: 'success' | 'error' | 'info'; message: string; retrySave?: boolean };
+type Notice = { tone: 'success' | 'error' | 'info' | 'warning'; message: string; retrySave?: boolean };
 type CompareState = { a: string; b: string; before: string; after: string; loading: boolean };
 
 const FROZEN = new Set(['apply', 'restore', 'recover', 'delete']);
@@ -69,6 +77,7 @@ export default function Workspace() {
   const router = useRouter();
   const search = useSearchParams();
   const { t, locale, setLocale } = useLocale();
+  const { limits, has } = useEntitlements();
   const english = locale === 'en';
   const guard = useSessionGuard();
 
@@ -84,6 +93,7 @@ export default function Workspace() {
   const [save, setSave] = useState<SaveState>('loading');
   const [online, setOnline] = useState(true);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [plans, setPlans] = useState(false);
   const [busy, setBusy] = useState('');
   const [aiError, setAiError] = useState('');
   const [inline, setInline] = useState<InlineSession | null>(null);
@@ -140,6 +150,12 @@ export default function Workspace() {
   const termsRef = useRef<string[]>([]);
   const protectedLabel = useRef('');
   const englishRef = useRef(english);
+  // The gutter extension is built once, so it reads the current mode through a ref.
+  const pagedRef = useRef(false);
+  // Advanced mode is stored in the notebook's preferences and gated on the server; the client only renders it.
+  const advanced = (settings as unknown as Record<string, unknown>)[ADVANCED_PREFERENCE] === true;
+  const paged = advanced && has('advanced_notebook');
+  pagedRef.current = paged;
   const contentRef = useRef<JSONContent | null>(null);
   const rightPanel = usePanelRef();
   const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
@@ -166,6 +182,7 @@ export default function Workspace() {
       Table.configure({ resizable: false }), TableRow, TableHeader, TableCell,
       protectionExtension(() => termsRef.current, () => protectedLabel.current),
       inlineTargetExtension,
+      paragraphGutterExtension({ enabled: () => pagedRef.current, label: () => englishRef.current ? 'Act on this paragraph' : 'Tindakan untuk paragraf ini' }),
       documentLimits(() => setNotice({ tone: 'error', message: englishRef.current ? 'This content exceeds the document limit or uses unsupported formatting.' : 'Isi melewati batas dokumen atau memakai format yang belum didukung.' })),
     ],
     content: plainTextDocument(''),
@@ -222,6 +239,8 @@ export default function Workspace() {
     return () => window.removeEventListener('keydown', close);
   }, [narrow]);
   useEffect(() => { if (!arriving) return; setRightTab('assistant'); setPanelOpen(true); }, [arriving]);
+  // Toggling the mode changes nothing in the document, so the gutter decorations are refreshed explicitly.
+  useEffect(() => { if (!editor) return; editor.view.dispatch(editor.state.tr.setMeta(paragraphGutterKey, 'refresh')); }, [editor, paged]);
   useEffect(() => { if (notice?.tone !== 'success') return; const timer = setTimeout(() => setNotice(null), 4000); return () => clearTimeout(timer); }, [notice]);
 
   // The skill suggestion is dismissed per notebook so it never nags after the user says no.
@@ -439,7 +458,7 @@ export default function Workspace() {
       const resolved = resolveScope(req, full);
       if (typeof resolved === 'string') { fail(resolved); return; }
       if (!resolved.source.trim()) { fail(t('Bagian yang dipilih masih kosong.', 'The chosen part is empty.')); return; }
-      const limit = req.inlineAction ? INLINE_LIMIT : req.scope === 'document' ? AI_SCOPE_LIMIT : SELECTION_LIMIT;
+      const limit = req.inlineAction ? INLINE_LIMIT : limits.runLimit;
       if (resolved.source.length > limit) { fail(req.scope === 'selection' ? t(`${numberFormat(resolved.source.length, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan.`, `${numberFormat(resolved.source.length, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection.`) : t(`Terlalu panjang untuk sekali proses (maks. ${numberFormat(limit, 'id')} karakter). Pilih paragraf atau blok sebagian teks.`, `Too long for one run (max ${numberFormat(limit, 'en')} characters). Choose a paragraph or select part of the text.`)); return; }
       // v3 deterministic bypass: lines that are already separate become a list without an AI call.
       const plainList = effective.customized && (effective.format === 'bullets' || effective.format === 'numbered_list') && effective.length === 'same' && !effective.focus.length && !effective.extra.trim();
@@ -455,10 +474,11 @@ export default function Workspace() {
       setPreview(null);
       const captured = stamp.current;
       const result = await request<{ id: string; output: Preview['output']; expiresAt: string }>('/api/ai/generate', 'POST', {
-        documentId: id, promptId: req.inlineAction ? 'P07_INLINE_ALTERNATIVES' : promptFor[effective.mode],
+        documentId: id, promptId: req.instruction ? 'P08_CUSTOM_TRANSFORM' : req.inlineAction ? 'P07_INLINE_ALTERNATIVES' : promptFor[effective.mode],
         source: { text: resolved.source, ...(resolved.anchor ? { anchor: resolved.anchor } : {}) },
         runtime: runtimeControls(effective, language, req.inlineAction), expectedRevision: saved.revision,
         ...(req.suggestTitle ? { suggestTitle: true } : {}),
+        ...(req.instruction ? { instruction: req.instruction } : {}),
       }, newKey());
       if (ticket !== generation.current) { void request(`/api/ai/previews/${result.id}/discard`, 'POST', {}, newKey()).catch(() => undefined); return; }
       setPreview({ ...result, source: resolved.source, stamp: captured, anchor: resolved.anchor, settings: effective, scope: req.scope, revision: saved.revision, inlineAction: req.inlineAction, surface: req.surface, label });
@@ -527,27 +547,44 @@ export default function Workspace() {
   // Quick actions from the selection toolbar run and resolve on the text itself; only "Customize" hands over to the panel.
   function selectionCommand(command: SelectionCommand) {
     if (!selection || !editor) return;
-    runPlan(planSelectionCommand(command, selection, latest.current.settings, t, (value) => numberFormat(value, locale)));
+    runPlan(planSelectionCommand(command, selection, latest.current.settings, t, (value) => numberFormat(value, locale), limits));
   }
   function styleCommand(style: WritingStyle) {
     if (!selection || !editor) return;
-    runPlan(planStyleCommand(style, selection, latest.current.settings, t, (value) => numberFormat(value, locale)));
+    runPlan(planStyleCommand(style, selection, latest.current.settings, t, (value) => numberFormat(value, locale), limits));
   }
-  function runPlan(plan: SelectionPlan) {
-    if (!selection || !editor) return;
+  // A typed instruction resolves on the text like every other toolbar action, never through the right panel.
+  function instructionCommand(instruction: string) {
+    const range = instructionRange();
+    if (!range || !editor) return;
+    runPlan(planInstruction(instruction, range, latest.current.settings, t, (value) => numberFormat(value, locale), limits), range);
+  }
+  // Selection first; with no selection the caret's own paragraph is the target, so the dock always has something
+  // concrete to act on. Computed from the document rather than React state so it is correct in the same tick.
+  function instructionRange(): SelectionRange | null {
+    if (selection?.text.trim()) return selection;
+    if (!editor) return null;
+    const target = targetAtPosition(editor.state.doc, editor.state.selection.from);
+    if (!target) return null;
+    const offsets = selectionOffsets(editor.getJSON(), target.from, target.to);
+    const text = editor.state.doc.textBetween(target.from, target.to, '\n', ' ');
+    return text.trim() ? { from: offsets.from, to: offsets.to, text, pmFrom: target.from, pmTo: target.to } : null;
+  }
+  function runPlan(plan: SelectionPlan, range: SelectionRange | null = selection) {
+    if (!range || !editor) return;
     switch (plan.kind) {
       case 'lock': void lockSelection(); return;
-      case 'unlock': { const term = terms.find((item) => item.term === selection.text.trim()); if (term) void unlock(term); return; }
+      case 'unlock': { const term = terms.find((item) => item.term === range.text.trim()); if (term) void unlock(term); return; }
       case 'customize': setScope('selection'); openRight('assistant'); setCustomizeRequest((value) => value + 1); return;
       case 'error': {
         if (preview) void discard();
-        setInlineTarget(editor, { from: selection.pmFrom, to: selection.pmTo }); setLastRequest(null);
+        setInlineTarget(editor, { from: range.pmFrom, to: range.pmTo }); setLastRequest(null);
         setInline({ label: plan.label, status: 'error', message: plan.message }); return;
       }
       case 'generate': {
         if (preview) void discard();
-        setInlineTarget(editor, { from: selection.pmFrom, to: selection.pmTo });
-        void generate({ scope: 'selection', surface: 'inline', label: plan.label, inlineAction: plan.inlineAction, override: plan.override }); return;
+        setInlineTarget(editor, { from: range.pmFrom, to: range.pmTo });
+        void generate({ scope: 'selection', surface: 'inline', label: plan.label, inlineAction: plan.inlineAction, override: plan.override, instruction: plan.instruction }); return;
       }
     }
   }
@@ -675,10 +712,43 @@ export default function Workspace() {
   }
 
   async function copyAll() {
+    const json = editor?.getJSON() ?? plainTextDocument(text);
     try {
-      await navigator.clipboard.writeText(documentText(editor?.getJSON() ?? plainTextDocument(text)));
-      setNotice({ tone: 'success', message: t('Semua teks disalin', 'All text copied') });
+      const result = await copyRichText(json, documentText(json), { mode: paged ? 'paged' : 'plain' });
+      setNotice(result === 'rich'
+        ? { tone: 'success', message: t('Semua teks disalin dengan formatnya', 'All text copied with its formatting') }
+        : { tone: 'warning', message: t('Teks disalin tanpa format: browser ini tidak mengizinkan salin berformat.', 'Text copied without formatting: this browser does not allow a rich copy.') });
     } catch { setNotice({ tone: 'error', message: t('Teks tidak bisa disalin. Izinkan akses papan klip di browser lalu coba lagi.', 'The text could not be copied. Allow clipboard access in your browser and try again.') }); }
+  }
+
+  // The gate is on the route, so the browser just follows the download; a refusal comes back as JSON.
+  async function exportDocx() {
+    await run('export', async () => {
+      const response = await fetch(`/api/documents/${id}/export?format=docx`, { credentials: 'same-origin' });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
+        throw new ApiError(body?.error?.code ?? 'REQUEST_FAILED', response.status);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      // window.document, because the Workers type globals shadow the DOM `document` in this project.
+      const link = window.document.createElement('a');
+      link.href = url;
+      link.download = docxFilename(latest.current.title || title);
+      // appendChild, not append: the Workers type globals give `append` a conflicting signature here.
+      // Firefox needs the anchor in the document for a programmatic click to start the download.
+      window.document.body.appendChild(link); link.click(); link.remove();
+      // Revoked on the next tick so the click has started the download.
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setNotice({ tone: 'success', message: t('Berkas DOCX diunduh.', 'The DOCX file was downloaded.') });
+    });
+  }
+
+  // Advanced mode is a notebook preference, so it saves like any other and the server has the final say.
+  function toggleAdvanced(next: boolean) {
+    const value = { ...settings, [ADVANCED_PREFERENCE]: next } as Settings;
+    setSettings(value); markMetadata(title, value);
+    setNotice({ tone: 'success', message: next ? t('Mode lanjutan aktif: kanvas mengikuti ukuran halaman dan margin Word.', 'Advanced mode on: the canvas follows Word page size and margins.') : t('Mode lanjutan nonaktif.', 'Advanced mode off.') });
   }
 
   // Clears the style marker as soon as the settings drift from the saved preset.
@@ -729,6 +799,14 @@ export default function Workspace() {
     );
   }
 
+  // An imported notebook keeps the page size of its source file; otherwise Word's locale default applies.
+  const storedPageSize = (settings as unknown as Record<string, unknown>)[PAGE_SIZE_PREFERENCE];
+  const pageSize = storedPageSize === 'a4' || storedPageSize === 'letter' ? storedPageSize : defaultPageSize(settings.language === 'auto' ? locale : settings.language);
+  // Recomputed per render so the dock always names the current target; cheap next to the editor itself.
+  const dockRange = loaded ? instructionRange() : null;
+  const instructionTarget = dockRange
+    ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text) }
+    : null;
   const words = countWords(text);
   const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
   const assistant = (
@@ -745,7 +823,7 @@ export default function Workspace() {
     >
       {panelPreview && (
         <PreviewCard
-          preview={panelPreview} stale={stale} busy={busy !== ''} applying={busy === 'apply'}
+          preview={panelPreview} stale={stale} busy={busy !== ''} applying={busy === 'apply'} paged={paged}
           onApply={() => void apply()} onCompare={() => { closeOnNarrow(); void openCompare(SOURCE, PREVIEW); }} onDiscard={() => void discard()}
           onRetry={() => void generate(lastRequest?.surface === 'panel' ? { ...lastRequest, override: panelPreview.settings, anchor: panelPreview.anchor } : { scope, surface: 'panel' })}
           onStronger={() => void generate({ scope: panelPreview.scope, surface: 'panel', anchor: panelPreview.anchor, override: { ...panelPreview.settings, strength: nextStrength(panelPreview.settings.strength) as Settings['strength'], preservation: panelPreview.settings.strength === 'strong' ? 'flexible' : panelPreview.settings.preservation } })}
@@ -777,10 +855,11 @@ export default function Workspace() {
   );
 
   const writing = (
-    <main aria-label={t('Tulisan', 'Writing')} className="flex h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-white">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line pl-4 pr-3">
+    <main aria-label={t('Tulisan', 'Writing')} className={`flex h-full min-w-0 flex-col overflow-hidden ${paged ? 'ww-writing-paged' : 'rounded-2xl border border-line bg-white'}`}>
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-white pl-4 pr-3">
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink-900">{t('Tulisan', 'Writing')}</h2>
-        {editor && !compare && (
+        {/* Advanced mode has undo and redo in the formatting toolbar, so they are not repeated here. */}
+        {editor && !compare && !paged && (
           <span className="flex shrink-0 items-center">
             <IconButton size="sm" icon={Undo2} label={t('Urungkan', 'Undo')} disabled={!loaded || frozen || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()} />
             <IconButton size="sm" icon={Redo2} label={t('Ulangi', 'Redo')} disabled={!loaded || frozen || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()} />
@@ -789,14 +868,17 @@ export default function Workspace() {
         <span className="hidden shrink-0 rounded-md bg-paper-deep px-2 py-0.5 text-xs text-ink-600 tabular-nums sm:inline"><b className="font-semibold text-ink-800">{numberFormat(words, locale)}</b> {t('kata', 'words')}</span>
         <SaveStatus state={loaded ? save : 'loading'} />
       </header>
+      {paged && !compare && <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} />}
       {compare ? (
         <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''} applying={busy === 'apply'}
+          paged={paged} pageStyle={paged ? (pageStyle(pageSize) as React.CSSProperties) : undefined}
           onChange={(a, b) => void openCompare(a, b)} onExit={exitCompare}
           onRestore={(versionId) => { const version = versions.find((item) => item.id === versionId); if (version) setDialog({ kind: 'restore', version }); }}
           onApplyPreview={preview && !preview.output.alternatives && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
       ) : null}
-      <div className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-10 sm:py-8 ${compare ? 'hidden' : ''}`}>
-        <article className="editor-plain relative mx-auto min-h-full max-w-[760px]">
+      <div className={`relative min-h-0 flex-1 ${compare ? 'hidden' : ''}`}>
+      <div className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? (pageStyle(pageSize) as React.CSSProperties) : undefined}>
+        <article className={paged ? 'ww-page relative' : 'editor-plain relative mx-auto min-h-full max-w-[760px]'}>
           {!loaded && <LoadingBlock label={arriving ? t('Menyiapkan notebook…', 'Preparing your notebook…') : t('Memuat notebook…', 'Loading notebook…')} />}
           {loaded && !text.trim() && (
             <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
@@ -818,6 +900,11 @@ export default function Workspace() {
           )}
         </article>
       </div>
+      {loaded && !recovery && (
+        <InstructionDock busy={busy !== ''} locked={!has('freeform_prompt')} target={instructionTarget}
+          onSubmit={instructionCommand} onUpgrade={() => setPlans(true)} />
+      )}
+      </div>
     </main>
   );
 
@@ -827,6 +914,9 @@ export default function Workspace() {
         title={title} onTitle={(value) => { autoTitle.current = false; setTitle(value); markMetadata(value, settings); }} disabled={!loaded || frozen} comparing={!!compare} canCopy={loaded && !!text.trim()}
         onCopy={() => void copyAll()} onCompare={() => (compare ? exitCompare() : defaultCompare())} onAnalytics={openAnalytics}
         onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} onDelete={() => setDialog({ kind: 'delete' })}
+        canExport={has('docx_export')} exporting={busy === 'export'} onExport={() => void exportDocx()}
+        canAdvanced={has('advanced_notebook')} advanced={advanced} onAdvanced={toggleAdvanced}
+        onUpgrade={() => setPlans(true)}
       />
 
       {save === 'conflict' && (
@@ -834,6 +924,7 @@ export default function Workspace() {
           {t('Perubahanmu belum ditimpa dan masih ada di layar ini.', 'Nothing was overwritten; your changes are still on this screen.')}
         </Toast>
       )}
+      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {notice && <Toast tone={notice.tone} onDismiss={() => setNotice(null)} dismissLabel={t('Tutup', 'Dismiss')} actions={notice.retrySave ? <Button size="sm" icon={RefreshCw} onClick={() => { setNotice(null); setSave('dirty'); void flush().catch(() => undefined); }}>{t('Coba simpan lagi', 'Retry saving')}</Button> : undefined}>{notice.message}</Toast>}
 
       <div className="flex min-h-0 flex-1 px-3 pb-3">

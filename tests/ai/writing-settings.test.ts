@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { AI_SCOPE_LIMIT, asMode, customConflict, defaults, detectLanguage, EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, modeFromPrompt, normalizeSettings, promptFor, runtimeControls, SELECTION_LIMIT } from "../../src/lib/writing/settings";
+import { AI_SCOPE_LIMIT, asMode, customConflict, defaults, detectLanguage, EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, modeFromPrompt, normalizeSettings, promptFor, runtimeControls } from "../../src/lib/writing/settings";
+import { PLAN_LIMITS, requiredTierFor } from "../../src/lib/plans";
 import { countSentences, repeatedWords, wordDelta } from "../../src/lib/editor/metrics";
 import { compileControlBlock, normalizeRuntime } from "../../src/server/ai/core";
 import { lengthBand, paragraphsPreserved } from "../../src/server/ai/core/validators";
@@ -39,7 +40,14 @@ describe("writing settings", () => {
     expect(Object.values(promptFor)).not.toContain("P08_CUSTOM_TRANSFORM");
   });
   it("exposes the v3 cost-safe limits", () => {
-    expect({ EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, SELECTION_LIMIT, AI_SCOPE_LIMIT }).toEqual({ EXTRA_LIMIT: 500, FOCUS_LIMIT: 3, INLINE_LIMIT: 600, SELECTION_LIMIT: 5_000, AI_SCOPE_LIMIT: 20_000 });
+    expect({ EXTRA_LIMIT, FOCUS_LIMIT, INLINE_LIMIT, AI_SCOPE_LIMIT }).toEqual({ EXTRA_LIMIT: 500, FOCUS_LIMIT: 3, INLINE_LIMIT: 600, AI_SCOPE_LIMIT: 20_000 });
+  });
+  it("keeps the per-run paraphrase budget in the plan catalogue, not in a shared constant", () => {
+    expect(PLAN_LIMITS.free.runLimit).toBe(1_000);
+    expect(PLAN_LIMITS.pro.runLimit).toBe(5_000);
+    expect(PLAN_LIMITS.free.features).toEqual([]);
+    for (const tier of ['plus', 'pro', 'team'] as const) expect(PLAN_LIMITS[tier].features).toContain('docx_export');
+    expect(requiredTierFor('docx_export')).toBe('plus');
   });
 });
 

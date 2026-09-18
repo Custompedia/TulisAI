@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { documentText, plainTextDocument, replaceTextInDocument, selectionOffsets } from "../../src/lib/editor/document";
+import { EditorDocumentSchema } from "../../src/lib/contracts";
 
 describe("editor document serialization", () => {
   it("serializes blocks, adjacent marks, unicode, lists and tables deterministically", () => {
@@ -65,5 +66,34 @@ describe("editor document serialization", () => {
     const result = replaceTextInDocument(doc, 6, 10, "- satu\n- dua", "bullets");
     expect(documentText(result)).toBe("Tetap\nsatu\ndua");
     expect(result.content[0]).toEqual(doc.content[0]);
+  });
+});
+
+// The formatting toolbar may only offer what the document schema can actually store and the DOCX writer can
+// carry. A control for something outside this set would silently lose the writer's work on save.
+describe('formatting the toolbar is allowed to offer', () => {
+  const parse = (node: unknown) => EditorDocumentSchema.parse({ type: 'doc', content: [node] });
+  const text = (value: string, marks?: unknown[]) => ({ type: 'text', text: value, ...(marks ? { marks } : {}) });
+
+  it('accepts every block the toolbar can insert', () => {
+    for (const level of [1, 2, 3]) expect(() => parse({ type: 'heading', attrs: { level }, content: [text('Judul')] })).not.toThrow();
+    expect(() => parse({ type: 'blockquote', content: [{ type: 'paragraph', content: [text('Kutipan')] }] })).not.toThrow();
+    expect(() => parse({ type: 'horizontalRule' })).not.toThrow();
+    expect(() => parse({ type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [text('a')] }] }] })).not.toThrow();
+    expect(() => parse({ type: 'orderedList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [text('a')] }] }] })).not.toThrow();
+    expect(() => parse({ type: 'table', content: [{ type: 'tableRow', content: [{ type: 'tableHeader', content: [{ type: 'paragraph', content: [text('h')] }] }] }] })).not.toThrow();
+  });
+
+  it('accepts every mark and alignment the toolbar can apply', () => {
+    for (const type of ['bold', 'italic', 'underline']) expect(() => parse({ type: 'paragraph', content: [text('x', [{ type }])] })).not.toThrow();
+    expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'link', attrs: { href: 'https://example.test' } }])] })).not.toThrow();
+    for (const textAlign of ['left', 'center', 'right', 'justify']) expect(() => parse({ type: 'paragraph', attrs: { textAlign }, content: [text('x')] })).not.toThrow();
+  });
+
+  it('rejects per-run font family and size, which is why the toolbar has no font picker', () => {
+    expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'textStyle', attrs: { fontFamily: 'Arial' } }])] })).toThrow();
+    expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'fontSize', attrs: { size: '18pt' } }])] })).toThrow();
+    // A non-http link is refused too, so the toolbar validates the scheme before applying it.
+    expect(() => parse({ type: 'paragraph', content: [text('x', [{ type: 'link', attrs: { href: 'javascript:alert(1)' } }])] })).toThrow();
   });
 });

@@ -7,14 +7,18 @@ import { PRESERVATION_CEILING } from '@/lib/writing/settings';
 import { Button } from '@/components/ui/Button';
 import { DiffText, useDiff } from './DiffText';
 import { previewText, type Preview } from './types';
+import { copyRichText } from '@/lib/editor/clipboard';
+import { plainTextDocument } from '@/lib/editor/document';
 
 // Panel-side preview for whole-scope rewrites; inline quick actions render in InlineResult instead.
 type Props = {
   preview: Preview; stale: boolean; busy: boolean; applying: boolean;
+  /** The canvas this result will land in, so a copied preview carries the same spacing. */
+  paged: boolean;
   onApply: () => void; onCompare: () => void; onDiscard: () => void; onRetry: () => void; onStronger: () => void; onReduce: () => void;
 };
 
-export function PreviewCard({ preview, stale, busy, applying, onApply, onCompare, onDiscard, onRetry, onStronger, onReduce }: Props) {
+export function PreviewCard({ preview, stale, busy, applying, paged, onApply, onCompare, onDiscard, onRetry, onStronger, onReduce }: Props) {
   const { t } = useLocale();
   const [showDiff, setShowDiff] = useState(true);
   const [copied, setCopied] = useState<'idle' | 'done' | 'failed'>('idle');
@@ -28,7 +32,8 @@ export function PreviewCard({ preview, stale, busy, applying, onApply, onCompare
   const scopeLabel = { selection: t('Teks terpilih', 'Selection'), paragraph: t('Paragraf', 'Paragraph'), document: t('Seluruh dokumen', 'Entire document') }[preview.scope];
 
   async function copy() {
-    try { await navigator.clipboard.writeText(result); setCopied('done'); } catch { setCopied('failed'); }
+    // Paragraph breaks survive a paste into Word or Docs; the plain flavour stays the raw text.
+    try { await copyRichText(plainTextDocument(result), result, { mode: paged ? 'paged' : 'plain' }); setCopied('done'); } catch { setCopied('failed'); }
     setTimeout(() => setCopied('idle'), 2000);
   }
 

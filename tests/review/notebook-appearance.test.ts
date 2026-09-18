@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
-import { readFileSync } from 'node:fs';
+import { applyMigrations } from '../helpers/migrations';
 
 const state = vi.hoisted(() => ({ env: {} as Record<string, unknown>, user: 'owner-a' as string | null }));
 vi.mock('@/server/runtime', () => ({ runtime: () => state.env, requiredSetting: (value: string) => value, ConfigurationError: class extends Error {} }));
@@ -26,7 +26,7 @@ class Statement {
 
 beforeEach(() => {
   db = new DatabaseSync(':memory:'); state.user = 'owner-a';
-  for (const file of ['0000_initial', '0001_username_auth', '0002_workspace_metadata', '0003_notebook_appearance', '0004_writing_styles', '0005_user_role', '0006_admin_panel', '0007_usage_created_index', '0008_style_description']) db.exec(readFileSync(`migrations/${file}.sql`, 'utf8'));
+  applyMigrations(db);
   const objects = new Map<string, string>();
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => statements.map((statement) => statement.execute()) },

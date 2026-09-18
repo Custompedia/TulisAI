@@ -19,8 +19,8 @@ type Filters = { role: 'all' | Role; tier: 'all' | Tier; status: 'all' | 'active
 const th = 'px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500';
 const csvCell = (value: unknown) => { const text = value === null || value === undefined ? '' : String(value); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
 function exportCsv(items: AdminUser[]) {
-  const header = ['id', 'name', 'email', 'username', 'role', 'tier', 'status', 'email_verified', 'requests_this_month', 'failed_this_month', 'tokens_this_month', 'request_limit', 'documents', 'last_active_at', 'created_at'];
-  const rows = items.map((u) => [u.id, u.name, u.email, u.username, u.role, u.tier, u.banned ? 'disabled' : 'active', u.emailVerified, u.requestsThisMonth, u.failedThisMonth, u.tokensThisMonth, u.unlimited ? 'unlimited' : u.requestLimit, u.documents, u.lastActiveAt, u.createdAt]);
+  const header = ['id', 'name', 'email', 'username', 'role', 'tier', 'status', 'email_verified', 'requests_this_month', 'characters_this_month', 'failed_this_month', 'tokens_this_month', 'character_limit', 'documents', 'last_active_at', 'created_at'];
+  const rows = items.map((u) => [u.id, u.name, u.email, u.username, u.role, u.tier, u.banned ? 'disabled' : 'active', u.emailVerified, u.requestsThisMonth, u.charactersThisMonth, u.failedThisMonth, u.tokensThisMonth, u.unlimited ? 'unlimited' : u.characterLimit, u.documents, u.lastActiveAt, u.createdAt]);
   const blob = new Blob([[header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `users-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
 }

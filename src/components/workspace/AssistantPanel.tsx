@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { notebookTone } from '@/lib/notebook/appearance';
-import { AI_SCOPE_LIMIT, SELECTION_LIMIT, type Mode, type Settings } from '@/lib/writing/settings';
+import { type Mode, type Settings } from '@/lib/writing/settings';
+import { useEntitlements } from '@/components/app/AppShell';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { NotebookIcon } from '@/components/app/NotebookIcon';
 import { Alert } from '@/components/ui/Alert';
@@ -119,7 +120,9 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
     if (JSON.stringify(value) !== JSON.stringify(settings)) onSettings(value);
   }
   const languageName = detected === 'id' ? 'Indonesia' : detected === 'en' ? 'English' : t('belum jelas', 'unclear');
-  const limit = scope === 'document' ? AI_SCOPE_LIMIT : SELECTION_LIMIT;
+  // One per-tier budget covers both scopes: a paraphrase run is a paraphrase run.
+  const { limits } = useEntitlements();
+  const limit = limits.runLimit;
   const overLimit = scopeChars > limit;
   const needsSelection = scope === 'selection' && !hasSelection;
   const disabled = busy || !canGenerate || overLimit;

@@ -166,10 +166,16 @@ describe("deterministic response safety", () => {
     expect(validateGeneration("P01_STANDARD_REWRITE", source, transform("Satu dua tiga empat lima enam tujuh delapan sembilan, sepuluh.", { no_change_needed: true }), {}).transformed_text).toBe(source);
     expect(() => validateGeneration("P01_STANDARD_REWRITE", source, transform("Tulisan yang sepenuhnya berbeda dari sumbernya.", { no_change_needed: true }), {})).toThrow(/no_change_needed/);
   });
-  it("treats list markers as layout, relaxes multiplicity for condensed formats, and tidies deletion debris", () => {
+  it("treats list markers and notation as layout, keeps term multiplicity, and tidies deletion debris", () => {
     expect(validateProtectedContent("Matikan server, lalu pantau log 24 jam.", "1. Matikan server.\n2. Pantau log 24 jam.", [], []).valid).toBe(true);
-    expect(validateProtectedContent("Ada 40 peserta. Dari 40 peserta, 12 lulus.", "Dari 40 peserta, 12 lulus.", [], []).valid).toBe(false);
-    expect(validateProtectedContent("Ada 40 peserta. Dari 40 peserta, 12 lulus.", "Dari 40 peserta, 12 lulus.", [], [], true, false, true).valid).toBe(true);
+    // Numbers are compared by value: restating a figure fewer times is not a changed number, and a dropped
+    // sentence is caught by the structural checks instead. Notation differences are not violations either.
+    expect(validateProtectedContent("Ada 40 peserta. Dari 40 peserta, 12 lulus.", "Dari 40 peserta, 12 lulus.", [], []).valid).toBe(true);
+    expect(validateProtectedContent("Biaya Rp1.500.000 per bulan.", "The cost is Rp1,500,000 per month.", [], []).valid).toBe(true);
+    expect(validateProtectedContent("Ada 10 unit.", "Ada 12 unit.", [], []).valid).toBe(false);
+    // A locked term still has to survive as many times as it appears, unless the request is a condensed one.
+    expect(validateProtectedContent("Sistem X dipakai. Sistem X stabil.", "Sistem X dipakai.", ["Sistem X"], []).valid).toBe(false);
+    expect(validateProtectedContent("Sistem X dipakai. Sistem X stabil.", "Sistem X dipakai.", ["Sistem X"], [], true, false, true).valid).toBe(true);
     expect(validateGeneration("P06_SIMPLIFY", "Plan A costs $20 and includes email support for every single user account.", transform("| Plan | Cost |\n|---|---|\n| Plan A | $20 |"), { request: { format: "tabel", focus: [], additional_instruction: "" } }).transformed_text).toContain("| Plan A |");
     expect(tidyText("Omzet naik 18% setelah program, .\nSelesai . ")).toBe("Omzet naik 18% setelah program.\nSelesai.");
     expect(validateGeneration("P09_QUALITY_EVALUATION", "Ada 120 responden.", { clarity: { value: "tinggi", reason: "x" }, academic_fit: { value: "tidak_berlaku", reason: "x" }, naturalness: { value: "sedang", reason: "x" }, formality: { value: "rendah", reason: "x" } }, {})).toBeTruthy();

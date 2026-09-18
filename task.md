@@ -197,7 +197,7 @@ Checkbox menandai implementasi dan gate lokal selesai; penerimaan live/visual ti
 
 - [x] M09-Q01 — Jalankan gate lokal; AC: strict typecheck/lint/unit/integration/migration/build adapter lulus, hasil perintah tercatat, test auth/revision/idempotency/storage recovery/protection mencakup failure path nyata.
 - [ ] M09-Q02 — Jalankan evaluasi final v1; AC: fixtures ID/EN untuk P01–P08/P10 mencakup akademik/bisnis/creative/technical text, accepted cases menjaga protected strings dan scope, review menilai makna/register/grammar/fakta, kegagalan dicatat tanpa mengubah prompt diam-diam; live run memakai kredensial dan batas biaya eksplisit.
-- [x] M09-Q03 — Audit UI dan scope; AC: semua tombol terlihat bekerja end-to-end, tidak ada Upload/Export/Templates/Suggested Locks atau P09 nonaktif, tidak ada API call saat typing/open/format/history/compare/local metrics; bukti visual/browser hanya diklaim jika benar-benar diminta dan dijalankan.
+- [x] M09-Q03 — Audit UI dan scope; AC: semua tombol terlihat bekerja end-to-end, tidak ada Templates/Suggested Locks atau P09 nonaktif (Upload/Export DOCX kini fitur berbayar yang nyata, lihat §13), tidak ada API call saat typing/open/format/history/compare/local metrics; bukti visual/browser hanya diklaim jika benar-benar diminta dan dijalankan.
 - [x] M09-Q04 — Review hasil eksekutor; AC: Astra memeriksa diff dan bukti integration semua task MVP, temuan diperbaiki, tidak ada blocker disembunyikan dengan checklist selesai.
 
 ### M10 — Release readiness dan deployment; dependency M09
@@ -234,9 +234,9 @@ Task berikut dicatat untuk masa depan, tidak masuk bundle UI, route aktif, migra
 
 | ID | Backlog | Acceptance criteria saat kelak dikerjakan |
 | --- | --- | --- |
-| B01 | DOCX import | File picker nyata, validasi ukuran/jenis, preview ekstraksi sebelum membuat dokumen, fidelity didokumentasi, error/cancel/retry dan akses privat; tidak memanggil AI untuk parsing |
+| B01 | DOCX import — dipindah ke scope aktif §13 (T05) pada 2026-09-18 | File picker nyata, validasi ukuran/jenis, preview ekstraksi sebelum membuat dokumen, fidelity didokumentasi, error/cancel/retry dan akses privat; tidak memanggil AI untuk parsing |
 | B02 | PDF text-based import | Hanya PDF bertulisan selectable, preview urutan baca, file scan/photo ditolak dengan pesan, corrupt/encrypted ditangani; tidak melakukan OCR atau complex table extraction |
-| B03 | DOCX export | Ekspor revisi tersimpan yang dipilih, isi/format didukung diverifikasi, download privat, progress/error/retry; tidak ada AI |
+| B03 | DOCX export — dipindah ke scope aktif §13 (T06) pada 2026-09-18 | Ekspor revisi tersimpan yang dipilih, isi/format didukung diverifikasi, download privat, progress/error/retry; tidak ada AI |
 | B04 | PDF export | Hasil render terbaca, page break/font/Unicode terverifikasi, sumber revision jelas dan download privat; tidak ada AI |
 | B05 | Template system | Galeri dan preview memakai template nyata, penggunaan membuat dokumen independen, tidak ada referensi/data palsu, tidak bergantung AI |
 | B06 | Suggested locks | Saran diberi label belum terlindungi sampai pengguna memilih, confirm/ignore tersedia dan lock tersimpan; tidak mengubah kunci manual diam-diam |
@@ -302,3 +302,24 @@ D1 remote dan Google OAuth nyata tetap menunggu resource/kredensial yang sebelum
 | O01 | P09 on-demand memakai teks prompt final v1; hasil berlabel indikatif, tidak disimpan, `academic_fit` tidak berlaku di luar Akademik | Selesai lokal; output live belum diuji |
 
 Desain: Tailwind CSS v4, palet ink navy + biru brand + kertas hangat, Plus Jakarta Sans (UI) dan Source Serif 4 (editor/judul). Bukti di docs/verification.md.
+
+## 13. Tier berbayar dan perbaikan guard angka atas permintaan pengguna (2026-09-18)
+
+Instruksi terbaru memindahkan B01/B03 (impor/ekspor DOCX) dari backlog §7 ke scope aktif sebagai fitur berbayar, dan mengganti model kuota dari per-permintaan menjadi per-karakter. B02/B04 (PDF) tetap di backlog.
+
+| ID | Task dan acceptance criteria | Status |
+| --- | --- | --- |
+| T01 | Batas parafrase per tier dari satu katalog (`src/lib/plans.ts`): Gratis 1.000, Plus 2.000, Pro/Tim 5.000 karakter, berlaku untuk run teks terpilih maupun dokumen penuh; `INLINE_LIMIT` 600, `AI_SCOPE_LIMIT` 20.000, dan batas keras 200.000 tidak diubah; ditegakkan server dan tercermin di seluruh petunjuk klien tanpa konstanta ganda | Selesai lokal |
+| T02 | Kuota bulanan berbasis karakter dengan reserve-then-settle pada `usage_ledger.charge_characters`; cap dievaluasi di dalam INSERT atomik lewat covering index; provider gagal, hasil ditolak, dan pass repair P10 tidak menagih; replay idempoten hanya menagih sekali | Selesai lokal |
+| T03 | Guard angka membandingkan nilai, bukan string digit: separator ID/EN, kata skala, kata-bilangan ID/EN, persen, dan penanda daftar tidak lagi menolak hasil yang sah; multiplisitas diabaikan; angka yang hilang/dikarang/diubah tetap ditolak | Selesai lokal |
+| T04 | Kode penolakan terpisah per penyebab (`AI_LOCKED_TERM_REJECTED`, `AI_NUMBER_REJECTED`, `AI_CITATION_REJECTED`, `AI_PLACEHOLDER_REJECTED`) dengan token pelanggar di `details`, menggantikan satu pesan untuk empat penyebab | Selesai lokal |
+| T05 | Impor DOCX berbayar: ZIP+XML tanpa dependency baru, sniffing `PK\x03\x04` + `[Content_Types].xml`, batas 5 MB dan batas zip-bomb, pratinjau ekstraksi dengan daftar peringatan sebelum notebook dibuat, hasil selalu lewat `EditorDocumentSchema` | Selesai lokal |
+| T06 | Ekspor DOCX berbayar lewat route server sehingga gate-nya nyata; page size, margin, font, dan spacing dari satu sumber `office-defaults.ts` | Selesai lokal |
+| T07 | Pratinjau berhalaman mengikuti default Word (A4/Letter per locale, margin 1 inci, Calibri 11pt via Carlito, line-height 1,3184, spacing 8pt) dari variabel yang sama dengan penulis DOCX | Selesai lokal; belum diverifikasi visual |
+| T08 | Mode notebook lanjutan berbayar, ditegakkan server: create menolak flag, autosave melepas flag agar penulis tidak terjebak loop gagal simpan | Selesai lokal |
+| T09 | Perintah AI bebas per paragraf (berbayar, opsional): batas 300 karakter, disanitasi, dikirim sebagai blok `<user_instruction>` di USER message dengan aturan subordinasi; wajib anchor; seluruh guard tetap berlaku | Selesai lokal |
+| T10 | Copy dari notebook menulis `text/html` + `text/plain`, sehingga heading, penekanan, daftar, dan tabel utuh saat di-paste ke Word atau Docs; `documentText()`/`mapping()` tidak disentuh | Selesai lokal |
+
+Keputusan yang dicatat: kata-bilangan hanya dipakai sebagai pencocok nilai, tidak pernah sebagai klaim, supaya kata umum seperti "one" tidak dianggap angka yang dikarang. `charge_characters` tidak di-backfill. Ekspor PDF dan paginasi editor sungguhan tidak dibangun; klaim PDF dihapus dari katalog paket sampai ada jalannya. Billing tetap belum ada: `user.tier` masih diatur admin, jadi seluruh pekerjaan ini adalah plumbing entitlement tanpa jalur pembelian.
+
+Bukti, spike, bug yang ditemukan, dan batas klaim: [docs/verification.md](docs/verification.md) bagian "Tier berbayar".

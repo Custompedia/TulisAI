@@ -5,6 +5,10 @@ import { nameTaken } from '@/components/writing/style-form';
 import { applyStyle, type WritingStyle } from '@/lib/writing/styles';
 import { defaults, type Settings } from '@/lib/writing/settings';
 import { scoreStyle, SUGGEST_MIN_SCORE, contextKeywords, suggestStyle } from '@/lib/writing/suggest';
+import { PLAN_LIMITS } from '@/lib/plans';
+
+// The planner is pure, so the tests hand it a plan explicitly instead of reading an account.
+const limits = PLAN_LIMITS.pro;
 
 const t = (id: string) => id;
 const format = (value: number) => String(value);
@@ -18,7 +22,7 @@ describe('review: skill regressions', () => {
     const applied = applyStyle({ ...defaults, mode: 'academic' }, skill);
     expect(applied.sample).not.toBe('');
     for (const [command, selection] of [['humanize', 'Satu kalimat panjang yang perlu diperhalus.'], ['academic', 'Satu kalimat panjang yang perlu dirapikan.'], ['shorter', 'Baris satu\nBaris dua'], ['clearer', 'Baris satu\nBaris dua'], ['formal', 'Baris satu\nBaris dua'], ['natural', 'Baris satu\nBaris dua']] as const) {
-      const plan = planSelectionCommand(command, range(selection), applied, t, format);
+      const plan = planSelectionCommand(command, range(selection), applied, t, format, limits);
       expect(plan.kind, command).toBe('generate');
       const override = plan.kind === 'generate' ? plan.override : undefined;
       expect(override, command).toBeDefined();
@@ -33,7 +37,7 @@ describe('review: skill regressions', () => {
 
   it('keeps a skill run carrying its own skill', () => {
     const skill = style('Email klien', null, { mode: 'professional', sample: 'Contoh gaya saya.' });
-    const plan = planSelectionCommand('humanize', range('Kalimat pendek untuk dihaluskan.'), applyStyle(defaults, skill), t, format);
+    const plan = planSelectionCommand('humanize', range('Kalimat pendek untuk dihaluskan.'), applyStyle(defaults, skill), t, format, limits);
     expect(plan.kind === 'generate' && plan.override?.mode).toBe('humanize');
   });
 

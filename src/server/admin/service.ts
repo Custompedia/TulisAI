@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { RequestError } from '../http';
 import { runtime } from '../runtime';
 import { isAdminRole } from '../auth/auth';
-import { asTier, monthlyLimit, periodKey, tierLimit, TIERS, type Tier } from '../usage/quota';
+import { asTier, characterLimit, monthlyLimit, monthlyCharacterLimit, periodKey, tierLimit, TIERS, type Tier } from '../usage/quota';
 
 export const RoleSchema = z.enum(['user', 'admin']);
 export const TierSchema = z.enum(TIERS);
@@ -11,6 +11,7 @@ export const UserPatchSchema = z.object({
   emailVerified: z.boolean().optional(),
   tier: TierSchema.optional(),
   aiLimitOverride: z.number().int().min(1).max(1_000_000).nullable().optional(),
+  aiCharacterLimitOverride: z.number().int().min(1).max(50_000_000).nullable().optional(),
   adminNote: z.string().trim().max(500).nullable().optional(),
 }).refine((value) => Object.keys(value).length > 0, { message: 'Nothing to update.' });
 export const CreateUserSchema = z.object({
@@ -29,10 +30,10 @@ export type UserPatch = z.infer<typeof UserPatchSchema>;
 
 export type AdminUser = {
   id: string; name: string; email: string; username: string | null; image: string | null; role: Role; tier: Tier; emailVerified: boolean; createdAt: string; updatedAt: string;
-  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; adminNote: string | null; requestLimit: number; unlimited: boolean;
+  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; charactersThisMonth: number; unlimited: boolean;
   requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
 };
-export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; tierLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
+export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; monthlyCharacterLimit: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
 export type AuditEntry = { id: string; actorId: string; actorName: string | null; targetUserId: string | null; targetName: string | null; action: string; details: Record<string, unknown>; createdAt: string };
 export type UsageEntry = { id: string; operation: string; promptId: string | null; status: string; sourceCharacters: number | null; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; errorCode: string | null; createdAt: string; completedAt: string | null };
 export type UserSort = 'newest' | 'oldest' | 'name' | 'usage' | 'active';
@@ -40,26 +41,27 @@ export type UserFilter = { q?: string; role?: 'user' | 'admin'; tier?: Tier; sta
 export const USER_SORTS: UserSort[] = ['newest', 'oldest', 'name', 'usage', 'active'];
 export type PageInfo = { page: number; pageSize: number; total: number; pages: number };
 
-type Row = { id: string; name: string; email: string; username: string | null; image: string | null; role: string | null; tier: string | null; email_verified: number; created_at: number; updated_at: number; banned: number; ban_reason: string | null; ban_expires: number | null; ai_limit_override: number | null; admin_note: string | null; requests: number | null; failed: number | null; tokens: number | null; last_active: number | null; documents: number | null };
+type Row = { id: string; name: string; email: string; username: string | null; image: string | null; role: string | null; tier: string | null; email_verified: number; created_at: number; updated_at: number; banned: number; ban_reason: string | null; ban_expires: number | null; ai_limit_override: number | null; ai_character_limit_override: number | null; admin_note: string | null; requests: number | null; characters: number | null; failed: number | null; tokens: number | null; last_active: number | null; documents: number | null };
 
 const iso = (value: number | null | undefined) => (value === null || value === undefined ? null : new Date(value).toISOString());
 const activeBan = (row: { banned: number; ban_expires: number | null }) => row.banned === 1 && (row.ban_expires === null || row.ban_expires > Date.now());
 function toUser(row: Row): AdminUser {
   const role: Role = isAdminRole(row.role) ? 'admin' : 'user'; const tier = asTier(row.tier);
-  const override = typeof row.ai_limit_override === 'number' && row.ai_limit_override > 0 ? row.ai_limit_override : null;
+  const positive = (value: number | null) => (typeof value === 'number' && value > 0 ? value : null);
+  const override = positive(row.ai_limit_override); const characterOverride = positive(row.ai_character_limit_override);
   return {
     id: row.id, name: row.name, email: row.email, username: row.username, image: row.image, role, tier, emailVerified: row.email_verified === 1, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
-    banned: activeBan(row), banReason: row.ban_reason, banExpires: iso(row.ban_expires), aiLimitOverride: override, adminNote: row.admin_note, requestLimit: override ?? tierLimit(tier), unlimited: role === 'admin',
-    requestsThisMonth: row.requests ?? 0, failedThisMonth: row.failed ?? 0, tokensThisMonth: row.tokens ?? 0, lastActiveAt: iso(row.last_active), documents: row.documents ?? 0,
+    banned: activeBan(row), banReason: row.ban_reason, banExpires: iso(row.ban_expires), aiLimitOverride: override, aiCharacterLimitOverride: characterOverride, adminNote: row.admin_note, requestLimit: override ?? tierLimit(tier), characterLimit: characterOverride ?? characterLimit(tier), unlimited: role === 'admin',
+    charactersThisMonth: row.characters ?? 0, requestsThisMonth: row.requests ?? 0, failedThisMonth: row.failed ?? 0, tokensThisMonth: row.tokens ?? 0, lastActiveAt: iso(row.last_active), documents: row.documents ?? 0,
   };
 }
 
 const USER_SELECT = `
-  SELECT u.id, u.name, u.email, u.username, u.image, u.role, u.tier, u.email_verified, u.created_at, u.updated_at, u.banned, u.ban_reason, u.ban_expires, u.ai_limit_override, u.admin_note,
-    l.requests, l.failed, l.tokens, l.last_active, d.documents
+  SELECT u.id, u.name, u.email, u.username, u.image, u.role, u.tier, u.email_verified, u.created_at, u.updated_at, u.banned, u.ban_reason, u.ban_expires, u.ai_limit_override, u.ai_character_limit_override, u.admin_note,
+    l.requests, l.characters, l.failed, l.tokens, l.last_active, d.documents
   FROM user u
   LEFT JOIN (
-    SELECT owner_id, COUNT(1) AS requests, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
+    SELECT owner_id, COUNT(1) AS requests, COALESCE(SUM(charge_characters),0) AS characters, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
       SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens, MAX(created_at) AS last_active
     FROM usage_ledger WHERE period_key=? GROUP BY owner_id
   ) l ON l.owner_id=u.id
@@ -101,14 +103,16 @@ async function summary(period: string): Promise<AdminSummary> {
       SUM(CASE WHEN banned = 1 AND (ban_expires IS NULL OR ban_expires > ?) THEN 1 ELSE 0 END) AS banned,
       SUM(CASE WHEN tier='plus' THEN 1 ELSE 0 END) AS plus, SUM(CASE WHEN tier='pro' THEN 1 ELSE 0 END) AS pro, SUM(CASE WHEN tier='team' THEN 1 ELSE 0 END) AS team FROM user`).bind(now)
       .first<{ users: number; admins: number | null; banned: number | null; plus: number | null; pro: number | null; team: number | null }>(),
-    runtime().DB.prepare(`SELECT COUNT(1) AS requests, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens FROM usage_ledger WHERE period_key=?`).bind(period)
-      .first<{ requests: number; failed: number | null; tokens: number | null }>(),
+    runtime().DB.prepare(`SELECT COUNT(1) AS requests, COALESCE(SUM(charge_characters),0) AS characters, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens FROM usage_ledger WHERE period_key=?`).bind(period)
+      .first<{ requests: number; characters: number | null; failed: number | null; tokens: number | null }>(),
   ]);
   const env = runtime(); const total = users?.users ?? 0; const plus = users?.plus ?? 0; const pro = users?.pro ?? 0; const team = users?.team ?? 0;
   return {
     period, users: total, admins: users?.admins ?? 0, banned: users?.banned ?? 0, tiers: { free: Math.max(0, total - plus - pro - team), plus, pro, team },
-    requestsThisMonth: usage?.requests ?? 0, failedThisMonth: usage?.failed ?? 0, tokensThisMonth: usage?.tokens ?? 0,
-    monthlyLimit: monthlyLimit(), tierLimits: { free: tierLimit('free'), plus: tierLimit('plus'), pro: tierLimit('pro'), team: tierLimit('team') },
+    requestsThisMonth: usage?.requests ?? 0, charactersThisMonth: usage?.characters ?? 0, failedThisMonth: usage?.failed ?? 0, tokensThisMonth: usage?.tokens ?? 0,
+    monthlyLimit: monthlyLimit(), monthlyCharacterLimit: monthlyCharacterLimit(),
+    tierLimits: { free: tierLimit('free'), plus: tierLimit('plus'), pro: tierLimit('pro'), team: tierLimit('team') },
+    tierCharacterLimits: { free: characterLimit('free'), plus: characterLimit('plus'), pro: characterLimit('pro'), team: characterLimit('team') },
     aiEnabled: env.AI_PUBLIC_ENABLED === 'true', model: env.OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna',
   };
 }
@@ -144,6 +148,7 @@ export async function updateUser(userId: string, patch: UserPatch): Promise<Admi
   if (patch.emailVerified !== undefined) { sets.push('email_verified=?'); values.push(patch.emailVerified ? 1 : 0); }
   if (patch.tier !== undefined) { sets.push('tier=?'); values.push(patch.tier); }
   if (patch.aiLimitOverride !== undefined) { sets.push('ai_limit_override=?'); values.push(patch.aiLimitOverride); }
+  if (patch.aiCharacterLimitOverride !== undefined) { sets.push('ai_character_limit_override=?'); values.push(patch.aiCharacterLimitOverride); }
   if (patch.adminNote !== undefined) { sets.push('admin_note=?'); values.push(patch.adminNote || null); }
   sets.push('updated_at=?'); values.push(Date.now(), userId);
   const result = await runtime().DB.prepare(`UPDATE user SET ${sets.join(', ')} WHERE id=?`).bind(...values).run();
@@ -206,7 +211,7 @@ export async function aiMetrics(from: string | null, to: string | null): Promise
       FROM usage_ledger WHERE created_at >= ? AND created_at < ? GROUP BY COALESCE(prompt_id, operation) ORDER BY requests DESC`).bind(range.start, range.end).all<{ prompt_id: string; requests: number; failed: number | null; tokens: number | null; avg_latency: number | null }>(),
     db.prepare(`SELECT error_code, COUNT(1) AS count FROM usage_ledger WHERE created_at >= ? AND created_at < ? AND status='failed' GROUP BY error_code ORDER BY count DESC LIMIT 20`).bind(range.start, range.end).all<{ error_code: string | null; count: number }>(),
     db.prepare(`SELECT u.id, u.name, u.email, u.role, u.tier, l.requests, l.failed, l.tokens FROM (
-        SELECT owner_id, COUNT(1) AS requests, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, ${tokens} AS tokens FROM usage_ledger WHERE created_at >= ? AND created_at < ? GROUP BY owner_id ORDER BY requests DESC LIMIT 20
+        SELECT owner_id, COUNT(1) AS requests, COALESCE(SUM(charge_characters),0) AS characters, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, ${tokens} AS tokens FROM usage_ledger WHERE created_at >= ? AND created_at < ? GROUP BY owner_id ORDER BY requests DESC LIMIT 20
       ) l JOIN user u ON u.id=l.owner_id ORDER BY l.requests DESC`).bind(range.start, range.end).all<{ id: string; name: string; email: string; role: string | null; tier: string | null; requests: number; failed: number | null; tokens: number | null }>(),
   ]);
   const requests = totals?.requests ?? 0; const failed = totals?.failed ?? 0;

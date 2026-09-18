@@ -86,6 +86,85 @@
 .editor-plain .ProseMirror th, .editor-plain .ProseMirror td { border: 1px solid var(--color-line-strong); padding: 0.45em 0.7em; vertical-align: top; text-align: left; }
 .editor-plain .ProseMirror a { color: var(--color-brand-600); text-decoration: underline; }
 
+/* Paged canvas: Word's Normal template, so the preview matches the exported DOCX.
+   Every number comes from src/lib/docx/office-defaults.ts via the inline custom properties. */
+@font-face { font-family: 'Carlito'; src: url('/fonts/Carlito-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Carlito'; src: url('/fonts/Carlito-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: 'Carlito'; src: url('/fonts/Carlito-Italic.ttf') format('truetype'); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: 'Carlito'; src: url('/fonts/Carlito-BoldItalic.ttf') format('truetype'); font-weight: 700; font-style: italic; font-display: swap; }
+
+/* Flat page on a grey surround, the way a word processor shows it: no rounded card, no heavy shadow. */
+.editor-paged { display: flex; justify-content: center; padding: 28px 16px 64px; background: #f4f5f2; }
+.editor-paged .ww-page {
+  width: var(--page-width); min-height: var(--page-height); box-sizing: border-box;
+  padding: var(--page-margin-top) var(--page-margin-right) var(--page-margin-bottom) var(--page-margin-left);
+  background: #fff; border: 1px solid #d6d8d1; border-radius: 0;
+  box-shadow: 0 1px 3px rgb(31 32 29 / 0.10);
+}
+.editor-paged .ProseMirror {
+  outline: none; width: var(--page-content-width); max-width: 100%;
+  font-family: var(--page-font); font-size: var(--page-font-size); line-height: var(--page-line-height);
+  color: #000; overflow-wrap: break-word; tab-size: 4; text-align: left;
+}
+/* Word's Normal style: 8pt after a paragraph, nothing before. */
+.editor-paged .ProseMirror > p { margin: 0 0 var(--page-space-after); }
+.editor-paged .ProseMirror > * + * { margin-top: 0; }
+.editor-paged .ProseMirror h1, .editor-paged .ProseMirror h2, .editor-paged .ProseMirror h3,
+.editor-paged .ProseMirror h4, .editor-paged .ProseMirror h5, .editor-paged .ProseMirror h6 {
+  font-family: var(--page-heading-font); font-weight: 400; color: #2f5496; margin: 0 0 0;
+  line-height: var(--page-line-height);
+}
+.editor-paged .ProseMirror h1 { font-size: 21.33px; padding-top: 16px; }
+.editor-paged .ProseMirror h2 { font-size: 17.33px; padding-top: 2.67px; }
+.editor-paged .ProseMirror h3 { font-size: 16px; padding-top: 2.67px; color: #1f3763; }
+.editor-paged .ProseMirror h4, .editor-paged .ProseMirror h5 { font-size: 14.67px; padding-top: 2.67px; }
+.editor-paged .ProseMirror h6 { font-size: 14.67px; padding-top: 2.67px; color: #1f3763; }
+/* Word's List Paragraph: 0.5 inch indent, no spacing between items in the same list. */
+.editor-paged .ProseMirror ul, .editor-paged .ProseMirror ol { margin: 0 0 var(--page-space-after); padding-left: var(--page-tab); }
+.editor-paged .ProseMirror ul { list-style: disc; }
+.editor-paged .ProseMirror ol { list-style: decimal; }
+.editor-paged .ProseMirror li > p { margin: 0; }
+.editor-paged .ProseMirror blockquote { margin: 13.33px var(--page-tab); font-style: italic; color: #404040; border: 0; padding: 0; }
+.editor-paged .ProseMirror hr { border: 0; border-top: 1px solid #000; margin: 0 0 var(--page-space-after); }
+.editor-paged .ProseMirror a { color: #0563c1; text-decoration: underline; }
+.editor-paged .ProseMirror table { border-collapse: collapse; width: 100%; margin: 0 0 var(--page-space-after); }
+.editor-paged .ProseMirror th, .editor-paged .ProseMirror td { border: 0.5pt solid #000; padding: 0 5.33px; vertical-align: top; text-align: left; }
+.editor-paged .ProseMirror th { font-weight: 700; }
+.editor-paged .ProseMirror[contenteditable="false"] { cursor: default; }
+/* Below the page width there is nothing to gain from a fixed page, so it becomes a plain column. */
+@media (max-width: 860px) {
+  .editor-paged { padding: 12px 0 32px; }
+  .editor-paged .ww-page { width: 100%; min-height: 0; border-left: 0; border-right: 0; padding: 20px 18px; box-shadow: none; }
+  .editor-paged .ProseMirror { width: 100%; }
+}
+
+/* Read-only page surface, so Compare shows the document the way the paged canvas does. */
+.ww-paged-surface { background: #f4f5f2; }
+.ww-paged-doc {
+  width: var(--page-width); max-width: 100%; box-sizing: border-box; margin: 0 auto;
+  padding: var(--page-margin-top) var(--page-margin-right) var(--page-margin-bottom) var(--page-margin-left);
+  background: #fff; border: 1px solid #d6d8d1; box-shadow: 0 1px 3px rgb(31 32 29 / 0.10);
+  font-family: var(--page-font); font-size: var(--page-font-size); line-height: var(--page-line-height); color: #000;
+}
+/* Side by side has half the width, so the page keeps its typography but drops its fixed width. */
+.ww-paged-doc-fit { width: 100%; }
+
+/* Advanced mode owns the whole column: no card, no border, no radius — only the page on its grey surface. */
+.ww-writing-paged { background: #f4f5f2; }
+
+/* Per-paragraph action button, sitting in the page margin in advanced mode. */
+.editor-paged .ProseMirror { position: relative; }
+.ww-paragraph-gutter {
+  position: absolute; left: calc(var(--page-margin-left) * -1 + 20px); margin-top: 1px;
+  display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px;
+  color: var(--color-ink-400); background: transparent; border: 1px solid transparent;
+  opacity: 0; transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+}
+.editor-paged .ProseMirror:hover .ww-paragraph-gutter, .ww-paragraph-gutter:focus-visible { opacity: 1; }
+.ww-paragraph-gutter:hover { color: var(--color-brand-800); background: var(--color-brand-50); border-color: var(--color-brand-200); }
+.ww-paragraph-gutter:focus-visible { outline: 2px solid var(--color-brand-400); outline-offset: 1px; }
+@media (max-width: 860px) { .ww-paragraph-gutter { display: none; } }
+
 /* Text an inline AI action is working on */
 .ww-inline-target { background: var(--color-brand-100); border-radius: 2px; box-shadow: 0 0 0 1.5px var(--color-brand-100); box-decoration-break: clone; }
 

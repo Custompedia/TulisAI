@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { appendInstruction, copyName, hasAdvancedValues, hasCustomFields, instructionChips, nameTaken, styleDraft, stylePayload } from '@/components/writing/style-form';
 import { planStyleCommand } from '@/components/workspace/selection-commands';
 import type { SelectionRange } from '@/components/workspace/types';
-import { defaults, EXTRA_LIMIT, FOCUS_LIMIT, SELECTION_LIMIT, type Settings } from '@/lib/writing/settings';
+import { defaults, EXTRA_LIMIT, FOCUS_LIMIT, type Settings } from '@/lib/writing/settings';
 import { applyStyle, matchesStyle, reconcileStyle, STYLE_NAME_LIMIT, StyleInputSchema, type WritingStyle } from '@/lib/writing/styles';
 import { ApiError, errorText } from '@/lib/client/api';
 import { rememberSettings, tabForSettings, tabSettings, type TabMemory } from '@/components/workspace/assistant-tabs';
+import { PLAN_LIMITS } from '@/lib/plans';
+
+// The planner is pure, so the tests hand it a plan explicitly instead of reading an account.
+const limits = PLAN_LIMITS.pro;
 
 const t = (id: string) => id;
 const format = (value: number) => String(value);
@@ -65,8 +69,8 @@ describe('review: saved writing styles', () => {
   it('runs a style from the selection toolbar as a full-settings override and refuses over-limit selections', () => {
     const saved = style('Email klien', { mode: 'professional', recipient: 'klien' });
     const base: Settings = { ...defaults, language: 'en' };
-    expect(planStyleCommand(saved, range('Halo tim.'), base, t, format)).toEqual({ kind: 'generate', label: 'Email klien', override: { ...saved.settings, language: 'en', styleId: saved.id } });
-    expect(planStyleCommand(saved, range('x'.repeat(SELECTION_LIMIT + 1)), base, t, format)).toMatchObject({ kind: 'error', label: 'Email klien' });
+    expect(planStyleCommand(saved, range('Halo tim.'), base, t, format, limits)).toEqual({ kind: 'generate', label: 'Email klien', override: { ...saved.settings, language: 'en', styleId: saved.id } });
+    expect(planStyleCommand(saved, range('x'.repeat(limits.runLimit + 1)), base, t, format, limits)).toMatchObject({ kind: 'error', label: 'Email klien' });
   });
 
   it('keeps the marker while the settings match the style and clears it on a manual edit', () => {

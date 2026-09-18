@@ -11,6 +11,8 @@ import { PREVIEW, SOURCE, WORKING } from './types';
 type Option = { value: string; label: string };
 type Props = {
   options: Option[]; a: string; b: string; before: string; after: string; loading: boolean; busy: boolean; applying: boolean;
+  /** Advanced mode: the diff is shown on the same page surface as the canvas, and defaults to side by side. */
+  paged: boolean; pageStyle?: React.CSSProperties;
   onChange: (a: string, b: string) => void; onExit: () => void; onRestore: (versionId: string) => void; onApplyPreview?: () => void;
 };
 
@@ -28,10 +30,11 @@ function Picker({ prefix, value, options, disabled, onChange }: { prefix: string
   );
 }
 
-export function CompareView({ options, a, b, before, after, loading, busy, applying, onChange, onExit, onRestore, onApplyPreview }: Props) {
+export function CompareView({ options, a, b, before, after, loading, busy, applying, paged, pageStyle, onChange, onExit, onRestore, onApplyPreview }: Props) {
   const { t } = useLocale();
   const legendId = useId();
-  const [layout, setLayout] = useState<'inline' | 'side'>('inline');
+  // Side by side by default in advanced mode, so the two versions read as two documents rather than one merged run.
+  const [layout, setLayout] = useState<'inline' | 'side'>(paged ? 'side' : 'inline');
   const parts = useDiff(before, after);
   const delta = wordDelta(before, after);
   const change = changePercentage(before, after);
@@ -98,17 +101,23 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
           <p className="mt-1 text-xs text-ink-500">{t('Pilih versi lain di atas untuk melihat perubahan.', 'Pick another version above to see changes.')}</p>
         </div>
       ) : layout === 'side' ? (
-        <div className="grid min-h-0 flex-1 grid-rows-2 divide-y divide-line bg-white @2xl:grid-cols-2 @2xl:grid-rows-1 @2xl:divide-x @2xl:divide-y-0">
+        <div style={paged ? pageStyle : undefined}
+          className={`grid min-h-0 flex-1 grid-rows-2 divide-y divide-line @2xl:grid-cols-2 @2xl:grid-rows-1 @2xl:divide-x @2xl:divide-y-0 ${paged ? 'ww-paged-surface' : 'bg-white'}`}>
           {(['before', 'after'] as const).map((side) => (
             <div key={side} className="scrollbar-thin min-h-0 min-w-0 overflow-y-auto">
               <p className="sticky top-0 z-10 flex items-baseline gap-2 border-b border-line bg-white/95 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500 sm:px-8"><span className="shrink-0">{side === 'before' ? t('Sebelum', 'Before') : t('Sesudah', 'After')}</span><span className="truncate normal-case tracking-normal text-ink-700" title={labelOf(side === 'before' ? a : b)}>{labelOf(side === 'before' ? a : b)}</span></p>
-              <DiffText parts={parts} side={side} className={`px-5 py-5 sm:px-8 ${DIFF_TEXT}`} />
+              {paged
+                ? <div className="px-4 py-4"><DiffText parts={parts} side={side} className="ww-paged-doc ww-paged-doc-fit" /></div>
+                : <DiffText parts={parts} side={side} className={`px-5 py-5 sm:px-8 ${DIFF_TEXT}`} />}
             </div>
           ))}
         </div>
       ) : (
-        <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto bg-white px-5 py-6 sm:px-10 sm:py-8">
-          <DiffText parts={parts} className={`mx-auto max-w-[760px] ${DIFF_TEXT}`} />
+        <div style={paged ? pageStyle : undefined}
+          className={`scrollbar-thin min-h-0 flex-1 overflow-y-auto ${paged ? 'ww-paged-surface px-4 py-7' : 'bg-white px-5 py-6 sm:px-10 sm:py-8'}`}>
+          {paged
+            ? <DiffText parts={parts} className="ww-paged-doc" />
+            : <DiffText parts={parts} className={`mx-auto max-w-[760px] ${DIFF_TEXT}`} />}
         </div>
       )}
 

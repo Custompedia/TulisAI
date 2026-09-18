@@ -101,3 +101,77 @@ Bug lama yang diperbaiki: client memanggil `PATCH /autosave` tetapi route hanya 
 Bukti lokal: `pnpm typecheck`, `pnpm lint --max-warnings=0`, `pnpm test` (87 tes, 9 file), `pnpm build`, `pnpm cf:check` lulus; migrasi 0002 diterapkan ke D1 lokal. Smoke HTTP pada dev server: SSR 9 halaman 200 tanpa error; alur daftar, onboarding, buat dokumen (mode tersimpan), autosave PATCH, checkpoint, kunci istilah, restore, konflik revisi 409, hapus dokumen, dan hapus akun berhasil; generate/analisis mengembalikan 503 `CONFIGURATION_REQUIRED` sesuai AI nonaktif. Akun uji dihapus.
 
 Tidak diklaim: verifikasi visual/interaksi di browser, output AI nyata, Google OAuth nyata, deployment.
+
+
+## Tier berbayar: kuota karakter, DOCX, perintah inline, guard angka (2026-09-18)
+
+Scope: batas parafrase per tier, kuota bulanan berbasis karakter, perbaikan penolakan angka, impor/ekspor DOCX dengan fidelity Microsoft Office, mode notebook lanjutan, perintah AI bebas per paragraf, dan copy berformat. Teks prompt di `src/server/ai/core/prompts.ts` dan `systemprompt.md` tidak disentuh — `tests/ai/core.test.ts` yang memaksa kesamaan byte tetap lulus tanpa diubah.
+
+### Spike yang dijalankan lebih dulu
+
+| ID | Hasil |
+| --- | --- |
+| S1 DOCX di Workers | Lulus tanpa dependency baru. `src/lib/docx/zip.ts` memakai `CompressionStream`/`DecompressionStream('deflate-raw')`; `crc32("abc")` = `0x352441c2`; `unzip -t` sistem memvalidasi arsip; ZIP tulisan `zip(1)` terbaca balik. `mammoth`/`docx` ditolak (butuh shim Node, 300–600 KB) |
+| S2 Agregat kuota D1 | Lulus. `EXPLAIN QUERY PLAN` pada D1 lokal: `SEARCH usage_ledger USING COVERING INDEX usage_owner_period_charge_idx (owner_id=? AND period_key=?)` untuk `COUNT(1)` + `SUM(charge_characters)` sekaligus. Filter `status` dihapus dari query itu karena membuang covering index dan sudah redundan |
+| S3 Metrik baris Word | Lulus, diturunkan dari file font nyata, bukan dugaan. `public/fonts/Carlito-Regular.ttf` hhea: ascent 1950, descent −550, lineGap 0, unitsPerEm 2048 → satu baris = 2500/2048 = 1,2207 em; × 1,08 = **1,3184** (`LINE_HEIGHT`). Subsetting font tidak mengubah metrik ini |
+| S4 Lubang injection | Terkonfirmasi ada: `additional_instruction` (`settings.extra`) dikompilasi ke **system message** lewat `compileControlBlock` (`core/index.ts:65,132`). Karena itu perintah bebas yang baru **tidak** memakai jalur tersebut |
+
+### Bukti eksternal untuk DOCX
+
+Tidak hanya round-trip internal. Berkas hasil `editorDocumentToDocx` dibaca oleh **python-docx** (pembaca OOXML independen): page 11906×16838 twip, margin 1440 keempat sisi, style Normal `Calibri 11.0`, judul core properties, alignment `JUSTIFY`/`RIGHT`, daftar, Quote, dan tabel terbaca benar. **LibreOffice** (`soffice --convert-to pdf`) merender penuh: penanda bullet `•`, nomor `1.`/`2.`, justify, dan tabel; `pdfinfo` melaporkan `595.304 x 841.89 pts (A4)`; `pdffonts` menunjukkan LibreOffice mensubstitusi **Carlito** untuk Calibri, yang membuktikan pilihan font metric-compatible itu tepat.
+
+Arah sebaliknya diuji dengan berkas yang **bukan** buatan exporter ini (`fixtures/docx/third-party.docx`, ditulis python-docx dengan template default Word). Uji itu menemukan satu bug nyata: daftar yang hanya ditandai style Word (`List Bullet`/`List Number`, tanpa `w:numPr`) terbaca sebagai paragraf biasa. Diperbaiki lewat `listFromStyle()`; round-trip internal tidak akan pernah menemukannya karena exporter selalu menulis `w:numPr`.
+
+### Bug yang ditemukan dan diperbaiki selama pengerjaan
+
+1. **Hold kuota tidak dilepas.** Bila pass repair P10 gagal di provider, `AI_UNAVAILABLE` melewati closure `rejected()`, sehingga karakter pengguna tetap tertagih padahal tidak ada output. Sekarang seluruh jalur setelah panggilan provider dibungkus dan melepas hold sekali (`release`/`voidUsage`), dan `tests/review/document-safety.test.ts` menguncinya.
+2. **Penolakan generik menutupi penyebab.** Pass repair yang gagal melaporkan `AI_UNAVAILABLE`, bukan pelanggaran aslinya. Sekarang pelanggaran asli yang dilaporkan, lengkap dengan token pelanggar.
+3. **Relationship DOCX tidak terbaca.** `parseXml` mengembalikan root sintetis, sehingga `childrenNamed(root,'Relationship')` tidak menemukan apa pun dan semua hyperlink hilang saat impor.
+4. **Daftar berbasis style** (lihat di atas).
+
+### Perubahan perilaku yang perlu dicatat di rilis
+
+- Batas parafrase per run turun dari 20.000/5.000 menjadi **1.000 untuk Gratis** (Plus 2.000, Pro/Tim 5.000). `INLINE_LIMIT` 600, `AI_SCOPE_LIMIT` 20.000, dan batas keras 200.000 tidak diubah.
+- Kuota bulanan kini karakter, bukan permintaan. Karakter hanya ditagih bila run menghasilkan output terpakai: provider gagal, hasil ditolak validasi, dan pass repair P10 semuanya nol.
+- Guard angka membandingkan **nilai**, bukan string digit. `1.000` ≡ `1,000`, `1 juta` ≡ `1.000.000`, `10` ≡ `sepuluh` ≡ `ten`, dan menyebut ulang satu angka lebih/kurang sering tidak lagi ditolak. Kata-bilangan hanya berfungsi sebagai pencocok, tidak pernah sebagai klaim, sehingga "one of the reasons" tidak dianggap angka yang dikarang. Angka yang benar-benar hilang, dikarang, atau diubah tetap ditolak.
+- `usage_ledger.charge_characters` **tidak** di-backfill dari `source_characters`; mem-backfill akan langsung menghabiskan kuota semua akun saat deploy.
+
+### Gate lokal
+
+`pnpm typecheck`, `pnpm lint` (0 error, 0 warning), `pnpm test` (453 tes, 31 file), `pnpm build`, dan `pnpm cf:check` lulus; migrasi `0010_character_quota.sql` diterapkan ke D1 lokal. Test baru: `tests/ai/numeric.test.ts`, `tests/ai/instruction.test.ts`, `tests/ai/docx-mapping.test.ts`, `tests/review/entitlements.test.ts`, `tests/review/rejection-codes.test.ts`, `tests/review/clipboard-html.test.ts`, `tests/review/paragraph-gutter.test.ts`. Daftar migrasi yang sebelumnya ditulis manual di enam file test diganti `tests/helpers/migrations.ts` agar migrasi baru otomatis ikut.
+
+### Afordansi fitur terkunci
+
+Atas permintaan pengguna, setiap fitur berbayar yang belum terbuka tampil sebagai **gembok abu-abu**, bukan disembunyikan dan bukan ikon mahkota. Satu komponen bersama (`src/components/app/PaidLock.tsx`) memasok ikon, teks redup, dan tombol "Buka dengan <tier>" yang nama tier-nya dibaca dari `requiredTierFor()` supaya copy tidak bisa melenceng dari gate. Terpasang pada keempat permukaan berbayar: impor DOCX (`/notebooks`), ekspor DOCX dan mode lanjutan (menu notebook), serta perintah AI bebas (menu seleksi). Semuanya tetap bisa diklik untuk membuka dialog paket.
+
+Tabel perbandingan paket kini menandai baris yang benar-benar ditegakkan dengan label "aktif" dan menyatakan di bawah tabel bahwa sisanya masih pratinjau. Sebelumnya tabel menjanjikan pembatasan (jumlah notebook, retensi versi, kuota analisis kualitas, Sesuaikan) yang tidak ada penegakannya di server; klaim itu sekarang tidak lagi tampak sebagai fakta.
+
+### Perbaikan setelah pengguna mencoba aplikasinya (2026-09-18)
+
+1. **Admin hanya dapat 1.000 karakter.** Dilaporkan pengguna. `entitlement()` memberi admin seluruh fitur tetapi `limits` masih dibaca dari kolom tier-nya, yang bernilai `free` — jadi admin memegang semua fitur tapi tetap menabrak batas 1.000 karakter per run. `MAX_RUN_LIMIT` sudah diekspor tapi tidak pernah dipakai. Diperbaiki dengan `effectiveLimits(tier, unlimited)`: admin kini memakai paket tertinggi (5.000/run) dan kuota karakter tak terbatas. Dikunci oleh test di `tests/review/entitlements.test.ts`.
+
+2. **Spasi tidak ikut saat copy-paste.** HTML clipboard hanya membawa `text-align`, sehingga Word dan Docs memakai spasi default mereka sendiri dan hasil paste tidak sama dengan kanvas. `src/lib/editor/clipboard-style.ts` kini menyediakan dua profil — `paged` (Normal Word: 11pt, line-height 1,3184, jarak antar paragraf 8pt, indent daftar 0,5 inci) dan `plain` (16px, 1,75, jarak 12px) — yang ditulis sebagai inline CSS dan diambil dari konstanta yang sama dengan kanvas serta penulis DOCX. Profilnya mengikuti kanvas yang sedang dilihat, jadi copy 1:1 baik di mode lanjutan maupun tidak.
+
+3. **Kontrol berbayar dipindah ke toolbar notebook.** Sebelumnya toggle mode lanjutan dan ekspor DOCX ada di dalam menu ⋮, yang menurut pengguna terasa seperti navbar kedua. Keduanya kini jadi tombol ringkas di toolbar atas notebook, sebentuk dengan toggle "Bandingkan" yang sudah ada (`aria-pressed` + ring brand saat aktif), dan hanya turun ke menu ⋮ pada layar sempit. Judul notebook memakai `min-w-0 flex-1 truncate` dan toolbar `shrink-0`, jadi judul yang menyusut lebih dulu dan toolbar tidak pernah meluber.
+
+### Toolbar format dan kanvas gaya Docs (2026-09-18)
+
+Editor sudah mendukung bold/italic/underline, heading, alignment, daftar, kutipan, tautan, dan tabel sejak awal — yang tidak ada adalah **UI**-nya, jadi semua itu hanya bisa dipakai lewat keyboard. `src/components/workspace/FormattingToolbar.tsx` kini mengeksposnya. **Tidak ada library editor baru yang ditambahkan**: seluruh kontrol memanggil perintah TipTap yang sudah terpasang.
+
+Cakupan toolbar: undo/redo, gaya paragraf (Normal, Judul 1–3), bold/italic/underline, tautan dengan validasi skema http(s), empat alignment termasuk justify, daftar poin dan bernomor, kutipan, tambah/kurangi indentasi (lewat `sinkListItem`/`liftListItem`), sisipkan tabel, menu ubah tabel (tambah/hapus baris dan kolom, hapus tabel) yang muncul saat kursor berada di dalam tabel, garis pemisah, dan hapus format.
+
+Yang sengaja **tidak** disediakan: pemilih font dan ukuran font per-kata. Keduanya butuh mark `textStyle`/`fontSize` yang tidak ada di whitelist `EditorNodeSchema`, jadi kalau dipaksakan hasilnya akan hilang saat disimpan, dan sekalian merusak premis "satu gaya konsisten setara Word Normal" yang menopang fidelity export. `tests/ai/editor-document.test.ts` mengunci batas ini: setiap blok dan mark yang ditawarkan toolbar harus lolos schema, sementara `textStyle`, `fontSize`, dan tautan non-http harus ditolak.
+
+Mode lanjutan kini halaman datar di atas latar abu (`#f4f5f2`) tanpa sudut membulat dan tanpa shadow tebal. **Card pembungkus kolom tulisan dihapus sepenuhnya** di mode ini — tanpa border, tanpa radius, tanpa isian putih — sehingga yang terlihat hanya halaman di atas latarnya, seperti pengolah kata. Sebelumnya halaman tampak seperti kartu di dalam kartu. Strip header tetap putih supaya toolbar terbaca di atas latar abu.
+
+Toolbar lengkap itu **hanya ada di mode lanjutan**; mode dasar tetap kanvas polos dengan undo/redo di header. Karena itu undo/redo tidak pernah muncul dua kali: di mode lanjutan keduanya ada di toolbar, dan tombol header disembunyikan.
+
+Fitur Bandingkan ikut menyesuaikan: di mode lanjutan diffnya dirender di atas permukaan halaman yang sama (`.ww-paged-doc`, memakai variabel CSS yang sama dengan kanvas dan penulis DOCX) dan **default-nya berdampingan**, sehingga dua versi terbaca sebagai dua dokumen, bukan satu aliran yang menyatu. Mode dasar tidak berubah.
+
+Dock perintah AI diperkecil: kondisi tertutup hanya tombol bundar 36 px berikon sparkle yang terbuka saat hover atau fokus keyboard, kondisi terbuka satu baris `rounded-full` selebar maksimal 520 px dengan target ("teks terpilih"/"paragraf ini") sebagai chip inline. Baris keterangan kedua dipindah ke tooltip supaya tinggi dock tetap satu baris. Dock menutup sendiri saat kursor keluar, kecuali sedang ada teks yang diketik atau field masih fokus.
+
+Toggle Dasar/Lanjutan memakai `Segmented` yang sudah ada, dengan opsi `fit` baru supaya lebarnya mengikuti label (bukan lebar tetap 9,5 rem) dan tingginya sama dengan tombol di sebelahnya.
+
+### Tidak diklaim
+
+Verifikasi visual di browser tidak dijalankan (sesuai AGENTS.md), jadi kanvas berhalaman, kartu perintah inline, tombol gutter paragraf, dan dialog impor belum pernah dilihat dirender. Microsoft Word sendiri tidak tersedia di lingkungan ini: fidelity dibuktikan lewat python-docx, LibreOffice, dan metrik font, bukan lewat Word. `pnpm smoke` pada model live belum dijalankan karena butuh izin biaya. Paginasi editor sungguhan (page break otomatis) dan ekspor PDF tidak dibangun.
