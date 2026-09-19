@@ -225,3 +225,11 @@ Test baru: `tests/review/plan-catalogue.test.ts` (harga, jatah, batas paket, pem
 ### Tidak diklaim
 
 Pembayaran, checkout, pembelian top-up, pencairan saldo top-up, siklus perpanjangan/pembekuan, dan integrasi identitas MKL belum ada di kode. Halaman paket menyatakan hal ini apa adanya: tombol paket dan blok top-up menjelaskan pembelian belum tersedia di aplikasi. Migrasi database tidak ditambahkan; tidak ada verifikasi browser atau deployment.
+
+### Koreksi halaman paket setelah cross-check (2026-09-19)
+
+- Kartu Max tidak lagi mengklaim "catatan & instruksi khusus" dan "contoh tulisan sebagai acuan gaya": keduanya (`extra`, `sample`) terbuka di semua tier dan tidak dijaga server, jadi bukan pembeda Max. Menunggu keputusan owner apakah akan dikunci ke Max.
+- Kartu Plus tidak lagi mengklaim "bisa beli tambahan karakter" — belum ada jalur pembelian.
+- "/ periode" diganti "/ bulan": backend me-reset kuota per bulan kalender UTC (`period_key` = `YYYY-MM`) karena belum ada periode langganan; footer menyatakan ini apa adanya.
+- Klaim tanpa dasar dihapus: "sudah termasuk pajak", "pembaruan fitur tanpa biaya tambahan", "Hubungi kami" (tidak ada kanal kontak), dan badge "Populer" (belum ada data) diganti "Rekomendasi".
+- Blok top-up disusun ulang selebar kartu: tiga paket dengan harga per 1.000 karakter, tag "Paling hemat" dihitung dari katalog, dan tiga aturan top-up sebagai daftar ringkas.

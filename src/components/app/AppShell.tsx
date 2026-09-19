@@ -116,8 +116,8 @@ function TopBar() {
       <Logo href="/app" mark="h-9 w-9" />
       <div className="ml-auto flex items-center gap-2.5">
         {usage && (
-          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={oneTime ? t('Karakter AI sekali pakai yang sudah terpakai', 'One-time AI characters used') : t('Karakter AI terpakai periode ini', 'AI characters used this period')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
-            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span>{oneTime ? t('karakter sekali pakai', 'one-time characters') : t('karakter periode ini', 'characters this period')}
+          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={oneTime ? t('Karakter AI sekali pakai yang sudah terpakai', 'One-time AI characters used') : t('Karakter AI terpakai bulan ini', 'AI characters used this month')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
+            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span>{oneTime ? t('karakter sekali pakai', 'one-time characters') : t('karakter bulan ini', 'characters this month')}
           </button>
         )}
         <AccountMenu />
