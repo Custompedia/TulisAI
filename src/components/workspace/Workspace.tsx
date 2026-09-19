@@ -1,6 +1,6 @@
 'use client';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
 import { del, get, set } from 'idb-keyval';
@@ -22,8 +22,8 @@ import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useEntitlements, useSessionGuard, type UserSettings } from '@/components/app/AppShell';
 import { PlansDialog } from '@/components/app/PlansDialog';
-import { ADVANCED_PREFERENCE, PAGE_MARGINS_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
-import { defaultPageSize, pageStyle, parseMargins } from '@/lib/docx/office-defaults';
+import { ADVANCED_PREFERENCE } from '@/lib/plans';
+import { pageStyle } from '@/lib/docx/office-defaults';
 import { docxFilename } from '@/lib/docx/export';
 import { Toast } from '@/components/ui/Toast';
 import { Button, IconButton, pressGreen, raisedGreen } from '@/components/ui/Button';
@@ -39,13 +39,18 @@ import { paragraphGutterExtension, paragraphGutterKey, targetAtPosition } from '
 import { InstructionDock } from './InstructionDock';
 import { FormattingToolbar } from './FormattingToolbar';
 import { usePageZoom } from './toolbar/zoom';
-import { paginationExtension } from '@/lib/editor/extensions/pagination';
+import { PAGE_GUTTER, paginationExtension } from '@/lib/editor/extensions/pagination';
 import { SearchExtension } from '@/lib/editor/extensions/search';
 import { spellcheckExtension } from '@/lib/editor/extensions/spellcheck';
+import { renderRunning } from '@/lib/docx/running';
+import { HeaderFooterDialog } from './HeaderFooterDialog';
 import { HistoryPanel } from './HistoryPanel';
+import { layoutPreferences, readLayout, type PageLayout } from './page-layout';
+import { PageRuler } from './PageRuler';
+import { PageSetupDialog } from './PageSetupDialog';
 import { ANALYTICS_SECTION_ID, InfoPanel } from './InfoPanel';
 import { InlineResult, type InlineStatus } from './InlineResult';
-import { getInlineTarget, inlineTargetExtension, setInlineTarget } from './inline-target';
+import { getInlineTarget, inlineTargetExtension, setInlineTarget, type InlineTarget } from './inline-target';
 import { NotebookHeader } from './NotebookHeader';
 import { PreviewCard } from './PreviewCard';
 import { protectionExtension } from './protection';
@@ -60,7 +65,7 @@ import { versionLabel } from './versions';
 type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; suggestTitle?: boolean; instruction?: string };
 // One quick action started from the selection toolbar; its result is shown on the text, not in the panel.
 type InlineSession = { label: string; status: InlineStatus; message: string };
-type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'delete' | 'reload'; version?: Version };
+type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'delete' | 'reload' | 'page-setup' | 'header-footer'; version?: Version };
 type LoadError = { code: string; message: string };
 type Notice = { tone: 'success' | 'error' | 'info' | 'warning'; message: string; retrySave?: boolean };
 type CompareState = { a: string; b: string; before: string; after: string; loading: boolean };
@@ -91,6 +96,10 @@ export default function Workspace() {
   const [doc, setDoc] = useState<Doc | null>(null);
   const [title, setTitle] = useState('');
   const [settings, setSettings] = useState<Settings>(defaults);
+  // Page layout lives beside the writing settings: same preferences row, different owner.
+  const [pageLayout, setPageLayout] = useState<PageLayout>(() => readLayout(undefined, 'id'));
+  const [pageCount, setPageCount] = useState(1);
+  const [advancedMode, setAdvancedMode] = useState(false);
   const [text, setText] = useState('');
   const [editStamp, setEditStamp] = useState(0);
   const [metaTick, setMetaTick] = useState(0);
@@ -142,7 +151,12 @@ export default function Workspace() {
   const metaDirty = useRef(false);
   const initializing = useRef(true);
   const inFlight = useRef<Promise<Doc> | null>(null);
-  const latest = useRef({ title, settings });
+  const latest = useRef({ title, settings, layout: pageLayout, advanced: advancedMode });
+  // Writing settings and page layout share one preferences row; neither may drop the other on save.
+  const savedPreferences = () => ({
+    ...layoutPreferences(latest.current.layout), ...(latest.current.settings as unknown as Record<string, unknown>),
+    [ADVANCED_PREFERENCE]: latest.current.advanced,
+  });
   const versionTexts = useRef(new Map<string, string>());
   const autoStarted = useRef(false);
   const arrivingRef = useRef(false);
@@ -156,17 +170,20 @@ export default function Workspace() {
   const englishRef = useRef(english);
   // The gutter extension is built once, so it reads the current mode through a ref.
   const pagedRef = useRef(false);
+  const columnsRef = useRef(1);
   const canvasRef = useRef<HTMLDivElement>(null);
   // Advanced mode is stored in the notebook's preferences and gated on the server; the client only renders it.
-  const advanced = (settings as unknown as Record<string, unknown>)[ADVANCED_PREFERENCE] === true;
+  // It is held beside the writing settings because normalizeSettings keeps writing controls only.
+  const advanced = advancedMode;
   const paged = advanced && has('advanced_notebook');
   pagedRef.current = paged;
+  columnsRef.current = pageLayout.columns;
   const pageZoom = usePageZoom(canvasRef, paged);
   const contentRef = useRef<JSONContent | null>(null);
   const rightPanel = usePanelRef();
   const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
-  latest.current = { title, settings };
+  latest.current = { title, settings, layout: pageLayout, advanced: advancedMode };
   arrivingRef.current = arriving;
   const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null;
   termsRef.current = terms.map((term) => term.term);
@@ -185,7 +202,8 @@ export default function Workspace() {
     extensions: [
       ...documentExtensions,
       protectionExtension(() => termsRef.current, () => protectedLabel.current),
-      SearchExtension, paginationExtension({ enabled: () => pagedRef.current }), spellcheckExtension(() => pagedRef.current),
+      // Newspaper columns flow as one long sheet: the page splitter measures single-column blocks only.
+      SearchExtension, paginationExtension({ enabled: () => pagedRef.current && columnsRef.current === 1, onPages: setPageCount }), spellcheckExtension(() => pagedRef.current),
       inlineTargetExtension,
       paragraphGutterExtension({ enabled: () => pagedRef.current, label: () => englishRef.current ? 'Act on this paragraph' : 'Tindakan untuk paragraf ini' }),
       documentLimits(() => setNotice({ tone: 'error', message: englishRef.current ? 'This content exceeds the document limit or uses unsupported formatting.' : 'Isi melewati batas dokumen atau memakai format yang belum didukung.' })),
@@ -238,7 +256,7 @@ export default function Workspace() {
     // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
     const base = current.current; const content = contentRef.current;
     if (!base || !content || inFlight.current || (!dirty.current && !metaDirty.current)) return;
-    void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || 'Untitled document', language: latest.current.settings.language, preferences: latest.current.settings, expectedRevision: base.revision }) }).catch(() => undefined);
+    void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || 'Untitled document', language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision }) }).catch(() => undefined);
   }, [id]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (unsaved()) { event.preventDefault(); event.returnValue = ''; } };
@@ -297,7 +315,10 @@ export default function Workspace() {
       const modeParam = asMode(search.get('mode')); if (modeParam) base.mode = modeParam;
       const account = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, language: value.language });
       setManualBase(base.styleId ? account : { ...base, styleId: null, sample: '' });
-      setSettings(base); latest.current = { title: value.title, settings: base };
+      const loadedLayout = readLayout(value.preferences, value.language === 'en' ? 'en' : prefs.interfaceLanguage === 'en' ? 'en' : 'id');
+      const loadedAdvanced = (value.preferences as Record<string, unknown> | undefined)?.[ADVANCED_PREFERENCE] === true;
+      setSettings(base); setPageLayout(loadedLayout); setAdvancedMode(loadedAdvanced);
+      latest.current = { title: value.title, settings: base, layout: loadedLayout, advanced: loadedAdvanced };
       editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
       setText(documentText(value.content)); setSave('saved');
       await Promise.all([loadVersions(), loadTerms()]);
@@ -324,7 +345,7 @@ export default function Workspace() {
     if (!base || !editor) throw new Error('not-loaded');
     if (!dirty.current && !metaDirty.current) return base;
     const savedStamp = stamp.current; const savedMeta = metaStamp.current;
-    const payload = { content: editor.getJSON(), title: latest.current.title.trim() || t('Notebook tanpa judul', 'Untitled notebook'), language: latest.current.settings.language, preferences: latest.current.settings, expectedRevision: base.revision };
+    const payload = { content: editor.getJSON(), title: latest.current.title.trim() || t('Notebook tanpa judul', 'Untitled notebook'), language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision };
     setSave('saving');
     const promise = request<Doc>(`/api/documents/${id}/autosave`, 'PATCH', payload, newKey());
     inFlight.current = promise;
@@ -405,8 +426,8 @@ export default function Workspace() {
     router.push(href);
   }
 
-  function markMetadata(nextTitle: string, nextSettings: Settings) {
-    latest.current = { title: nextTitle, settings: nextSettings };
+  function markMetadata(nextTitle: string, nextSettings: Settings, nextLayout = latest.current.layout, nextAdvanced = latest.current.advanced) {
+    latest.current = { title: nextTitle, settings: nextSettings, layout: nextLayout, advanced: nextAdvanced };
     metaDirty.current = true; metaStamp.current++; setMetaTick(metaStamp.current);
     setSave((state) => (state === 'conflict' ? state : 'dirty'));
     if (editor) cache(editor.getJSON());
@@ -442,12 +463,6 @@ export default function Workspace() {
       if (!selection?.text.trim()) return t('Blok teks di editor terlebih dahulu.', 'Select text in the editor first.');
       return { anchor: { from: selection.from, to: selection.to }, source: selection.text };
     }
-    if (req.scope === 'paragraph' && editor) {
-      const position = selectionOffsets(editor.getJSON(), editor.state.selection.from, editor.state.selection.from).from;
-      const from = full.lastIndexOf('\n', Math.max(0, position - 1)) + 1; const end = full.indexOf('\n', position); const to = end < 0 ? full.length : end;
-      if (to <= from) return t('Letakkan kursor di paragraf yang berisi teks.', 'Place the cursor in a paragraph with text.');
-      return { anchor: { from, to }, source: full.slice(from, to) };
-    }
     return { source: full };
   }
 
@@ -472,10 +487,10 @@ export default function Workspace() {
       if (typeof resolved === 'string') { fail(resolved); return; }
       if (!resolved.source.trim()) { fail(t('Bagian yang dipilih masih kosong.', 'The chosen part is empty.')); return; }
       const limit = req.inlineAction ? INLINE_LIMIT : limits.runLimit;
-      if (resolved.source.length > limit) { fail(req.scope === 'selection' ? t(`${numberFormat(resolved.source.length, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan.`, `${numberFormat(resolved.source.length, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection.`) : t(`Terlalu panjang untuk sekali proses (maks. ${numberFormat(limit, 'id')} karakter). Pilih paragraf atau blok sebagian teks.`, `Too long for one run (max ${numberFormat(limit, 'en')} characters). Choose a paragraph or select part of the text.`)); return; }
+      if (resolved.source.length > limit) { fail(req.scope === 'selection' ? t(`${numberFormat(resolved.source.length, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan.`, `${numberFormat(resolved.source.length, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection.`) : t(`Terlalu panjang untuk sekali proses (maks. ${numberFormat(limit, 'id')} karakter). Blok sebagian teks saja.`, `Too long for one run (max ${numberFormat(limit, 'en')} characters). Select part of the text instead.`)); return; }
       // v3 deterministic bypass: lines that are already separate become a list without an AI call.
       const plainList = effective.customized && (effective.format === 'bullets' || effective.format === 'numbered_list') && effective.length === 'same' && !effective.focus.length && !effective.extra.trim();
-      if (plainList && !req.inlineAction && req.scope !== 'paragraph' && resolved.source.split('\n').filter((line) => line.trim()).length >= 2) {
+      if (plainList && !req.inlineAction && resolved.source.split('\n').filter((line) => line.trim()).length >= 2) {
         const listType = effective.format === 'bullets' ? 'bulletList' : 'orderedList';
         if (!editor.isActive(listType)) { const chain = editor.chain().focus(); if (req.scope === 'document') chain.selectAll(); (listType === 'bulletList' ? chain.toggleBulletList() : chain.toggleOrderedList()).run(); void flush().catch(() => undefined); }
         setNotice({ tone: 'success', message: t('Baris sudah terpisah, jadi langsung diformat tanpa AI.', 'The lines were already separate, so they were formatted without AI.') });
@@ -498,7 +513,8 @@ export default function Workspace() {
       if (req.surface === 'inline') setInline({ label, status: 'ready', message: '' });
       adoptTitle(req, result.output.suggested_title);
     } catch (caught) { if (!guard(caught)) fail(errorText(caught instanceof ApiError && caught.code.toUpperCase() === 'SCOPE_TOO_LARGE' ? new ApiError('SCOPE_TOO_LARGE', caught.status) : caught, english)); }
-    finally { setBusy(''); if (req.surface === 'panel') setArriving(false); }
+    // A stopped run has already cleared the busy state, and a newer run may own it by now.
+    finally { if (ticket === generation.current) setBusy(''); if (req.surface === 'panel') setArriving(false); }
   }
 
   // The AI label replaces the composer's local title once, and only while the user has not renamed the notebook.
@@ -534,9 +550,11 @@ export default function Workspace() {
     });
   }
 
+  // Drops an in-flight run: its result is discarded when it lands, and the UI is free straight away.
+  function stopGeneration() { generation.current++; setBusy((value) => (value === 'generate' ? '' : value)); setInline(null); }
   // Closes the inline card and releases the server-side preview, if one exists.
   async function discard() {
-    generation.current++; setInline(null);
+    stopGeneration();
     if (!preview) return;
     const target = preview;
     setPreview(null); if (compare && [compare.a, compare.b].some((side) => side === PREVIEW || side === SOURCE)) setCompare(null);
@@ -571,6 +589,15 @@ export default function Workspace() {
     const range = instructionRange();
     if (!range || !editor) return;
     runPlan(planInstruction(instruction, range, latest.current.settings, t, (value) => numberFormat(value, locale), limits), range);
+  }
+  // The field takes focus, which hides the browser selection, so the dock's target stays highlighted while it is open.
+  const dockTarget = useRef<InlineTarget | null>(null);
+  function dockOpenChange(open: boolean) {
+    if (!editor) return;
+    if (!open) { if (dockTarget.current && getInlineTarget(editor.state) === dockTarget.current) setInlineTarget(editor, null); dockTarget.current = null; return; }
+    const range = inline ? null : instructionRange();
+    if (!range) return;
+    dockTarget.current = { from: range.pmFrom, to: range.pmTo }; setInlineTarget(editor, dockTarget.current);
   }
   // Selection first; with no selection the caret's own paragraph is the target, so the dock always has something
   // concrete to act on. Computed from the document rather than React state so it is correct in the same tick.
@@ -767,10 +794,10 @@ export default function Workspace() {
 
   // Advanced mode is a notebook preference, so it saves like any other and the server has the final say.
   function toggleAdvanced(next: boolean) {
-    const value = { ...settings, [ADVANCED_PREFERENCE]: next } as Settings;
-    setSettings(value); markMetadata(title, value);
-    setNotice({ tone: 'success', message: next ? t('Mode lanjutan aktif: kanvas mengikuti ukuran halaman dan margin Word.', 'Advanced mode on: the canvas follows Word page size and margins.') : t('Mode lanjutan nonaktif.', 'Advanced mode off.') });
+    setAdvancedMode(next);
+    markMetadata(latest.current.title, latest.current.settings, latest.current.layout, next);
   }
+
 
   // Clears the style marker as soon as the settings drift from the saved preset.
   const updateSettings = (next: Settings) => { const value = reconcileStyle(next, styleList.styles); setSettings(value); markMetadata(title, value); };
@@ -798,7 +825,7 @@ export default function Workspace() {
   const stale = !!preview && (preview.stamp !== editStamp || (doc !== null && preview.revision !== doc.revision && busy !== 'apply'));
   const panelPreview = preview?.surface === 'panel' ? preview : null;
   const inlinePreview = preview?.surface === 'inline' ? preview : null;
-  const scopeText = scope === 'selection' ? selection?.text ?? '' : scope === 'paragraph' ? editor?.state.selection.$from.parent.textContent ?? '' : text;
+  const scopeText = scope === 'selection' ? selection?.text ?? '' : text;
   const detected = detectLanguage(scopeText || text);
   // Suggestion only: it never changes settings and never starts a generation.
   const suggestion = useMemo(() => (suggestionOff || !loaded || settings.styleId ? null : suggestStyle(styleList.styles, { title, text })), [suggestionOff, loaded, settings.styleId, styleList.styles, title, text]);
@@ -820,12 +847,9 @@ export default function Workspace() {
     );
   }
 
-  // An imported notebook keeps the page size of its source file; otherwise Word's locale default applies.
-  // normalizeSettings keeps only writing controls, so the page layout is read from the stored preferences too.
-  const pageLayout: Record<string, unknown> = { ...(doc?.preferences ?? {}), ...(settings as unknown as Record<string, unknown>) };
-  const storedPageSize = pageLayout[PAGE_SIZE_PREFERENCE];
-  const pageSize = storedPageSize === 'a4' || storedPageSize === 'letter' ? storedPageSize : defaultPageSize(settings.language === 'auto' ? locale : settings.language);
-  const pageMargins = parseMargins(pageLayout[PAGE_MARGINS_PREFERENCE], pageSize);
+  // An imported notebook keeps the page setup of its source file; otherwise Word's locale default applies.
+  const canvasStyle = pageStyle(pageLayout) as React.CSSProperties;
+  const applyLayout = (next: PageLayout) => { setPageLayout(next); markMetadata(latest.current.title, latest.current.settings, next); setDialog(null); };
   // Recomputed per render so the dock always names the current target; cheap next to the editor itself.
   const dockRange = loaded ? instructionRange() : null;
   const instructionTarget = dockRange
@@ -892,16 +916,19 @@ export default function Workspace() {
         <span className="hidden shrink-0 rounded-md bg-paper-deep px-2 py-0.5 text-xs text-ink-600 tabular-nums sm:inline"><b className="font-semibold text-ink-800">{numberFormat(words, locale)}</b> {t('kata', 'words')}</span>
         <SaveStatus state={loaded ? save : 'loading'} />
       </header>
-      {paged && !compare && <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} zoom={pageZoom.zoom} onZoom={pageZoom.setZoom} />}
+      {paged && !compare && (
+        <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} zoom={pageZoom.zoom} onZoom={pageZoom.setZoom}
+          onPageSetup={() => setDialog({ kind: 'page-setup' })} onHeaderFooter={() => setDialog({ kind: 'header-footer' })} />
+      )}
       {compare ? (
         <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''} applying={busy === 'apply'}
-          paged={paged} pageStyle={paged ? (pageStyle(pageSize, pageMargins) as React.CSSProperties) : undefined}
+          paged={paged} pageStyle={paged ? canvasStyle : undefined}
           onChange={(a, b) => void openCompare(a, b)} onExit={exitCompare}
           onRestore={(versionId) => { const version = versions.find((item) => item.id === versionId); if (version) setDialog({ kind: 'restore', version }); }}
           onApplyPreview={preview && !preview.output.alternatives && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
       ) : null}
       <div className={`relative min-h-0 flex-1 ${compare ? 'hidden' : ''}`}>
-      <div ref={canvasRef} className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? (pageStyle(pageSize, pageMargins) as React.CSSProperties) : undefined}>
+      <div ref={canvasRef} className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? canvasStyle : undefined}>
         <article className={paged ? 'ww-page-frame relative' : 'editor-plain relative mx-auto min-h-full max-w-[760px]'} style={paged ? ({ '--page-zoom': pageZoom.scale } as React.CSSProperties) : undefined}>
           {/* Lanjutan shows a bare page like Docs; the hint and paste button belong to Dasar only. */}
           {loaded && !paged && !text.trim() && (
@@ -914,9 +941,31 @@ export default function Workspace() {
               )}
             </div>
           )}
+          {paged && editor && loaded && !compare && (
+            <PageRuler editor={editor} layout={pageLayout} zoom={pageZoom.scale} language={english ? 'en' : 'id'}
+              disabled={!loaded || frozen || !!recovery} onMargins={(margins) => applyLayout({ ...pageLayout, margins })} />
+          )}
           <div className={paged ? 'ww-page' : undefined}>
             {!loaded && <LoadingBlock label={arriving ? t('Menyiapkan notebook…', 'Preparing your notebook…') : t('Memuat notebook…', 'Loading notebook…')} />}
             <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
+            {paged && loaded && (pageLayout.header || pageLayout.footer) && (
+              <div aria-hidden="true" className="ww-running-layer">
+                {Array.from({ length: pageLayout.columns === 1 ? pageCount : 1 }, (_, index) => (
+                  <Fragment key={index}>
+                    {pageLayout.header && (
+                      <div className="ww-running ww-running-header" style={{ top: `calc(${index} * (var(--page-height) + ${PAGE_GUTTER}px) + var(--page-header-top))`, textAlign: pageLayout.header.align }}>
+                        {renderRunning(pageLayout.header.text, index + 1, pageCount)}
+                      </div>
+                    )}
+                    {pageLayout.footer && (
+                      <div className="ww-running ww-running-footer" style={{ top: `calc(${index} * (var(--page-height) + ${PAGE_GUTTER}px) + var(--page-height) - var(--page-footer-bottom))`, textAlign: pageLayout.footer.align }}>
+                        {renderRunning(pageLayout.footer.text, index + 1, pageCount)}
+                      </div>
+                    )}
+                  </Fragment>
+                ))}
+              </div>
+            )}
           </div>
           {editor && loaded && <TableContextMenu editor={editor} disabled={busy !== '' || !!compare || !!recovery} />}
           {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} onCommand={selectionCommand} onStyle={styleCommand} />}
@@ -928,9 +977,10 @@ export default function Workspace() {
           )}
         </article>
       </div>
-      {loaded && !recovery && (
+      {loaded && paged && !recovery && (
         <InstructionDock busy={busy !== ''} locked={!has('freeform_prompt')} target={instructionTarget}
-          onSubmit={instructionCommand} onUpgrade={() => setPlans(true)} />
+          onSubmit={instructionCommand} onUpgrade={() => setPlans(true)} onOpenChange={dockOpenChange}
+          running={busy === 'generate' && !!lastRequest?.instruction} onStop={stopGeneration} />
       )}
       </div>
     </main>
@@ -980,6 +1030,12 @@ export default function Workspace() {
         </>
       )}
 
+      {dialog?.kind === 'page-setup' && (
+        <PageSetupDialog layout={pageLayout} language={english ? 'en' : 'id'} onClose={() => setDialog(null)} onApply={applyLayout} />
+      )}
+      {dialog?.kind === 'header-footer' && (
+        <HeaderFooterDialog layout={pageLayout} onClose={() => setDialog(null)} onApply={applyLayout} />
+      )}
       {dialog?.kind === 'checkpoint' && (
         <ConfirmDialog title={t('Simpan Versi', 'Save Version')} description={t('Membuat titik simpan yang bisa kamu bandingkan atau pulihkan nanti.', 'Creates a checkpoint you can compare or restore later.')} confirmLabel={t('Simpan', 'Save')} busy={busy === 'checkpoint'} onClose={() => setDialog(null)} onConfirm={() => void confirmDialog()}>
           <label className="block text-[13px] font-semibold text-ink-700">{t('Nama versi (opsional)', 'Version name (optional)')}<input autoFocus className={`${inputClass} mt-1.5`} value={field} maxLength={120} onChange={(event) => setField(event.target.value)} placeholder={t('Mis. Draft untuk dosen pembimbing', 'E.g. Draft for supervisor')} /></label>

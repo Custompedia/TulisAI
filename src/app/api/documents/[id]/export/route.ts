@@ -3,11 +3,8 @@ import { handleRouteError, RequestError } from "@/server/http";
 import { requireFeature } from "@/server/usage/features";
 import { getDocument } from "@/server/documents/service";
 import { DOCX_CONTENT_TYPE, docxFilename, editorDocumentToDocx } from "@/lib/docx/export";
-import { defaultPageSize, parseMargins, type PageSize } from "@/lib/docx/office-defaults";
-import { PAGE_MARGINS_PREFERENCE, PAGE_SIZE_PREFERENCE } from "@/lib/plans";
-
-const asPageSize = (value: string | null, language: string): PageSize =>
-  value === "a4" || value === "letter" ? value : defaultPageSize(language);
+import { pageGeometry, parseMargins } from "@/lib/docx/office-defaults";
+import { readLayout } from "@/components/workspace/page-layout";
 
 // Server-side so the paid gate is real: a client-side writer could simply be called directly.
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -19,15 +16,20 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (format !== "docx") throw new RequestError("UNSUPPORTED_FORMAT", "Only DOCX export is available.", 400);
     const document = await getDocument(user.id, (await params).id);
     const language = document.language === "en" ? "en" : "id";
-    // The notebook's stored page size wins, so an exported file matches what the paged preview showed.
-    const stored = document.preferences?.[PAGE_SIZE_PREFERENCE];
-    const requested = url.searchParams.get("pageSize") ?? (typeof stored === "string" ? stored : null);
-    const pageSize = asPageSize(requested, language);
+    // The notebook's stored page setup wins, so an exported file matches what the paged preview showed.
+    const layout = readLayout(document.preferences, language);
+    const requested = url.searchParams.get("pageSize");
+    const pageSize = requested === "a4" || requested === "letter" ? requested : layout.size;
+    const margins = pageSize === layout.size ? layout.margins : parseMargins(null, pageSize, layout.orientation) ?? pageGeometry(pageSize, layout.orientation).margin;
     const bytes = await editorDocumentToDocx(document.content, {
       title: document.title,
       language,
       pageSize,
-      margins: parseMargins(document.preferences?.[PAGE_MARGINS_PREFERENCE], pageSize),
+      margins,
+      orientation: layout.orientation,
+      columns: layout.columns,
+      header: layout.header,
+      footer: layout.footer,
     });
     return new Response(bytes as unknown as BodyInit, {
       headers: {

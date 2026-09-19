@@ -31,6 +31,19 @@ export const ADVANCED_PREFERENCE = 'advanced';
 export const PAGE_SIZE_PREFERENCE = 'pageSize';
 // Page margins of an imported document as "top,right,bottom,left" twips (see formatMargins in docx/office-defaults).
 export const PAGE_MARGINS_PREFERENCE = 'pageMargins';
+// Page orientation ('portrait' | 'landscape'), newspaper column count (1..3), and the running header/footer
+// text with its alignment. All four are page layout, not writing settings, so they live beside the two above.
+export const PAGE_ORIENTATION_PREFERENCE = 'pageOrientation';
+export const PAGE_COLUMNS_PREFERENCE = 'pageColumns';
+export const HEADER_TEXT_PREFERENCE = 'headerText';
+export const HEADER_ALIGN_PREFERENCE = 'headerAlign';
+export const FOOTER_TEXT_PREFERENCE = 'footerText';
+export const FOOTER_ALIGN_PREFERENCE = 'footerAlign';
+// Every key the page layout owns, so a notebook can be patched with exactly these and nothing else.
+export const PAGE_LAYOUT_PREFERENCES = [
+  PAGE_SIZE_PREFERENCE, PAGE_MARGINS_PREFERENCE, PAGE_ORIENTATION_PREFERENCE, PAGE_COLUMNS_PREFERENCE,
+  HEADER_TEXT_PREFERENCE, HEADER_ALIGN_PREFERENCE, FOOTER_TEXT_PREFERENCE, FOOTER_ALIGN_PREFERENCE,
+] as const;
 
 export const isTier = (value: unknown): value is Tier => typeof value === 'string' && (TIERS as readonly string[]).includes(value);
 export const asTier = (value: unknown): Tier => (isTier(value) ? value : 'free');

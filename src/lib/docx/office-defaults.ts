@@ -24,21 +24,49 @@ export const PAGES: Record<PageSize, PageGeometry> = {
 // Word picks the page size from the editing locale; Letter is the US default, A4 is the default elsewhere.
 export const defaultPageSize = (language: string): PageSize => (language === 'en' ? 'letter' : 'a4');
 
+export type Orientation = 'portrait' | 'landscape';
+export const asOrientation = (value: unknown): Orientation => (value === 'landscape' ? 'landscape' : 'portrait');
+// Landscape is the same sheet turned: Word writes the swapped w:pgSz and keeps the margins as given.
+export const pageGeometry = (size: PageSize, orientation: Orientation = 'portrait'): PageGeometry => {
+  const page = PAGES[size];
+  return orientation === 'landscape' ? { width: page.height, height: page.width, margin: page.margin } : page;
+};
+
+// Word's Normal template puts the header 0.5 inch from the top of the sheet and the footer 0.5 inch from the bottom.
+export const HEADER_DISTANCE_TWIPS = 720;
+export const FOOTER_DISTANCE_TWIPS = 720;
+// Newspaper columns: Word's default gap between columns is 0.5 inch.
+export const COLUMN_GAP_TWIPS = 720;
+export const MAX_COLUMNS = 3;
+export const asColumns = (value: unknown): number => {
+  const count = Math.trunc(Number(value));
+  return Number.isFinite(count) && count >= 1 && count <= MAX_COLUMNS ? count : 1;
+};
+
 export type PageMargins = PageGeometry['margin'];
 const MARGIN_SIDES = ['top', 'right', 'bottom', 'left'] as const;
 // Stored in notebook preferences as "top,right,bottom,left" twips, since preferences only hold primitives.
 export const formatMargins = (margins: PageMargins): string => MARGIN_SIDES.map((side) => Math.round(margins[side])).join(',');
-export function parseMargins(value: unknown, size: PageSize = 'a4'): PageMargins | null {
+export function parseMargins(value: unknown, size: PageSize = 'a4', orientation: Orientation = 'portrait'): PageMargins | null {
   if (typeof value !== 'string') return null;
   const parts = value.split(',').map((part) => Number(part.trim()));
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 7200)) return null;
   const [top, right, bottom, left] = parts as [number, number, number, number];
-  const page = PAGES[size];
+  const page = pageGeometry(size, orientation);
   // A margin set that leaves under an inch of text area is a corrupt value, not a layout.
   return page.width - left - right >= TWIPS_PER_INCH && page.height - top - bottom >= TWIPS_PER_INCH ? { top, right, bottom, left } : null;
 }
 
-export const contentWidth = (size: PageSize, margins: PageMargins = PAGES[size].margin) => PAGES[size].width - margins.left - margins.right;
+export const contentWidth = (size: PageSize, margins: PageMargins = PAGES[size].margin, orientation: Orientation = 'portrait') => {
+  const page = pageGeometry(size, orientation);
+  return page.width - margins.left - margins.right;
+};
+// The width one column of text occupies, which is what a table's percentage width and the canvas both measure against.
+export const columnWidth = (size: PageSize, margins: PageMargins, orientation: Orientation, columns: number) => {
+  const total = contentWidth(size, margins, orientation);
+  const count = asColumns(columns);
+  return Math.max(720, Math.round((total - COLUMN_GAP_TWIPS * (count - 1)) / count));
+};
 
 export const DEFAULT_FONT = 'Calibri';
 // Calibri cannot be redistributed as a webfont; Carlito has the same metrics, so line breaks land identically.
@@ -82,9 +110,14 @@ export const alignmentOf = (justification: string | null | undefined): Alignment
   justification === 'both' ? 'justify' : justification === 'center' || justification === 'right' || justification === 'left' ? justification : null;
 
 // CSS custom properties for the paged canvas, derived from exactly the numbers above.
-export function pageStyle(size: PageSize, margins?: PageMargins | null): Record<string, string> {
-  const page = PAGES[size];
-  const margin = margins ?? page.margin;
+export type PageLayout = { size: PageSize; margins?: PageMargins | null; orientation?: Orientation; columns?: number };
+
+// CSS custom properties for the paged canvas, derived from exactly the numbers above.
+export function pageStyle(layout: PageLayout): Record<string, string> {
+  const orientation = asOrientation(layout.orientation);
+  const columns = asColumns(layout.columns);
+  const page = pageGeometry(layout.size, orientation);
+  const margin = layout.margins ?? page.margin;
   const px = (twips: number) => `${twipsToPx(twips).toFixed(2)}px`;
   return {
     '--page-width': px(page.width),
@@ -93,7 +126,11 @@ export function pageStyle(size: PageSize, margins?: PageMargins | null): Record<
     '--page-margin-right': px(margin.right),
     '--page-margin-bottom': px(margin.bottom),
     '--page-margin-left': px(margin.left),
-    '--page-content-width': px(contentWidth(size, margin)),
+    '--page-content-width': px(contentWidth(layout.size, margin, orientation)),
+    '--page-column-count': String(columns),
+    '--page-column-gap': px(COLUMN_GAP_TWIPS),
+    '--page-header-top': px(HEADER_DISTANCE_TWIPS),
+    '--page-footer-bottom': px(FOOTER_DISTANCE_TWIPS),
     '--page-font': DEFAULT_FONT_STACK,
     '--page-heading-font': HEADING_FONT_STACK,
     '--page-font-size': `${(DEFAULT_FONT_POINTS * (96 / 72)).toFixed(4)}px`,

@@ -294,15 +294,18 @@ describe('DOCX import: tables', () => {
 });
 
 describe('DOCX import: other text', () => {
-  it('adds footnotes and endnotes as numbered notes at the end', async () => {
+  it('turns footnote and endnote references into footnotes that carry their own text', async () => {
     const footnotes = '<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote><w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>'
       + `<w:footnote w:id="2"><w:p><w:r><w:footnoteRef/></w:r>${r(' Sumber pertama.')}</w:p></w:footnote><w:footnote w:id="3"><w:p><w:r><w:footnoteRef/></w:r>${r(' Sumber kedua.')}</w:p></w:footnote>`;
     const endnotes = `<w:endnote w:id="1"><w:p><w:r><w:endnoteRef/></w:r>${r(' Akhir.')}</w:p></w:endnote>`;
-    const result = await blocks(p(r('Kalimat') + '<w:r><w:footnoteReference w:id="3"/></w:r>' + r(' lagi') + '<w:r><w:footnoteReference w:id="2"/></w:r><w:r><w:endnoteReference w:id="1"/></w:r>'), { footnotes, endnotes });
-    const body = result[0]!;
-    expect(body.content!.map((part) => [part.text, markOf(part, 'superscript') ? 'sup' : ''])).toEqual([['Kalimat', ''], ['1', 'sup'], [' lagi', ''], ['2i', 'sup']]);
-    expect(result.slice(1).map((node) => node.type === 'horizontalRule' ? '---' : textOf(node))).toEqual(['---', 'Catatan kaki', '1 Sumber kedua.', '2 Sumber pertama.', 'i Akhir.']);
-    expect(markOf(result[3]!.content![0], 'superscript')).toBeDefined();
+    const result = await load(p(r('Kalimat') + '<w:r><w:footnoteReference w:id="3"/></w:r>' + r(' lagi') + '<w:r><w:footnoteReference w:id="2"/></w:r><w:r><w:endnoteReference w:id="1"/></w:r>'), { footnotes, endnotes });
+    const body = result.content.content;
+    expect(body).toHaveLength(1);
+    expect(body[0]!.content!.map((part) => part.type === 'footnote' ? part.attrs!.text : part.text)).toEqual([
+      'Kalimat', 'Sumber kedua.', ' lagi', 'Sumber pertama.', 'Akhir.',
+    ]);
+    // An endnote cannot stay an endnote, so the writer is told before the notebook is created.
+    expect(result.warnings).toContain('endnotes');
   });
 
   it('adds no notes section when there are no notes', async () => {
@@ -317,7 +320,7 @@ describe('DOCX import: other text', () => {
     expect(result.map(textOf)).toEqual(['Jangkar', 'Isi kotak', 'Sesudah']);
   });
 
-  it('unwraps content controls such as a table of contents and keeps only field results', async () => {
+  it('turns a TOC field into the notebook\u2019s own table of contents and keeps only field results', async () => {
     const toc = '<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/></w:docPartObj></w:sdtPr><w:sdtContent>'
       + p('<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'
         + '<w:hyperlink w:anchor="_Toc1">' + r('Pendahuluan') + '<w:r><w:tab/></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>' + r('1') + '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink>')
@@ -325,7 +328,9 @@ describe('DOCX import: other text', () => {
       + p('<w:r><w:fldChar w:fldCharType="end"/></w:r>')
       + '</w:sdtContent></w:sdt>';
     const result = await blocks(toc + p(r('Isi')));
-    expect(result.map(textOf)).toEqual(['Pendahuluan\t1', 'Metode\t5', '', 'Isi']);
+    expect(result.map((node) => node.type)).toEqual(['tableOfContents', 'paragraph']);
+    expect((result[0]!.content ?? []).map(textOf)).toEqual(['Pendahuluan\t1', 'Metode\t5']);
+    expect(textOf(result[1]!)).toBe('Isi');
     expect(JSON.stringify(result)).not.toMatch(/TOC|PAGEREF/);
   });
 });
@@ -349,8 +354,8 @@ describe('DOCX import: section and limits', () => {
     expect(parseMargins('2268,1701,1701,2268', 'a4')).toEqual(margins);
     expect(parseMargins('1,2,3', 'a4')).toBeNull();
     expect(parseMargins('7000,7000,7000,7000', 'a4')).toBeNull();
-    expect(pageStyle('a4', margins)['--page-margin-left']).toBe('151.20px');
-    expect(pageStyle('a4', margins)['--page-content-width']).toBe(`${((11906 - 2268 - 1701) / 15).toFixed(2)}px`);
+    expect(pageStyle({ size: 'a4', margins })['--page-margin-left']).toBe('151.20px');
+    expect(pageStyle({ size: 'a4', margins })['--page-content-width']).toBe(`${((11906 - 2268 - 1701) / 15).toFixed(2)}px`);
   });
 
   it('refuses a document with no text, or more text than the limit, with a clear message', async () => {

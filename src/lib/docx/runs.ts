@@ -1,6 +1,6 @@
 import type { EditorNode } from '../editor/document';
 import { fontStack } from './office-defaults';
-import { formatNumber, normalizeGlyphs } from './numbering';
+import { normalizeGlyphs } from './numbering';
 import { applyRun, characterStyleProps, type RunProps, type Styles } from './styles';
 import { attr, firstNamed, type XmlNode } from './xml';
 
@@ -9,17 +9,23 @@ type Mark = NonNullable<EditorNode['marks']>[number];
 export type Baseline = { font: string; size: number; color: string; bold: boolean; italic: boolean };
 type Field = { phase: 'instr' | 'result'; instr: string; link?: string };
 export type NoteKind = 'footnote' | 'endnote';
+// What the file carried that the notebook cannot hold as-is; the import dialog lists these before anything is created.
+export const IMPORT_WARNINGS = ['images', 'textboxes', 'revisions', 'comments', 'endnotes', 'runningRich', 'shapes'] as const;
+export type ImportWarning = (typeof IMPORT_WARNINGS)[number];
 export type RunContext = {
   styles: Styles; relationships: Map<string, string>; fields: Field[];
-  notes: Array<{ kind: NoteKind; id: string; number: number }>; noteCounts: Record<NoteKind, number>;
-  currentNote?: { kind: NoteKind; number: number }; textBoxes: XmlNode[];
+  // Footnote and endnote bodies, already flattened to text, keyed "footnote:3".
+  noteTexts: Map<string, string>; textBoxes: XmlNode[]; warn: (warning: ImportWarning) => void;
 };
 export const PAGE_BREAK: EditorNode = { type: 'pageBreak' };
 export type Inlines = { nodes: EditorNode[]; firstFont?: string };
 
 const LINK_COLOR = '0563C1';
 const HTTP_LINK = /^https?:\/\/[^\s"<>]+$/iu;
-const noteLabel = (kind: NoteKind, number: number) => kind === 'endnote' ? formatNumber(number, 'lowerRoman') : String(number);
+
+// A drawing that holds a picture rather than only a text box; the picture cannot be imported, so it is reported.
+const hasPicture = (node: XmlNode): boolean =>
+  node.name === 'a:blip' || node.name === 'v:imagedata' || node.name === 'pic:pic' || node.children.some(hasPicture);
 
 export function marksFor(props: RunProps, baseline: Baseline, link?: string, force: Partial<RunProps> = {}): Mark[] {
   const run = { ...props, ...force };
@@ -140,14 +146,19 @@ export function inlinesFrom(paragraph: XmlNode, paraRun: RunProps, baseline: Bas
           const kind: NoteKind = piece.name === 'w:footnoteReference' ? 'footnote' : 'endnote';
           const id = attr(piece, 'w:id');
           if (!id) break;
-          const existing = context.notes.find((note) => note.kind === kind && note.id === id);
-          const number = existing?.number ?? ++context.noteCounts[kind];
-          if (!existing) context.notes.push({ kind, id, number });
-          if (attr(piece, 'w:customMarkFollows') !== '1' && attr(piece, 'w:customMarkFollows') !== 'true') text(noteLabel(kind, number), props, link, { vert: 'sup' });
+          if (kind === 'endnote') context.warn('endnotes');
+          // The note becomes a real footnote whose text travels with the marker, so exporting puts it back at the page foot.
+          result.nodes.push({ type: 'footnote', attrs: { text: context.noteTexts.get(`${kind}:${id}`) ?? '' } });
           break;
         }
-        case 'w:footnoteRef': case 'w:endnoteRef': if (context.currentNote) text(noteLabel(context.currentNote.kind, context.currentNote.number), props, link, { vert: 'sup' }); break;
-        case 'w:drawing': case 'w:pict': case 'w:object': case 'mc:AlternateContent': collectTextBoxes(piece, context.textBoxes); break;
+        case 'w:footnoteRef': case 'w:endnoteRef': break;
+        case 'w:drawing': case 'w:pict': case 'w:object': case 'mc:AlternateContent': {
+          const before = context.textBoxes.length;
+          collectTextBoxes(piece, context.textBoxes);
+          if (context.textBoxes.length > before) context.warn('textboxes');
+          if (hasPicture(piece)) context.warn('images');
+          break;
+        }
         default: break;
       }
     }
@@ -165,7 +176,15 @@ export function inlinesFrom(paragraph: XmlNode, paraRun: RunProps, baseline: Bas
         case 'w:fldSimple': { const target = fieldLink(attr(child, 'w:instr') ?? ''); walk(child, target ?? link); break; }
         case 'w:sdt': { const content = firstNamed(child, 'w:sdtContent'); if (content) walk(content, link); break; }
         case 'w:ins': case 'w:moveTo': case 'w:smartTag': case 'w:customXml': case 'w:dir': case 'w:bdo': case 'w:sdtContent': walk(child, link); break;
-        case 'mc:AlternateContent': collectTextBoxes(child, context.textBoxes); break;
+        // Deleted and moved-away revisions are not part of the text the writer sees; they are reported, not kept.
+        case 'w:del': case 'w:moveFrom': context.warn('revisions'); break;
+        case 'w:commentRangeStart': case 'w:commentReference': context.warn('comments'); break;
+        case 'mc:AlternateContent': {
+          const before = context.textBoxes.length;
+          collectTextBoxes(child, context.textBoxes);
+          if (context.textBoxes.length > before) context.warn('textboxes');
+          break;
+        }
         case 'm:oMath': case 'm:oMathPara': if (!inInstructions()) text(mathText(child), paraRun, link); break;
         default: break;
       }

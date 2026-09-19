@@ -17,7 +17,11 @@ export async function POST(request: Request) {
     const bytes = await readBinary(request, MAX_UPLOAD_BYTES);
     const language = new URL(request.url).searchParams.get("language") ?? "id";
     const result = await docxToEditorDocument(bytes, { language });
-    return jsonData({ title: result.title, content: result.content, pageSize: result.pageSize, pageMargins: formatMargins(result.pageMargins) });
+    return jsonData({
+      title: result.title, content: result.content, pageSize: result.pageSize, pageMargins: formatMargins(result.pageMargins),
+      orientation: result.orientation, columns: result.columns,
+      header: result.header, footer: result.footer, warnings: result.warnings,
+    });
   } catch (error) {
     if (error instanceof DocxError) return handleRouteError(new RequestError("DOCX_UNREADABLE", error.message, 422));
     return handleRouteError(error);

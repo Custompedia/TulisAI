@@ -232,3 +232,42 @@ html[data-ww-painting] .ProseMirror { cursor: copy; }
 @media (prefers-reduced-motion: reduce) { .animate-pop { animation: none; } }
 .scrollbar-none { scrollbar-width: none; }
 .scrollbar-none::-webkit-scrollbar { display: none; }
+
+/* Footnotes: the marker is numbered by a CSS counter, so inserting one renumbers the rest without a transaction. */
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror { counter-reset: ww-footnote; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-footnote {
+  counter-increment: ww-footnote; cursor: pointer; color: #0563c1;
+  font-size: 0.72em; line-height: 0; vertical-align: super;
+}
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-footnote::after { content: counter(ww-footnote); }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-footnote.ProseMirror-selectednode { background: var(--color-brand-100); border-radius: 3px; }
+
+/* A generated table of contents: marked on the canvas so it reads as generated, plain in the exported file. */
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-toc { border-left: 2px solid var(--color-line); padding-left: 10px; }
+:is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-toc > p:last-child { margin-bottom: 0; }
+
+/* Newspaper columns; one column is the default and leaves the layout untouched. */
+.editor-paged .ProseMirror { column-count: var(--page-column-count, 1); column-gap: var(--page-column-gap, 0); }
+
+/* The running header and footer, drawn over each sheet at Word's own distance from its edges. */
+.ww-running-layer { position: absolute; inset: 0; pointer-events: none; }
+.ww-running {
+  position: absolute; left: var(--page-margin-left); right: var(--page-margin-right);
+  font-family: var(--page-font); font-size: var(--page-font-size); line-height: var(--page-line-height);
+  color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ww-running-footer { transform: translateY(-100%); }
+
+/* Ruler: grey ends are the page margins, the markers are the paragraph's indents, a click adds a tab stop. */
+.ww-ruler { position: relative; height: 20px; margin: 0 0 6px; background: #fff; border: 1px solid #d6d8d1; border-radius: 3px; user-select: none; }
+.ww-ruler-band { position: absolute; top: 0; bottom: 0; background: #e6e8e3; }
+.ww-ruler-track { position: absolute; top: 0; bottom: 0; cursor: text; }
+.ww-ruler-tick { position: absolute; top: 4px; transform: translateX(-50%); font-size: 8px; line-height: 1; color: #8a8d85; }
+.ww-ruler-edge { position: absolute; top: 0; bottom: 0; width: 7px; cursor: col-resize; }
+.ww-ruler-edge-left { margin-left: -3px; }
+.ww-ruler-edge-right { margin-right: -3px; }
+.ww-ruler-marker { position: absolute; width: 0; height: 0; margin-left: -5px; cursor: grab; }
+.ww-ruler-first { top: 1px; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid #5a5d55; }
+.ww-ruler-left, .ww-ruler-right { bottom: 1px; border-left: 5px solid transparent; border-right: 5px solid transparent; border-bottom: 6px solid #5a5d55; }
+.ww-ruler-stop { position: absolute; bottom: 2px; width: 8px; height: 7px; margin-left: -4px; background: #5a5d55; clip-path: polygon(0 100%, 100% 100%, 50% 0); }
+@media (max-width: 860px) { .ww-ruler, .ww-running-layer { display: none; } }

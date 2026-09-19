@@ -245,7 +245,7 @@ function EditorDemo({ signedIn }: { signedIn: boolean }) {
           </div>
 
           <footer className="shrink-0 space-y-2.5 border-t border-line bg-white px-4 pb-4 pt-3">
-            <Segmented size="sm" label={t('Bagian yang diubah', 'Scope')} value="document" onChange={() => undefined} options={[{ value: 'selection', label: t('Pilihan', 'Selection') }, { value: 'paragraph', label: t('Paragraf', 'Paragraph') }, { value: 'document', label: t('Dokumen', 'Document') }]} />
+            <Segmented size="sm" label={t('Bagian yang diubah', 'Scope')} value="document" onChange={() => undefined} options={[{ value: 'selection', label: t('Teks terpilih', 'Selected text') }, { value: 'document', label: t('Seluruh dokumen', 'Entire document') }]} />
             <p className="flex items-center gap-1.5 text-xs text-ink-500"><TextSelect size={13} className="shrink-0" aria-hidden="true" /><span className="min-w-0 flex-1 truncate">{t('seluruh dokumen', 'entire document')} · {numberFormat(words, locale)} {t('kata', 'words')}</span></p>
             <Link href={startHref} className={`inline-flex h-10 w-full items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold ${raisedGreen} ${pressGreen}`}>{generateLabel(mode, t)}<ArrowRight size={15} aria-hidden="true" /></Link>
           </footer>

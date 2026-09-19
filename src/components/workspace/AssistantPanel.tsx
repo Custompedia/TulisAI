@@ -131,7 +131,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   const mismatch = detected !== null && settings.language !== 'auto' && settings.language !== detected;
   const detectedName = nameOf(detected ?? 'id');
   const chosenName = settings.language === 'auto' ? '' : nameOf(settings.language);
-  const scopeLabel = { selection: t('teks terpilih', 'selected text'), paragraph: t('paragraf aktif', 'current paragraph'), document: t('seluruh dokumen', 'entire document') }[scope];
+  const scopeLabel = scope === 'selection' ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document');
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -243,7 +243,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
         )}
         <SectionTitle aside={(scope === 'selection' || overLimit) && <span className={`text-[11px] tabular-nums ${overLimit ? 'font-semibold text-amber-700' : 'text-ink-500'}`}>{numberFormat(scopeChars, locale)}/{numberFormat(limit, locale)}</span>}>{t('Bagian yang diubah', 'Scope')}</SectionTitle>
         <Segmented<Scope> size="sm" label={t('Bagian yang diubah', 'Scope')} value={scope} disabled={busy} onChange={onScope}
-          options={[{ value: 'selection', label: t('Pilihan', 'Selection') }, { value: 'paragraph', label: t('Paragraf', 'Paragraph') }, { value: 'document', label: t('Dokumen', 'Document') }]} />
+          options={[{ value: 'selection', label: t('Teks terpilih', 'Selected text'), disabled: !hasSelection }, { value: 'document', label: t('Seluruh dokumen', 'Entire document') }]} />
         <p className={`flex items-center gap-1.5 text-xs ${needsSelection || overLimit ? 'text-amber-700' : 'text-ink-500'}`}>
           <TextSelect size={13} className="shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">

@@ -323,3 +323,21 @@ Instruksi terbaru memindahkan B01/B03 (impor/ekspor DOCX) dari backlog §7 ke sc
 Keputusan yang dicatat: kata-bilangan hanya dipakai sebagai pencocok nilai, tidak pernah sebagai klaim, supaya kata umum seperti "one" tidak dianggap angka yang dikarang. `charge_characters` tidak di-backfill. Ekspor PDF dan paginasi editor sungguhan tidak dibangun; klaim PDF dihapus dari katalog paket sampai ada jalannya. Billing tetap belum ada: `user.tier` masih diatur admin, jadi seluruh pekerjaan ini adalah plumbing entitlement tanpa jalur pembelian.
 
 Bukti, spike, bug yang ditemukan, dan batas klaim: [docs/verification.md](docs/verification.md) bagian "Tier berbayar".
+
+## 14. Kelengkapan mode DOCX lanjutan (2026-09-19)
+
+Permintaan: lengkapi perkakas mode lanjutan, rapikan mekanisme garis tabel, dan buat posisi tabel mengikuti pilihan penulis. Gambar sengaja tidak dikerjakan — fokus tetap teks.
+
+| ID | Task dan acceptance criteria | Status |
+| --- | --- | --- |
+| T11 | Garis tabel per sel: atribut `borderTop/Right/Bottom/Left` sebagai panjang CSS, dipetakan ke `w:tcBorders` saat ekspor dan dibaca dari `w:tblBorders`/`w:tcBorders`/gaya tabel saat impor; "tanpa garis" adalah nilai nyata (`w:val="nil"`), bukan atribut yang hilang; hanya sisi yang berbeda dari grid 0,5 pt yang disimpan | Selesai lokal |
+| T12 | Posisi tabel milik penulis: `w:jc` (kiri/tengah/kanan) dan lebar penuh vs seukuran isi (`w:tblW` pct 5000 vs auto) dua arah; impor hanya menganggap "seukuran isi" bila grid nyata lebih sempit dari kolom teks | Selesai lokal |
+| T13 | Dialog pengaturan halaman: ukuran kertas, orientasi, empat margin dengan preset Word, dan jumlah kolom; tersimpan di preferensi notebook dan dipakai kanvas maupun ekspor | Selesai lokal; belum diverifikasi visual |
+| T14 | Header dan footer satu baris dengan token `{page}`/`{pages}`: ditulis sebagai `header1.xml`/`footer1.xml` dengan field PAGE/NUMPAGES, dibaca kembali dari bagian yang sama, dan digambar di setiap lembar kanvas | Selesai lokal; belum diverifikasi visual |
+| T15 | Catatan kaki dua arah: node `footnote` inline yang membawa teksnya sendiri, bernomor lewat CSS counter, diekspor ke `footnotes.xml` lengkap dengan pasangan separator; catatan akhir menjadi catatan kaki dengan peringatan | Selesai lokal |
+| T16 | Daftar isi: node `tableOfContents` yang dibangun dari heading, diekspor sebagai field `TOC \o "1-3" \h \z \u` dengan hasil tersimpan, dan heading dibookmark supaya Word bisa menyegarkannya | Selesai lokal |
+| T17 | Penggaris halaman: margin kiri/kanan, indent kiri/kanan/baris pertama, dan tab stop bisa digeser; tab stop tersimpan sebagai `tabStops` dan diekspor sebagai `w:tabs` | Selesai lokal; belum diverifikasi visual |
+| T18 | Daftar peringatan impor yang nyata (gambar, kotak teks, revisi terhapus, komentar, catatan akhir, header/footer yang disederhanakan) ditampilkan sebelum notebook dibuat | Selesai lokal |
+| T19 | Karakter khusus: pemilih glif tujuh kelompok yang menyisipkan di posisi kursor | Selesai lokal |
+
+Batas yang diketahui dan disengaja: gambar tetap tidak diimpor atau diekspor; tab stop tersimpan dan terbawa ke Word tetapi kanvas masih memakai kisi tab 0,5 inci bawaan; teks berkolom ditampilkan sebagai satu lembar panjang karena mesin paginasi mengukur blok satu kolom; catatan kaki tampil sebagai nomor di kanvas dan baru turun ke kaki halaman di Word; tautan internal Word (`w:hyperlink w:anchor`) masih menjadi teks biasa.

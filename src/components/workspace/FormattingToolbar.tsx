@@ -2,8 +2,8 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, EllipsisVertical, Highlighter, Indent, Italic,
-  List, ListChecks, ListOrdered, Minus, Outdent, PaintRoller, Plus, Redo2, RemoveFormatting, Search, SeparatorHorizontal,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, EllipsisVertical, FileCog, Highlighter, Indent, Italic,
+  List, ListChecks, ListOrdered, Minus, Outdent, PaintRoller, PanelTop, Plus, Redo2, RemoveFormatting, Search, SeparatorHorizontal,
   SpellCheck, Strikethrough, Subscript, Superscript, Underline, Undo2, UnfoldVertical, type LucideIcon,
 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
@@ -12,6 +12,7 @@ import { setSpellcheck, spellcheckKey } from '@/lib/editor/extensions/spellcheck
 import { ColorPicker } from './toolbar/ColorPicker';
 import { FindReplace } from './toolbar/FindReplace';
 import { LinkPopover } from './toolbar/LinkPopover';
+import { FootnoteButton, SpecialCharacterButton, TocButton } from './toolbar/InsertTools';
 import { TableButton } from './toolbar/TableTools';
 import { ACTIVE, Chevron, ChoiceList, CONTROL, Control, DIVIDER, IDLE, keepSelection, Popover, type Choice } from './toolbar/Popover';
 import { ZOOM_LEVELS, type Zoom } from './toolbar/zoom';
@@ -21,7 +22,10 @@ import {
   SPACE_BEFORE_ADDED, stepFontSize, type BlockStyle, type PaintFormat,
 } from './toolbar/formatting';
 
-type Props = { editor: Editor | null; disabled: boolean; zoom: Zoom; onZoom: (zoom: Zoom) => void };
+type Props = {
+  editor: Editor | null; disabled: boolean; zoom: Zoom; onZoom: (zoom: Zoom) => void;
+  onPageSetup: () => void; onHeaderFooter: () => void;
+};
 
 const GROUP = 'flex shrink-0 items-center gap-0.5';
 const LABEL_IDLE = 'text-ink-800 enabled:hover:bg-paper-deep';
@@ -63,7 +67,7 @@ function FontSizeField({ editor, disabled }: { editor: Editor; disabled: boolean
   );
 }
 
-export function FormattingToolbar({ editor, disabled, zoom, onZoom }: Props) {
+export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup, onHeaderFooter }: Props) {
   const { t } = useLocale();
   // The toolbar reflects the caret and stored marks, so it re-renders on every transaction.
   const [, bump] = useState(0);
@@ -266,6 +270,13 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom }: Props) {
       <TableButton editor={active} disabled={off} />
       <Control icon={Minus} label={t('Garis horizontal', 'Horizontal line')} disabled={off} onRun={() => chain().setHorizontalRule().run()} />
       <Control icon={SeparatorHorizontal} label={t('Hentian halaman', 'Page break')} shortcut={`${mod}+Enter`} disabled={off} onRun={() => chain().setPageBreak().run()} />
+      <SpecialCharacterButton editor={active} disabled={off} />
+      <FootnoteButton editor={active} disabled={off} />
+      <TocButton editor={active} disabled={off} />
+    </> },
+    { id: 'page', bar: '@max-[1520px]:hidden', panel: 'hidden @max-[1520px]:flex', divider: true, render: () => <>
+      <Control icon={FileCog} label={t('Pengaturan halaman', 'Page setup')} disabled={disabled} onRun={onPageSetup} />
+      <Control icon={PanelTop} label={t('Header & footer', 'Header & footer')} disabled={disabled} onRun={onHeaderFooter} />
     </> },
   ];
 
@@ -278,7 +289,7 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom }: Props) {
           {group.render()}
         </div>
       ))}
-      <div className="ml-auto hidden shrink-0 items-center @max-[1390px]:flex">
+      <div className="ml-auto hidden shrink-0 items-center @max-[1520px]:flex">
         <span aria-hidden="true" className={DIVIDER} />
         <Popover label={t('Opsi lainnya', 'More options')} role="dialog" focusFirst={false} triggerClassName={CONTROL}
           trigger={<EllipsisVertical size={15} aria-hidden="true" />} align="end" scrollable={false}>

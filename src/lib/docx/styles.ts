@@ -11,7 +11,7 @@ export type RunProps = {
 export type ParaProps = {
   align?: string; before?: number; after?: number; line?: number; lineRule?: string;
   left?: number; right?: number; firstLine?: number; contextual?: boolean; pageBreakBefore?: boolean;
-  numId?: string; ilvl?: number; outline?: number;
+  numId?: string; ilvl?: number; outline?: number; tabs?: Array<{ pos: number; val: string }>;
 };
 
 type Style = { id: string; type: string; name: string; basedOn?: string; link?: string; pPr?: XmlNode; rPr?: XmlNode; node: XmlNode };
@@ -118,6 +118,13 @@ export function applyParagraph(base: ParaProps, pPr: XmlNode | undefined): ParaP
         next.right = numberAttr(child, 'w:end') ?? numberAttr(child, 'w:right') ?? next.right;
         const hanging = numberAttr(child, 'w:hanging'); const first = numberAttr(child, 'w:firstLine');
         if (hanging !== undefined) next.firstLine = -hanging; else if (first !== undefined) next.firstLine = first;
+        break;
+      }
+      case 'w:tabs': {
+        const stops = childrenNamed(child, 'w:tab').map((tab) => ({ pos: numberAttr(tab, 'w:pos') ?? 0, val: attr(tab, 'w:val') ?? 'left' }));
+        const kept = stops.filter((stop) => stop.pos > 0 && ['left', 'center', 'right', 'decimal'].includes(stop.val));
+        // A "clear" stop wipes what the style set, which is how Word removes an inherited stop.
+        next.tabs = stops.some((stop) => stop.val === 'clear') ? kept : [...(next.tabs ?? []), ...kept];
         break;
       }
       case 'w:contextualSpacing': next.contextual = isOn(child); break;

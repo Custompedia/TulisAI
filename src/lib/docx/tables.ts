@@ -1,4 +1,5 @@
 import type { EditorNode } from '../editor/document';
+import { BORDER_SIDES, borderAttr, borderFromOoxml, cssBorder, DEFAULT_BORDER, type BorderLine } from './borders';
 import { twipsToPx } from './office-defaults';
 import { applyParagraph, applyRun, styleChain, type ParaProps, type RunProps, type Styles } from './styles';
 import { attr, childrenNamed, firstNamed, isOn, type XmlNode } from './xml';
@@ -27,14 +28,34 @@ function lookOf(tblPr: XmlNode | undefined): Look {
   return { firstRow: flag('firstRow', 0x20), lastRow: flag('lastRow', 0x40), firstColumn: flag('firstColumn', 0x80), lastColumn: flag('lastColumn', 0x100), noHBand: flag('noHBand', 0x200), noVBand: flag('noVBand', 0x400) };
 }
 
-type Part = { pPr?: XmlNode; rPr?: XmlNode; tcPr?: XmlNode };
+// The six sides OOXML names on a table: the four edges plus the two inner grid lines.
+type BorderSet = Partial<Record<'top' | 'right' | 'bottom' | 'left' | 'insideH' | 'insideV', BorderLine | null>>;
+const BORDER_NAMES = ['top', 'right', 'bottom', 'left', 'insideH', 'insideV'] as const;
+
+function bordersOf(node: XmlNode | undefined, name: 'w:tblBorders' | 'w:tcBorders'): BorderSet {
+  const container = node && firstNamed(node, name);
+  if (!container) return {};
+  const set: BorderSet = {};
+  for (const side of BORDER_NAMES) {
+    // OOXML spells the horizontal edges "top"/"bottom" and the vertical ones "start"/"left" depending on the writer.
+    const element = firstNamed(container, `w:${side}`) ?? (side === 'left' ? firstNamed(container, 'w:start') : side === 'right' ? firstNamed(container, 'w:end') : undefined);
+    const line = borderFromOoxml(attr(element, 'w:val'), attr(element, 'w:sz'), attr(element, 'w:color'));
+    if (line !== undefined) set[side] = line;
+  }
+  return set;
+}
+
+const sameBorder = (line: BorderLine | null) =>
+  line !== null && Math.abs(line.width - DEFAULT_BORDER.width) < 0.01 && line.style === DEFAULT_BORDER.style && line.color === DEFAULT_BORDER.color;
+
+type Part = { pPr?: XmlNode; rPr?: XmlNode; tcPr?: XmlNode; tblPr?: XmlNode };
 function tableStyleParts(styles: Styles, id: string | undefined) {
   const whole: Part[] = []; const conditional = new Map<string, Part[]>();
   for (const style of styleChain(styles, id)) {
-    whole.push({ pPr: style.pPr, rPr: style.rPr, tcPr: firstNamed(style.node, 'w:tcPr') });
+    whole.push({ pPr: style.pPr, rPr: style.rPr, tcPr: firstNamed(style.node, 'w:tcPr'), tblPr: firstNamed(style.node, 'w:tblPr') });
     for (const part of childrenNamed(style.node, 'w:tblStylePr')) {
       const type = attr(part, 'w:type');
-      if (type) conditional.set(type, [...(conditional.get(type) ?? []), { pPr: firstNamed(part, 'w:pPr'), rPr: firstNamed(part, 'w:rPr'), tcPr: firstNamed(part, 'w:tcPr') }]);
+      if (type) conditional.set(type, [...(conditional.get(type) ?? []), { pPr: firstNamed(part, 'w:pPr'), rPr: firstNamed(part, 'w:rPr'), tcPr: firstNamed(part, 'w:tcPr'), tblPr: firstNamed(part, 'w:tblPr') }]);
     }
   }
   return { whole, conditional };
@@ -42,13 +63,17 @@ function tableStyleParts(styles: Styles, id: string | undefined) {
 
 type Slot = { node: XmlNode; column: number; span: number; merge: 'restart' | 'continue' | null };
 
-export function tableFrom(table: XmlNode, styles: Styles, base: { run: RunProps; para: ParaProps }, cellBlocks: CellBlocks): EditorNode | null {
+export function tableFrom(table: XmlNode, styles: Styles, base: { run: RunProps; para: ParaProps }, cellBlocks: CellBlocks, contentWidth = 0): EditorNode | null {
   const tblPr = firstNamed(table, 'w:tblPr');
   const look = lookOf(tblPr);
   const { whole, conditional } = tableStyleParts(styles, attr(tblPr && firstNamed(tblPr, 'w:tblStyle'), 'w:val'));
   const grid = childrenNamed(firstNamed(table, 'w:tblGrid') ?? table, 'w:gridCol').map((column) => Number(attr(column, 'w:w') ?? '0') || 0);
   const rows = unwrap(table, 'w:tr');
   if (!rows.length) return null;
+  // The table's own lines, which every cell falls back to for the sides it does not state itself.
+  let tableBorders: BorderSet = {};
+  for (const layer of whole) tableBorders = { ...tableBorders, ...bordersOf(layer.tblPr, 'w:tblBorders') };
+  tableBorders = { ...tableBorders, ...bordersOf(tblPr, 'w:tblBorders') };
 
   const slots: Slot[][] = rows.map((row) => {
     let column = Number(attr(firstNamed(firstNamed(row, 'w:trPr') ?? row, 'w:gridBefore'), 'w:val') ?? '0') || 0;
@@ -84,8 +109,11 @@ export function tableFrom(table: XmlNode, styles: Styles, base: { run: RunProps;
       if (look.firstRow && rowIndex === 0) parts.push('firstRow');
       if (look.lastRow && rowIndex === rows.length - 1) parts.push('lastRow');
       const layers = [...whole, ...parts.flatMap((part) => conditional.get(part) ?? [])];
-      let run = base.run; let para = base.para; let background: string | undefined;
-      for (const layer of layers) { run = applyRun(run, layer.rPr, styles.theme); para = applyParagraph(para, layer.pPr); background = hexFill(layer.tcPr) ?? background; }
+      let run = base.run; let para = base.para; let background: string | undefined; let inherited: BorderSet = {};
+      for (const layer of layers) {
+        run = applyRun(run, layer.rPr, styles.theme); para = applyParagraph(para, layer.pPr); background = hexFill(layer.tcPr) ?? background;
+        inherited = { ...inherited, ...bordersOf(layer.tcPr, 'w:tcBorders') };
+      }
 
       const tcPr = firstNamed(slot.node, 'w:tcPr');
       background = hexFill(tcPr) ?? background;
@@ -100,12 +128,31 @@ export function tableFrom(table: XmlNode, styles: Styles, base: { run: RunProps;
       if (rowspan > 1) attrs.rowspan = rowspan;
       if (colwidth) attrs.colwidth = colwidth;
       if (background && background !== 'FFFFFF') attrs.background = `#${background}`;
+      // Only a side that differs from the 0.5 pt grid the canvas already draws needs to be stored.
+      const own = bordersOf(tcPr, 'w:tcBorders');
+      const edge = { top: rowIndex === 0, bottom: rowIndex === rows.length - 1, left: slot.column === 0, right: slot.column + slot.span - 1 === lastColumn };
+      for (const side of BORDER_SIDES) {
+        const inner: keyof BorderSet = side === 'top' || side === 'bottom' ? 'insideH' : 'insideV';
+        // "No line" is a stated value, so presence decides which layer wins rather than nullishness.
+        const layers: BorderSet[] = [own, inherited, edge[side] ? { [side]: tableBorders[side] } : { [side]: tableBorders[inner] }];
+        const layer = layers.find((set) => side in set && set[side] !== undefined);
+        const line = layer?.[side];
+        if (line === undefined || sameBorder(line)) continue;
+        attrs[borderAttr(side)] = cssBorder(line);
+      }
       if (vAlign === 'center' || vAlign === 'bottom') attrs.verticalAlign = vAlign === 'center' ? 'middle' : 'bottom';
       const content = cellBlocks(slot.node, { run, para, header });
       return [{ type: header ? 'tableHeader' : 'tableCell', ...(Object.keys(attrs).length ? { attrs } : {}), content: content.length ? content : [{ type: 'paragraph' }] }];
     });
     return { type: 'tableRow', content: cells } as EditorNode;
   });
-  // A row made only of merge continuations stays, empty, so the rowspans above still count it.
-  return output.some((row) => row.content?.length) ? { type: 'table', content: output } : null;
+  if (!output.some((row) => row.content?.length)) return null;
+  const tableAttrs: Record<string, unknown> = {};
+  const jc = attr(tblPr && firstNamed(tblPr, 'w:jc'), 'w:val') ?? attr(whole.map((layer) => layer.tblPr && firstNamed(layer.tblPr, 'w:jc')).filter(Boolean).pop(), 'w:val');
+  if (jc === 'center' || jc === 'right' || jc === 'end') tableAttrs.align = jc === 'end' ? 'right' : jc;
+  // Word's "autofit to contents" only shrinks the table when its grid really is narrower than the text column.
+  const tblW = tblPr && firstNamed(tblPr, 'w:tblW');
+  const gridTotal = grid.reduce((sum, width) => sum + width, 0);
+  if (attr(tblW, 'w:type') === 'auto' && contentWidth > 0 && gridTotal > 0 && gridTotal < contentWidth * 0.9) tableAttrs.width = 'auto';
+  return { type: 'table', ...(Object.keys(tableAttrs).length ? { attrs: tableAttrs } : {}), content: output };
 }

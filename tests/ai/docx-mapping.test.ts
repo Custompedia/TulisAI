@@ -28,7 +28,7 @@ describe('Word defaults', () => {
     expect(SPACE_AFTER_TWIPS).toBe(160);
   });
   it('publishes the same numbers to the preview as CSS values', () => {
-    const style = pageStyle('a4');
+    const style = pageStyle({ size: 'a4' });
     expect(style['--page-width']).toBe('793.73px');
     expect(style['--page-margin-left']).toBe('96.00px');
     expect(style['--page-line-height']).toBe(String(LINE_HEIGHT));

@@ -12,7 +12,7 @@ export function FieldLabel({ children, htmlFor, hint }: { children: React.ReactN
   );
 }
 
-export type SegmentedOption<T extends string> = { value: T; label: string; icon?: LucideIcon; locked?: boolean; lockedHint?: string };
+export type SegmentedOption<T extends string> = { value: T; label: string; icon?: LucideIcon; locked?: boolean; lockedHint?: string; disabled?: boolean };
 
 // A locked option is a paid one: it shows a grey padlock and calls onLocked instead of selecting, so the choice
 // stays visible and can explain itself rather than disappearing on the free plan.
@@ -24,10 +24,10 @@ export function Segmented<T extends string>({ value, onChange, onLocked, options
         const active = option.value === value && !option.locked;
         const Icon = option.icon;
         return (
-          <button key={option.value} type="button" role="radio" aria-checked={active} disabled={disabled && !option.locked}
+          <button key={option.value} type="button" role="radio" aria-checked={active} disabled={(disabled || option.disabled) && !option.locked}
             title={option.locked ? (option.lockedHint ?? option.label) : option.label}
             onClick={() => (option.locked ? onLocked?.(option.value) : onChange(option.value))}
-            className={`flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 font-semibold transition-colors ${fit ? '' : 'flex-1'} ${size === 'sm' ? 'h-7 text-xs' : 'h-8 text-[13px]'} ${active ? 'bg-white text-ink-900 shadow-sm ring-1 ring-line' : option.locked ? 'text-ink-400 hover:text-ink-600' : 'text-ink-500 hover:text-ink-800'}`}>
+            className={`flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 font-semibold transition-colors ${fit ? '' : 'flex-1'} ${size === 'sm' ? 'h-7 text-xs' : 'h-8 text-[13px]'} ${active ? 'bg-white text-ink-900 shadow-sm ring-1 ring-line' : option.locked ? 'text-ink-400 hover:text-ink-600' : 'text-ink-500 hover:text-ink-800 disabled:cursor-not-allowed disabled:text-ink-300 disabled:hover:text-ink-300'}`}>
             {Icon && !option.locked && <Icon size={13} aria-hidden="true" className="shrink-0" />}
             {option.locked && <Lock size={12} aria-hidden="true" className="shrink-0 text-ink-400" />}
             {option.label}

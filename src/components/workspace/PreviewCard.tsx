@@ -29,7 +29,7 @@ export function PreviewCard({ preview, stale, busy, applying, paged, onApply, on
   const changed = changePercentage(preview.source, result);
   const ceiling = PRESERVATION_CEILING[preview.settings.preservation] ?? 30;
   const humanize = preview.settings.mode === 'humanize';
-  const scopeLabel = { selection: t('Teks terpilih', 'Selection'), paragraph: t('Paragraf', 'Paragraph'), document: t('Seluruh dokumen', 'Entire document') }[preview.scope];
+  const scopeLabel = preview.scope === 'selection' ? t('Teks terpilih', 'Selection') : t('Seluruh dokumen', 'Entire document');
 
   async function copy() {
     // Paragraph breaks survive a paste into Word or Docs; the plain flavour stays the raw text.

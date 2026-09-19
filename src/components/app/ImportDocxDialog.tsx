@@ -8,7 +8,11 @@ import { guardedPush } from '@/lib/client/navigation-guard';
 import { documentText } from '@/lib/editor/document';
 import { defaults, modeFromPrompt } from '@/lib/writing/settings';
 import { DOCX_CONTENT_TYPE } from '@/lib/docx/export';
-import { ADVANCED_PREFERENCE, PAGE_MARGINS_PREFERENCE, PAGE_SIZE_PREFERENCE } from '@/lib/plans';
+import { ADVANCED_PREFERENCE } from '@/lib/plans';
+import { layoutPreferences } from '@/components/workspace/page-layout';
+import type { ImportWarning } from '@/lib/docx/runs';
+import type { RunningText } from '@/lib/docx/running';
+import { PAGES, parseMargins, type Orientation } from '@/lib/docx/office-defaults';
 import type { EditorDocument } from '@/lib/editor/document';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -19,7 +23,21 @@ import { useSessionGuard, useShell } from './AppShell';
 const MAX_BYTES = 5_000_000;
 const PREVIEW_CHARACTERS = 1_200;
 
-type Extraction = { title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; pageMargins: string };
+type Extraction = {
+  title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; pageMargins: string;
+  orientation: Orientation; columns: number; header: RunningText | null; footer: RunningText | null; warnings: ImportWarning[];
+};
+
+// What each warning means to the writer; the file is still imported, these parts simply do not come with it.
+const WARNING_TEXT: Record<ImportWarning, [string, string]> = {
+  images: ['Gambar tidak ikut diimpor — notebook ini khusus teks.', 'Images are not imported — this notebook is text only.'],
+  textboxes: ['Isi kotak teks dipindahkan menjadi paragraf biasa.', 'Text box contents were moved into ordinary paragraphs.'],
+  revisions: ['Perubahan terlacak yang dihapus tidak dibawa; teks final yang dipakai.', 'Tracked deletions were dropped; the final text is used.'],
+  comments: ['Komentar tidak ikut diimpor.', 'Comments are not imported.'],
+  endnotes: ['Catatan akhir menjadi catatan kaki.', 'Endnotes became footnotes.'],
+  runningRich: ['Header/footer disederhanakan menjadi satu baris teks.', 'The header and footer were reduced to a single line of text.'],
+  shapes: ['Bentuk dan diagram tidak ikut diimpor.', 'Shapes and diagrams are not imported.'],
+};
 
 // Two steps on purpose: the file is extracted and shown first, and only a confirmed preview creates a notebook.
 export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
@@ -52,8 +70,11 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
       const mode = modeFromPrompt(prefs.defaultMode) ?? 'humanize';
       // Advanced mode on and the file's own page size and margins stored, so the notebook opens looking like the document.
       const preferences = {
-        ...defaults, mode, language: prefs.writingLanguage, context: prefs.humanizerContext,
-        [ADVANCED_PREFERENCE]: true, [PAGE_SIZE_PREFERENCE]: extraction.pageSize, [PAGE_MARGINS_PREFERENCE]: extraction.pageMargins,
+        ...defaults, mode, language: prefs.writingLanguage, context: prefs.humanizerContext, [ADVANCED_PREFERENCE]: true,
+        ...layoutPreferences({
+          size: extraction.pageSize, margins: parseMargins(extraction.pageMargins, extraction.pageSize, extraction.orientation) ?? PAGES[extraction.pageSize].margin,
+          orientation: extraction.orientation, columns: extraction.columns, header: extraction.header, footer: extraction.footer,
+        }),
       };
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title: extraction.title, language: prefs.writingLanguage, content: extraction.content, preferences }, newKey());
       if (!guardedPush(router, `/notebooks/${doc.id}`)) onClose();
@@ -104,6 +125,16 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
                 </p>
               </div>
             </div>
+
+            {!!extraction.warnings?.length && (
+              <Alert tone="warning" title={t('Yang tidak ikut terbawa', 'What does not come across')}>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {extraction.warnings.map((warning) => (
+                    <li key={warning}>{t(WARNING_TEXT[warning]?.[0] ?? warning, WARNING_TEXT[warning]?.[1] ?? warning)}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
 
             {!characters ? (
               <Alert tone="error" title={t('Tidak ada teks yang terbaca', 'No readable text')}>

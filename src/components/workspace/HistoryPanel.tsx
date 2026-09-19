@@ -24,7 +24,7 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
   const [open, setOpen] = useState<string | null>(null);
   const [texts, setTexts] = useState<Record<string, TextState>>({});
   const shown = versions.filter((version) => filter === 'all' || (filter === 'ai') === (version.kind === 'ai_apply'));
-  const scopeLabel = (value: string | null | undefined) => (value === 'selection' ? t('Pilihan', 'Selection') : value === 'paragraph' ? t('Paragraf', 'Paragraph') : value === 'document' ? t('Dokumen', 'Document') : null);
+  const scopeLabel = (value: string | null | undefined) => (value === 'selection' ? t('Teks terpilih', 'Selection') : value === 'document' ? t('Seluruh dokumen', 'Entire document') : null);
 
   function fetchText(versionId: string) {
     setTexts((state) => ({ ...state, [versionId]: { status: 'loading', text: '' } }));

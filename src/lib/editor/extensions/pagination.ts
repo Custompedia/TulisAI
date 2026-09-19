@@ -39,7 +39,9 @@ export function planPages(blocks: PageBlock[], sheet: SheetGeometry): PagePlan {
 
 export const paginationKey = new PluginKey<DecorationSet>('pagination');
 const NARROW = '(max-width: 860px)';
-const GUTTER = 16;
+// The grey band drawn between two sheets, in CSS px; the running header and footer step by this too.
+export const PAGE_GUTTER = 16;
+const GUTTER = PAGE_GUTTER;
 
 const px = (value: string) => { const number = Number.parseFloat(value); return Number.isFinite(number) ? number : 0; };
 // Two adjacent vertical margins collapse into one, per CSS 2.1 §8.3.1.
@@ -87,8 +89,10 @@ function spacer(gap: PageGap | null, height: number) {
   return element;
 }
 
-function build(view: EditorView, measured: NonNullable<ReturnType<typeof measure>>): DecorationSet {
+function build(view: EditorView, measured: NonNullable<ReturnType<typeof measure>>, onPages?: (pages: number) => void): DecorationSet {
   const plan = planPages(measured.blocks, measured.sheet);
+  // The page count drives the running header and footer, which are drawn outside the editor.
+  onPages?.(plan.pages);
   const round = (value: number) => Math.round(value * 100) / 100;
   const decorations = plan.gaps.map((gap) => {
     const shaped = { ...gap, height: round(gap.height), band: round(gap.band) };
@@ -105,7 +109,7 @@ const same = (a: DecorationSet, b: DecorationSet, size: number) => {
 };
 
 // Splits the paged canvas into separate sheets with widget spacers only; the document and its offsets never change.
-export function paginationExtension({ enabled }: { enabled: () => boolean }) {
+export function paginationExtension({ enabled, onPages }: { enabled: () => boolean; onPages?: (pages: number) => void }) {
   return Extension.create({
     name: 'pagination',
     addProseMirrorPlugins() {
@@ -137,7 +141,8 @@ export function paginationExtension({ enabled }: { enabled: () => boolean }) {
             const active = enabled() && !window.matchMedia(NARROW).matches;
             const measured = active ? measure(view) : null;
             if (active && !measured) return;
-            const next = measured ? build(view, measured) : DecorationSet.empty;
+            const next = measured ? build(view, measured, onPages) : DecorationSet.empty;
+            if (!measured) onPages?.(1);
             const current = paginationKey.getState(view.state) ?? DecorationSet.empty;
             if (same(current, next, view.state.doc.content.size)) return;
             view.dispatch(view.state.tr.setMeta(paginationKey, next).setMeta('addToHistory', false));

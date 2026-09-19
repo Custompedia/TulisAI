@@ -3,10 +3,16 @@ import type { EditorDocument, EditorNode } from '../editor/document';
 import { zip, type ZipEntry } from './zip';
 import { element, escapeXml, XML_DECLARATION } from './xml';
 import {
-  alignmentFrom, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontFromStack, fontLineFactor, HEADING_FONT, HEADINGS,
-  HIGHLIGHT_COLORS, JUSTIFICATION, LINE_HEIGHT, LINE_RULE_AUTO, PAGES, pointsToHalfPoints, SPACE_AFTER_TWIPS, SPACE_BEFORE_TWIPS, TWIPS_PER_PX,
-  type PageMargins, type PageSize,
+  alignmentFrom, asColumns, asOrientation, columnWidth, COLUMN_GAP_TWIPS, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize,
+  FOOTER_DISTANCE_TWIPS, fontFromStack, fontLineFactor, HEADER_DISTANCE_TWIPS, HEADING_FONT, HEADINGS, HIGHLIGHT_COLORS, JUSTIFICATION,
+  LINE_HEIGHT, LINE_RULE_AUTO, pageGeometry, pointsToHalfPoints, SPACE_AFTER_TWIPS, SPACE_BEFORE_TWIPS, TWIPS_PER_PX,
+  type Orientation, type PageMargins, type PageSize,
 } from './office-defaults';
+import { BORDER_SIDES, borderAttr, DEFAULT_BORDER, ooxmlBorderAttrs, parseCssBorder } from './borders';
+import { runningParts, type RunningText } from './running';
+import { footnoteText } from '../editor/extensions/footnote';
+import { parseTabStops } from '../editor/extensions/paragraph-format';
+import { safeAnchor } from '../editor/extensions/anchors';
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
@@ -15,7 +21,10 @@ type Mark = NonNullable<EditorNode['marks']>[number];
 type Relationship = { id: string; target: string };
 // One w:num per list node, so every list keeps its own format, start and level.
 type ListDefinition = { id: number; level: number; ordered: boolean; type: string; start: number; bullet: string };
-type Writer = { relationships: Relationship[]; lists: ListDefinition[]; size: PageSize; margins: PageMargins };
+type Writer = {
+  relationships: Relationship[]; lists: ListDefinition[]; size: PageSize; margins: PageMargins;
+  orientation: Orientation; columns: number; footnotes: string[]; bookmarks: number;
+};
 
 const ORDERED_FORMAT: Record<string, string> = { '1': 'decimal', a: 'lowerLetter', A: 'upperLetter', i: 'lowerRoman', I: 'upperRoman' };
 const BULLETS: Record<string, { glyph: string; font?: string }> = { disc: { glyph: '•' }, circle: { glyph: 'o', font: 'Courier New' }, square: { glyph: '▪' } };
@@ -80,6 +89,13 @@ function runProperties(marks: Mark[] | undefined, link: boolean): string {
 
 function runs(node: EditorNode, writer: Writer): string {
   if (node.type === 'hardBreak') return `<w:r>${element('w:br')}</w:r>`;
+  // A footnote marker: the note itself is written into footnotes.xml, numbered by Word from the reference order.
+  if (node.type === 'footnote') {
+    const text = footnoteText(node.attrs?.text);
+    writer.footnotes.push(text);
+    const id = writer.footnotes.length;
+    return `<w:r>${element('w:rPr', {}, element('w:rStyle', { 'w:val': 'FootnoteReference' }))}${element('w:footnoteReference', { 'w:id': id })}</w:r>`;
+  }
   if (node.type !== 'text') return (node.content ?? []).map((child) => runs(child, writer)).join('');
   const text = node.text ?? '';
   if (!text) return '';
@@ -119,6 +135,8 @@ function paragraphProperties(node: EditorNode, options: ParagraphOptions): strin
   }
   // List Paragraph drops spacing between items; stated spacing has to switch that off to survive.
   if (listed) properties.push(element('w:contextualSpacing', { 'w:val': 0 }));
+  const stops = parseTabStops(attrs.tabStops);
+  if (stops.length) properties.push(element('w:tabs', {}, stops.map((stop) => element('w:tab', { 'w:val': stop.align === 'decimal' ? 'decimal' : stop.align, 'w:pos': Math.round(stop.position * 20) })).join('')));
   const align = alignmentFrom(attrs.textAlign);
   if (align) properties.push(element('w:jc', { 'w:val': JUSTIFICATION[align] }));
   return properties.length ? `<w:pPr>${properties.join('')}</w:pPr>` : '';
@@ -159,6 +177,13 @@ function taskParagraphs(node: EditorNode, writer: Writer, level: number): string
   })).join('');
 }
 
+// Only the sides the cell actually states; the rest keep the table's own border.
+function cellBorders(attrs: Record<string, unknown>): string {
+  const sides = BORDER_SIDES.map((side) => ({ side, line: parseCssBorder(attrs[borderAttr(side)]) })).filter((entry) => entry.line !== undefined);
+  if (!sides.length) return '';
+  return element('w:tcBorders', {}, sides.map((entry) => element(`w:${entry.side}`, ooxmlBorderAttrs(entry.line!))).join(''));
+}
+
 function tableXml(node: EditorNode, writer: Writer): string {
   const rows = node.content ?? [];
   const spanOf = (cell: EditorNode) => typeof cell.attrs?.colspan === 'number' && cell.attrs.colspan > 1 ? Math.floor(cell.attrs.colspan) : 1;
@@ -187,9 +212,14 @@ function tableXml(node: EditorNode, writer: Writer): string {
   const fallback = Math.max(360, Math.floor((contentWidth(writer.size, writer.margins) - known.reduce((sum, width) => sum + width, 0)) / Math.max(1, columns - known.length)));
   const grid = widths.map((width) => width ?? (known.length === columns ? 0 : fallback));
 
+  // The table default every cell falls back to; a cell that states its own side overrides it in w:tcBorders.
   const borders = element('w:tblBorders', {}, (['top', 'left', 'bottom', 'right', 'insideH', 'insideV'] as const)
-    .map((side) => element(`w:${side}`, { 'w:val': 'single', 'w:sz': 4, 'w:space': 0, 'w:color': 'auto' })).join(''));
-  const properties = element('w:tblPr', {}, `${element('w:tblStyle', { 'w:val': 'TableGrid' })}${element('w:tblW', { 'w:w': 0, 'w:type': 'auto' })}${borders}${element('w:tblLayout', { 'w:type': 'fixed' })}`);
+    .map((side) => element(`w:${side}`, ooxmlBorderAttrs(DEFAULT_BORDER))).join(''));
+  const auto = node.attrs?.width === 'auto';
+  const align = node.attrs?.align === 'center' || node.attrs?.align === 'right' ? node.attrs.align : null;
+  const properties = element('w:tblPr', {}, `${element('w:tblStyle', { 'w:val': 'TableGrid' })}` +
+    `${element('w:tblW', auto ? { 'w:w': 0, 'w:type': 'auto' } : { 'w:w': 5000, 'w:type': 'pct' })}` +
+    `${align ? element('w:jc', { 'w:val': align }) : ''}${borders}${element('w:tblLayout', { 'w:type': auto ? 'autofit' : 'fixed' })}`);
   const gridXml = element('w:tblGrid', {}, grid.map((width) => element('w:gridCol', { 'w:w': width })).join(''));
   const widthOf = (column: number, span: number) => grid.slice(column, column + span).reduce((sum, width) => sum + width, 0);
 
@@ -205,6 +235,7 @@ function tableXml(node: EditorNode, writer: Writer): string {
         element('w:tcW', { 'w:w': widthOf(slot.column, slot.span), 'w:type': 'dxa' }) +
         (slot.span > 1 ? element('w:gridSpan', { 'w:val': slot.span }) : '') +
         (slot.rowspan > 1 ? element('w:vMerge', { 'w:val': 'restart' }) : '') +
+        cellBorders(attrs) +
         (shading ? element('w:shd', { 'w:val': 'clear', 'w:color': 'auto', 'w:fill': shading }) : '') +
         (vAlign ? element('w:vAlign', { 'w:val': vAlign }) : ''));
       const content = (slot.cell.content ?? []).map((block) => blocks(block, writer, slot.cell.type === 'tableHeader')).join('') || '<w:p/>';
@@ -216,13 +247,34 @@ function tableXml(node: EditorNode, writer: Writer): string {
   return element('w:tbl', {}, `${properties}${gridXml}${body}`);
 }
 
+// Word's TOC field, with the entries we generated as its cached result, so the list reads correctly before
+// Word refreshes it and carries real page numbers after.
+function tocXml(node: EditorNode, writer: Writer): string {
+  const entries = (node.content ?? []).filter((child) => child.type === 'paragraph');
+  if (!entries.length) return '';
+  const begin = `<w:r>${element('w:fldChar', { 'w:fldCharType': 'begin', 'w:dirty': 'true' })}</w:r>` +
+    `<w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r>` +
+    `<w:r>${element('w:fldChar', { 'w:fldCharType': 'separate' })}</w:r>`;
+  const end = `<w:r>${element('w:fldChar', { 'w:fldCharType': 'end' })}</w:r>`;
+  return entries.map((entry, index) => {
+    const body = (entry.content ?? []).map((child) => runs(child, writer)).join('');
+    return `<w:p>${paragraphProperties(entry, {})}${index === 0 ? begin : ''}${body}${index === entries.length - 1 ? end : ''}</w:p>`;
+  }).join('');
+}
+
 function blocks(node: EditorNode, writer: Writer, header = false): string {
   switch (node.type) {
     case 'paragraph': return paragraph(node, writer, header ? { style: 'Strong' } : {});
     case 'heading': {
       const level = Math.min(6, Math.max(1, typeof node.attrs?.level === 'number' ? node.attrs.level : 1)) as 1 | 2 | 3 | 4 | 5 | 6;
-      return paragraph(node, writer, { style: `Heading${level}` });
+      const body = paragraph(node, writer, { style: `Heading${level}` });
+      const anchor = safeAnchor(node.attrs?.id);
+      if (!anchor) return body;
+      // A bookmark around the heading is what a TOC field links to and what Word keeps when it refreshes one.
+      const id = ++writer.bookmarks;
+      return `${element('w:bookmarkStart', { 'w:id': id, 'w:name': anchor })}${body}${element('w:bookmarkEnd', { 'w:id': id })}`;
     }
+    case 'tableOfContents': return tocXml(node, writer);
     case 'blockquote': return (node.content ?? []).map((child) => child.type === 'paragraph' ? paragraph(child, writer, { style: 'Quote' }) : blocks(child, writer, header)).join('');
     case 'bulletList': case 'orderedList': return listParagraphs(node, writer, 0);
     case 'taskList': return taskParagraphs(node, writer, 0);
@@ -233,7 +285,7 @@ function blocks(node: EditorNode, writer: Writer, header = false): string {
   }
 }
 
-function stylesXml(): string {
+function stylesXml(width: number): string {
   const docDefaults = element('w:docDefaults', {},
     element('w:rPrDefault', {}, element('w:rPr', {},
       `${element('w:rFonts', { 'w:ascii': DEFAULT_FONT, 'w:hAnsi': DEFAULT_FONT, 'w:eastAsia': DEFAULT_FONT, 'w:cs': 'Times New Roman' })}${element('w:sz', { 'w:val': pointsToHalfPoints(DEFAULT_FONT_POINTS) })}${element('w:szCs', { 'w:val': pointsToHalfPoints(DEFAULT_FONT_POINTS) })}`)) +
@@ -267,7 +319,19 @@ function stylesXml(): string {
   const tableGrid = element('w:style', { 'w:type': 'table', 'w:styleId': 'TableGrid' },
     `${element('w:name', { 'w:val': 'Table Grid' })}${element('w:pPr', {}, element('w:spacing', { 'w:after': 0 }))}`);
 
-  return `${XML_DECLARATION}<w:styles ${W}>${docDefaults}${normal}${headings}${listParagraph}${quote}${strong}${hyperlink}${tableGrid}</w:styles>`;
+  // Footnote text is 10 pt with no spacing; its reference is the superscript number in the body.
+  const footnoteText = element('w:style', { 'w:type': 'paragraph', 'w:styleId': 'FootnoteText' },
+    `${element('w:name', { 'w:val': 'footnote text' })}${element('w:basedOn', { 'w:val': 'Normal' })}` +
+    element('w:pPr', {}, `${element('w:spacing', { 'w:after': 0, 'w:line': 240, 'w:lineRule': 'auto' })}`) +
+    element('w:rPr', {}, `${element('w:sz', { 'w:val': pointsToHalfPoints(10) })}${element('w:szCs', { 'w:val': pointsToHalfPoints(10) })}`));
+  const footnoteReference = element('w:style', { 'w:type': 'character', 'w:styleId': 'FootnoteReference' },
+    `${element('w:name', { 'w:val': 'footnote reference' })}` + element('w:rPr', {}, element('w:vertAlign', { 'w:val': 'superscript' })));
+  // Header and footer carry Word's centre and right tab stops, so a centred or right-aligned line lands where Word puts it.
+  const running = (id: 'Header' | 'Footer', width: number) => element('w:style', { 'w:type': 'paragraph', 'w:styleId': id },
+    `${element('w:name', { 'w:val': id.toLowerCase() })}${element('w:basedOn', { 'w:val': 'Normal' })}` +
+    element('w:pPr', {}, `${element('w:tabs', {}, `${element('w:tab', { 'w:val': 'center', 'w:pos': Math.round(width / 2) })}${element('w:tab', { 'w:val': 'right', 'w:pos': width })}`)}${element('w:spacing', { 'w:after': 0, 'w:line': 240, 'w:lineRule': 'auto' })}`));
+
+  return `${XML_DECLARATION}<w:styles ${W}>${docDefaults}${normal}${headings}${listParagraph}${quote}${strong}${hyperlink}${tableGrid}${footnoteText}${footnoteReference}${running('Header', width)}${running('Footer', width)}</w:styles>`;
 }
 
 function numberingXml(lists: ListDefinition[]): string {
@@ -288,52 +352,133 @@ function numberingXml(lists: ListDefinition[]): string {
   return `${XML_DECLARATION}<w:numbering ${W}>${abstracts}${nums}</w:numbering>`;
 }
 
-function sectionProperties(size: PageSize, margins: PageMargins): string {
-  const page = PAGES[size];
+function sectionProperties(writer: Writer, refs: { header?: string; footer?: string }): string {
+  const page = pageGeometry(writer.size, writer.orientation);
+  const margins = writer.margins;
+  const columns = asColumns(writer.columns);
   return element('w:sectPr', {},
-    element('w:pgSz', { 'w:w': page.width, 'w:h': page.height }) +
-    element('w:pgMar', { 'w:top': margins.top, 'w:right': margins.right, 'w:bottom': margins.bottom, 'w:left': margins.left, 'w:header': 720, 'w:footer': 720, 'w:gutter': 0 }) +
-    element('w:cols', { 'w:space': 720 }) +
+    (refs.header ? element('w:headerReference', { 'w:type': 'default', 'r:id': refs.header }) : '') +
+    (refs.footer ? element('w:footerReference', { 'w:type': 'default', 'r:id': refs.footer }) : '') +
+    element('w:pgSz', { 'w:w': page.width, 'w:h': page.height, 'w:orient': writer.orientation === 'landscape' ? 'landscape' : undefined }) +
+    element('w:pgMar', { 'w:top': margins.top, 'w:right': margins.right, 'w:bottom': margins.bottom, 'w:left': margins.left, 'w:header': HEADER_DISTANCE_TWIPS, 'w:footer': FOOTER_DISTANCE_TWIPS, 'w:gutter': 0 }) +
+    (columns > 1
+      ? element('w:cols', { 'w:num': columns, 'w:space': COLUMN_GAP_TWIPS, 'w:equalWidth': 1 })
+      : element('w:cols', { 'w:space': 720 })) +
     element('w:docGrid', { 'w:linePitch': 360 }));
 }
 
-const CONTENT_TYPES = `${XML_DECLARATION}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`;
+// A field whose cached result is the number Word will recompute, so the file reads correctly before it is opened.
+const field = (instruction: string, cached: string) =>
+  `<w:r>${element('w:fldChar', { 'w:fldCharType': 'begin' })}</w:r>` +
+  `<w:r><w:instrText xml:space="preserve"> ${escapeXml(instruction)} </w:instrText></w:r>` +
+  `<w:r>${element('w:fldChar', { 'w:fldCharType': 'separate' })}</w:r>` +
+  `<w:r><w:t>${escapeXml(cached)}</w:t></w:r>` +
+  `<w:r>${element('w:fldChar', { 'w:fldCharType': 'end' })}</w:r>`;
+
+function runningXml(kind: 'hdr' | 'ftr', running: RunningText): string {
+  const style = kind === 'hdr' ? 'Header' : 'Footer';
+  const body = runningParts(running.text).map((part) => part.kind === 'text'
+    ? `<w:r>${textElements(part.value)}</w:r>`
+    : field(part.field, '1')).join('');
+  const properties = `<w:pPr>${element('w:pStyle', { 'w:val': style })}${running.align === 'left' ? '' : element('w:jc', { 'w:val': running.align })}</w:pPr>`;
+  return `${XML_DECLARATION}<w:${kind} ${W} ${R}><w:p>${properties}${body}</w:p></w:${kind}>`;
+}
+
+function footnotesXml(notes: string[]): string {
+  const spacing = `<w:pPr>${element('w:pStyle', { 'w:val': 'FootnoteText' })}</w:pPr>`;
+  // Word expects the separator pair before the real notes; without them it repairs the file on open.
+  const separator = (id: number, type: string, mark: string) =>
+    element('w:footnote', { 'w:type': type, 'w:id': id }, `<w:p><w:pPr>${element('w:spacing', { 'w:after': 0, 'w:line': 240, 'w:lineRule': 'auto' })}</w:pPr><w:r>${element(mark)}</w:r></w:p>`);
+  const body = notes.map((text, index) => element('w:footnote', { 'w:id': index + 1 },
+    `<w:p>${spacing}<w:r>${element('w:rPr', {}, element('w:rStyle', { 'w:val': 'FootnoteReference' }))}${element('w:footnoteRef')}</w:r>` +
+    `<w:r>${textElements(` ${text}`)}</w:r></w:p>`)).join('');
+  return `${XML_DECLARATION}<w:footnotes ${W} ${R}>${separator(-1, 'separator', 'w:separator')}${separator(0, 'continuationSeparator', 'w:continuationSeparator')}${body}</w:footnotes>`;
+}
+
+const OVERRIDE: Record<string, string> = {
+  'word/document.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml',
+  'word/styles.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml',
+  'word/numbering.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml',
+  'word/footnotes.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml',
+  'word/header1.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml',
+  'word/footer1.xml': 'application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml',
+  'docProps/core.xml': 'application/vnd.openxmlformats-package.core-properties+xml',
+};
+
+const contentTypes = (parts: string[]) =>
+  `${XML_DECLARATION}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+  `<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>` +
+  parts.filter((part) => OVERRIDE[part]).map((part) => `<Override PartName="/${part}" ContentType="${OVERRIDE[part]}"/>`).join('') +
+  `</Types>`;
 
 const PACKAGE_RELS = `${XML_DECLARATION}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`;
 
 const coreXml = (title: string, modified: string) =>
   `${XML_DECLARATION}<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${escapeXml(title)}</dc:title><dcterms:modified xsi:type="dcterms:W3CDTF">${modified}</dcterms:modified></cp:coreProperties>`;
 
-function documentRels(relationships: Relationship[]): string {
+const REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+
+function documentRels(relationships: Relationship[], parts: Array<{ id: string; type: string; target: string }>): string {
+  const fixed = parts.map((part) => `<Relationship Id="${part.id}" Type="${REL_TYPE}/${part.type}" Target="${part.target}"/>`).join('');
   const links = relationships.map((relationship) =>
-    `<Relationship Id="${relationship.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXml(relationship.target)}" TargetMode="External"/>`).join('');
-  return `${XML_DECLARATION}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${links}</Relationships>`;
+    `<Relationship Id="${relationship.id}" Type="${REL_TYPE}/hyperlink" Target="${escapeXml(relationship.target)}" TargetMode="External"/>`).join('');
+  return `${XML_DECLARATION}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${fixed}${links}</Relationships>`;
 }
 
-export type ExportOptions = { title?: string; language?: string; pageSize?: PageSize; margins?: PageMargins | null; modified?: Date };
+export type ExportOptions = {
+  title?: string; language?: string; pageSize?: PageSize; margins?: PageMargins | null; modified?: Date;
+  orientation?: Orientation; columns?: number; header?: RunningText | null; footer?: RunningText | null;
+};
+
+export type DocumentXmlOptions = { orientation?: Orientation; columns?: number; header?: RunningText | null; footer?: RunningText | null };
 
 // The body XML plus what it references; exported separately so tests can read it directly.
-export function documentXml(value: unknown, size: PageSize, margins: PageMargins = PAGES[size].margin): { xml: string; relationships: Relationship[]; numbering: string } {
+export function documentXml(value: unknown, size: PageSize, margins?: PageMargins | null, options: DocumentXmlOptions = {}):
+  { xml: string; relationships: Relationship[]; numbering: string; footnotes: string[] } {
   const document: EditorDocument = EditorDocumentSchema.parse(value);
-  const writer: Writer = { relationships: [], lists: [], size, margins };
+  const orientation = asOrientation(options.orientation);
+  const writer: Writer = {
+    relationships: [], lists: [], size, margins: margins ?? pageGeometry(size, orientation).margin,
+    orientation, columns: asColumns(options.columns), footnotes: [], bookmarks: 0,
+  };
   const body = document.content.map((node) => blocks(node, writer)).join('') || '<w:p/>';
-  return { xml: `${XML_DECLARATION}<w:document ${W} ${R}><w:body>${body}${sectionProperties(size, margins)}</w:body></w:document>`, relationships: writer.relationships, numbering: numberingXml(writer.lists) };
+  const refs = { header: options.header ? 'rId3' : undefined, footer: options.footer ? 'rId4' : undefined };
+  return {
+    xml: `${XML_DECLARATION}<w:document ${W} ${R}><w:body>${body}${sectionProperties(writer, refs)}</w:body></w:document>`,
+    relationships: writer.relationships, numbering: numberingXml(writer.lists), footnotes: writer.footnotes,
+  };
 }
 
 export async function editorDocumentToDocx(value: unknown, options: ExportOptions = {}): Promise<Uint8Array> {
   const size = options.pageSize ?? defaultPageSize(options.language ?? 'id');
-  const { xml, relationships, numbering } = documentXml(value, size, options.margins ?? PAGES[size].margin);
+  const orientation = asOrientation(options.orientation);
+  const columns = asColumns(options.columns);
+  const margins = options.margins ?? pageGeometry(size, orientation).margin;
+  const header = options.header ?? null;
+  const footer = options.footer ?? null;
+  const { xml, relationships, numbering, footnotes } = documentXml(value, size, margins, { orientation, columns, header, footer });
   const encoder = new TextEncoder();
   const modified = (options.modified ?? new Date()).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  const parts: Array<{ id: string; type: string; target: string }> = [
+    { id: 'rId1', type: 'styles', target: 'styles.xml' },
+    { id: 'rId2', type: 'numbering', target: 'numbering.xml' },
+  ];
+  if (header) parts.push({ id: 'rId3', type: 'header', target: 'header1.xml' });
+  if (footer) parts.push({ id: 'rId4', type: 'footer', target: 'footer1.xml' });
+  if (footnotes.length) parts.push({ id: 'rId5', type: 'footnotes', target: 'footnotes.xml' });
+
   const entries: ZipEntry[] = [
-    { name: '[Content_Types].xml', data: encoder.encode(CONTENT_TYPES) },
     { name: '_rels/.rels', data: encoder.encode(PACKAGE_RELS) },
     { name: 'docProps/core.xml', data: encoder.encode(coreXml(options.title ?? 'Document', modified)) },
     { name: 'word/document.xml', data: encoder.encode(xml) },
-    { name: 'word/styles.xml', data: encoder.encode(stylesXml()) },
+    { name: 'word/styles.xml', data: encoder.encode(stylesXml(columnWidth(size, margins, orientation, columns))) },
     { name: 'word/numbering.xml', data: encoder.encode(numbering) },
-    { name: 'word/_rels/document.xml.rels', data: encoder.encode(documentRels(relationships)) },
+    { name: 'word/_rels/document.xml.rels', data: encoder.encode(documentRels(relationships, parts)) },
   ];
+  if (header) entries.push({ name: 'word/header1.xml', data: encoder.encode(runningXml('hdr', header)) });
+  if (footer) entries.push({ name: 'word/footer1.xml', data: encoder.encode(runningXml('ftr', footer)) });
+  if (footnotes.length) entries.push({ name: 'word/footnotes.xml', data: encoder.encode(footnotesXml(footnotes)) });
+  entries.unshift({ name: '[Content_Types].xml', data: encoder.encode(contentTypes(entries.map((entry) => entry.name))) });
   return zip(entries);
 }
 

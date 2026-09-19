@@ -7,10 +7,14 @@ import Highlight from '@tiptap/extension-highlight';
 import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import { TaskItem, TaskList } from '@tiptap/extension-list';
+import { HeadingAnchor } from './anchors';
 import { CellStyle } from './cell-style';
+import { Footnote } from './footnote';
 import { ListStyle } from './list-style';
 import { PageBreak } from './page-break';
 import { ParagraphFormat } from './paragraph-format';
+import { TableStyle } from './table-style';
+import { TableOfContents } from './toc';
 
 // Every extension that shapes the document schema; the editor, the server and the DOCX mapper share this one list.
 export const documentExtensions: AnyExtension[] = [
@@ -20,7 +24,7 @@ export const documentExtensions: AnyExtension[] = [
   TextStyle, FontFamily, FontSize, Color, BackgroundColor,
   Highlight.configure({ multicolor: true }), Subscript, Superscript,
   TaskList, TaskItem.configure({ nested: true }),
-  ParagraphFormat, ListStyle, CellStyle, PageBreak,
+  ParagraphFormat, ListStyle, CellStyle, TableStyle, PageBreak, Footnote, HeadingAnchor, TableOfContents,
 ];
 
 export const documentSchema = getSchema(documentExtensions);

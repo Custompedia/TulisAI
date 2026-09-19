@@ -1,17 +1,24 @@
 import { EditorDocumentSchema } from '../contracts';
 import { documentText, type EditorDocument, type EditorNode } from '../editor/document';
 import { documentSchema } from '../editor/extensions';
+import { safeAnchor } from '../editor/extensions/anchors';
+import { MAX_FOOTNOTE_CHARS } from '../editor/extensions/footnote';
+import { formatTabStops } from '../editor/extensions/paragraph-format';
 import { unzip, ZipError, type ZipLimits } from './zip';
-import { DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontLineFactor, HEADING_FONT, HEADINGS, LINE_HEIGHT, PAGES, parseMargins, formatMargins, SPACE_AFTER_TWIPS, type PageMargins, type PageSize } from './office-defaults';
+import { asRunningText, PAGE_TOKEN, PAGES_TOKEN, type RunningText } from './running';
+import { asColumns, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontLineFactor, HEADING_FONT, HEADINGS, LINE_HEIGHT, MAX_COLUMNS, PAGES, pageGeometry, parseMargins, formatMargins, SPACE_AFTER_TWIPS, type Orientation, type PageMargins, type PageSize } from './office-defaults';
 import { advance, levelOf, listShape, parseNumbering, type ListShape, type Numbering } from './numbering';
-import { inlinesFrom, marksFor, PAGE_BREAK, pushText, type Baseline, type NoteKind, type RunContext } from './runs';
+import { inlinesFrom, marksFor, PAGE_BREAK, pushText, type Baseline, type ImportWarning, type NoteKind, type RunContext } from './runs';
 import { applyParagraph, applyRun, defaultParagraph, defaultRun, headingLevel, paragraphStyleProps, parseStyles, parseTheme, type ParaProps, type Styles } from './styles';
 import { tableFrom, type CellBase } from './tables';
 import { attr, childrenNamed, findDeep, firstNamed, parseXml, type XmlNode } from './xml';
 
 export class DocxError extends Error {}
 
-export type DocxImport = { content: EditorDocument; title: string; pageSize: PageSize; pageMargins: PageMargins };
+export type DocxImport = {
+  content: EditorDocument; title: string; pageSize: PageSize; pageMargins: PageMargins;
+  orientation: Orientation; columns: number; header: RunningText | null; footer: RunningText | null; warnings: ImportWarning[];
+};
 export type ImportOptions = { language?: string; limits?: ZipLimits };
 
 export const MAX_IMPORT_CHARACTERS = 200_000;
@@ -20,11 +27,11 @@ const DECODER = new TextDecoder();
 // A DOCX is a ZIP whose first bytes are the local file header; the MIME type a browser reports is not evidence.
 export const looksLikeDocx = (bytes: Uint8Array) => bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
 
-type Context = RunContext & { numbering: Numbering };
+type Context = RunContext & { numbering: Numbering; contentWidth: number };
 type ListInfo = { ilvl: number; shape: Exclude<ListShape, { kind: 'literal' }>; value: number | null };
 type ParaRecord = {
   kind: 'para'; styleId: string; para: ParaProps; before: number; after: number; role: 'paragraph' | 'heading' | 'quote';
-  level: number; top: boolean; firstFont?: string; content: EditorNode[]; list?: ListInfo;
+  level: number; top: boolean; firstFont?: string; content: EditorNode[]; list?: ListInfo; anchor?: string; toc?: boolean;
 };
 type Entry = ParaRecord | { kind: 'block'; node: EditorNode };
 
@@ -41,7 +48,10 @@ const QUOTE_STYLE = /^(?:Quote|IntenseQuote|Intense Quote)$/iu;
 const pt = (twips: number) => `${Number((twips / 20).toFixed(2))}pt`;
 const ALIGN: Partial<Record<string, string>> = { both: 'justify', distribute: 'justify', lowKashida: 'justify', mediumKashida: 'justify', highKashida: 'justify', thaiDistribute: 'justify', center: 'center', right: 'right', end: 'right' };
 
-function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: CellBase): Entry[] {
+// A bookmark Word wrote just before a heading belongs to that heading, not to the body.
+const bookmarkNames = (node: XmlNode): string[] => childrenNamed(node, 'w:bookmarkStart').map((mark) => safeAnchor(attr(mark, 'w:name'))).filter((name): name is string => !!name);
+
+function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: CellBase, pending?: string): Entry[] {
   const styles = context.styles;
   const pPr = firstNamed(node, 'w:pPr');
   const styleId = attr(pPr && firstNamed(pPr, 'w:pStyle'), 'w:val') ?? styles.defaultParagraph ?? '';
@@ -75,7 +85,13 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
     if (match) list = { ilvl: match[2] ? Number(match[2]) - 1 : 0, shape: /bullet/iu.test(match[1]!) ? { kind: 'bullet', listStyle: 'disc' } : { kind: 'ordered', type: '1' }, value: null };
   }
 
+  // A TOC field spans several paragraphs; the field stack tells us which side of it this paragraph sits on.
+  const inToc = () => context.fields.some((field) => /^\s*TOC\b/iu.test(field.instr));
+  const tocBefore = inToc();
   const inlines = inlinesFrom(node, run, baseline, context);
+  const toc = tocBefore || inToc();
+  // Word bookmarks a heading so its table of contents can link to it; the name becomes the heading's id.
+  const anchor = bookmarkNames(node)[0] ?? pending;
   const entries: Entry[] = [];
   if (para.pageBreakBefore) entries.push({ kind: 'block', node: { type: 'pageBreak' } });
 
@@ -91,7 +107,7 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
     if (!segment.length && !prefix.length && borders && firstNamed(borders, 'w:bottom')) { entries.push({ kind: 'block', node: { type: 'horizontalRule' } }); return; }
     const content: EditorNode[] = [];
     for (const inline of first ? [...prefix, ...segment] : segment) if (inline.type === 'text') pushText(content, inline.text ?? '', inline.marks ?? []); else content.push(inline);
-    entries.push({ kind: 'para', styleId, para, before: para.before ?? 0, after: para.after ?? 0, role, level: heading ?? 0, top, firstFont: inlines.firstFont ?? run.font, content, ...(first && list ? { list } : {}) });
+    entries.push({ kind: 'para', styleId, para, before: para.before ?? 0, after: para.after ?? 0, role, level: heading ?? 0, top, firstFont: inlines.firstFont ?? run.font, content, ...(first && list ? { list } : {}), ...(anchor ? { anchor } : {}), ...(toc ? { toc: true } : {}) });
     first = false;
   });
 
@@ -106,12 +122,14 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
 
 function entriesFrom(container: XmlNode, context: Context, top: boolean, cell?: CellBase): Entry[] {
   const entries: Entry[] = [];
+  let pending: string | undefined;
   for (const child of container.children) {
     switch (child.name) {
-      case 'w:p': entries.push(...paragraphEntries(child, context, top, cell)); break;
+      case 'w:bookmarkStart': { const name = safeAnchor(attr(child, 'w:name')); if (name) pending = name; break; }
+      case 'w:p': entries.push(...paragraphEntries(child, context, top, cell, pending)); pending = undefined; break;
       case 'w:tbl': {
         const base = { run: cell?.run ?? defaultRun(context.styles), para: cell?.para ?? defaultParagraph(context.styles) };
-        const table = tableFrom(child, context.styles, base, (tc, cellBase) => assemble(entriesFrom(tc, context, false, cellBase)));
+        const table = tableFrom(child, context.styles, base, (tc, cellBase) => assemble(entriesFrom(tc, context, false, cellBase)), context.contentWidth);
         if (table) entries.push({ kind: 'block', node: table });
         break;
       }
@@ -156,7 +174,9 @@ function paragraphNode(record: ParaRecord): EditorNode {
     if (para.right) attrs.indentRight = pt(para.right);
     if (!record.list && para.firstLine) attrs.indentFirstLine = pt(para.firstLine);
   }
-  if (record.role === 'heading') attrs.level = record.level;
+  if (record.role === 'heading') { attrs.level = record.level; if (record.anchor) attrs.id = record.anchor; }
+  const tabs = formatTabStops((para.tabs ?? []).map((stop) => ({ position: stop.pos / 20, align: stop.val as 'left' })));
+  if (tabs) attrs.tabStops = tabs;
   const node: EditorNode = { type: record.role === 'heading' ? 'heading' : 'paragraph', ...(Object.keys(attrs).length ? { attrs } : {}), ...(record.content.length ? { content: record.content } : {}) };
   return record.role === 'quote' ? { type: 'blockquote', content: [node] } : node;
 }
@@ -168,11 +188,26 @@ function assemble(records: Entry[]): EditorNode[] {
   type Open = { ilvl: number; key: string; node: EditorNode; next: number | null };
   let stack: Open[] = [];
   let lastItem: EditorNode | null = null;
+  // Consecutive paragraphs that came out of one TOC field become the notebook's own table of contents block.
+  let toc: EditorNode | null = null;
+  // The paragraphs that only carried the field's begin and end markers come out empty and are dropped.
+  const closeToc = () => {
+    const entries = (toc?.content ?? []).filter((entry) => textOf(entry).trim());
+    if (entries.length) output.push({ type: 'tableOfContents', content: entries });
+    toc = null;
+  };
   // Word's space after the last item is the gap the canvas already puts under every list.
   const closeList = () => { if (lastItem?.attrs?.spaceAfter === pt(SPACE_AFTER_TWIPS)) delete lastItem.attrs.spaceAfter; if (lastItem?.attrs && !Object.keys(lastItem.attrs).length) delete lastItem.attrs; lastItem = null; stack = []; };
   for (const record of records) {
-    if (record.kind === 'block') { closeList(); output.push(record.node); continue; }
+    if (record.kind === 'block') { closeList(); closeToc(); output.push(record.node); continue; }
     const node = paragraphNode(record);
+    if (record.toc && record.top) {
+      closeList();
+      if (!toc) toc = { type: 'tableOfContents', content: [] };
+      toc.content!.push(node.type === 'paragraph' ? node : { type: 'paragraph', ...(node.content ? { content: node.content } : {}) });
+      continue;
+    }
+    closeToc();
     const list = record.list;
     if (!list) { closeList(); output.push(node); continue; }
     const key = JSON.stringify(list.shape);
@@ -194,6 +229,7 @@ function assemble(records: Entry[]): EditorNode[] {
     top.next = list.value === null ? null : list.value + 1;
   }
   closeList();
+  closeToc();
   return output;
 }
 
@@ -208,28 +244,84 @@ function tidyBreaks(blocks: EditorNode[]): EditorNode[] {
   return output;
 }
 
-const NOTES_TITLE = { id: 'Catatan kaki', en: 'Notes' };
+// A note body as plain text: the marker run, tabs and breaks all collapse into single spaces.
+function plainText(node: XmlNode): string {
+  let out = '';
+  const walk = (current: XmlNode) => {
+    for (const child of current.children) {
+      if (child.name === 'w:t') out += child.text;
+      else if (child.name === 'w:tab' || child.name === 'w:br' || child.name === 'w:cr' || child.name === 'w:p') { out += ' '; walk(child); }
+      else if (!child.name.endsWith('Pr')) walk(child);
+    }
+  };
+  walk(node);
+  return out.replace(/\s+/gu, ' ').trim();
+}
 
-function notesSection(files: Map<string, Uint8Array>, context: Context, parts: Record<NoteKind, string>, language: string): EditorNode[] {
-  if (!context.notes.length) return [];
-  const bodies = new Map<string, XmlNode>();
+// Footnote and endnote bodies, keyed by kind and id, read before the body so every marker can carry its text.
+function noteTexts(files: Map<string, Uint8Array>, parts: Record<NoteKind, string>): Map<string, string> {
+  const texts = new Map<string, string>();
   for (const kind of ['footnote', 'endnote'] as const) {
     const root = readXml(files, parts[kind]);
-    if (root) for (const note of childrenNamed(firstNamed(root, `w:${kind}s`) ?? root, `w:${kind}`)) { const id = attr(note, 'w:id'); if (id) bodies.set(`${kind}:${id}`, note); }
+    if (!root) continue;
+    for (const note of childrenNamed(firstNamed(root, `w:${kind}s`) ?? root, `w:${kind}`)) {
+      const id = attr(note, 'w:id');
+      // The separator notes carry a w:type and are Word's own furniture, not content.
+      if (!id || attr(note, 'w:type')) continue;
+      const text = plainText(note).slice(0, MAX_FOOTNOTE_CHARS);
+      if (text) texts.set(`${kind}:${id}`, text);
+    }
   }
-  const records: Entry[] = [];
-  for (let index = 0; index < context.notes.length && index < 2000; index++) {
-    const note = context.notes[index]!;
-    const body = bodies.get(`${note.kind}:${note.id}`);
-    if (!body) continue;
-    context.currentNote = { kind: note.kind, number: note.number };
-    records.push(...entriesFrom(body, context, true));
-  }
-  context.currentNote = undefined;
-  const blocks = assemble(records);
-  if (!blocks.length) return [];
-  const title: EditorNode = { type: 'paragraph', content: [{ type: 'text', text: language === 'en' ? NOTES_TITLE.en : NOTES_TITLE.id, marks: [{ type: 'bold' }] }] };
-  return [{ type: 'horizontalRule' }, title, ...blocks];
+  return texts;
+}
+
+const fieldToken = (instruction: string): string | null =>
+  /\bNUMPAGES\b/iu.test(instruction) ? PAGES_TOKEN : /\bPAGE\b/iu.test(instruction) ? PAGE_TOKEN : null;
+
+// One header or footer paragraph as text, with Word's PAGE and NUMPAGES fields standing as tokens.
+function runningLine(paragraph: XmlNode): string {
+  let out = '';
+  const stack: Array<{ instr: string; phase: 'instr' | 'result'; replaced: boolean }> = [];
+  const walk = (node: XmlNode) => {
+    for (const child of node.children) {
+      if (child.name === 'w:fldSimple') { const token = fieldToken(attr(child, 'w:instr') ?? ''); if (token) out += token; else walk(child); continue; }
+      if (child.name === 'w:r') {
+        for (const piece of child.children) {
+          if (piece.name === 'w:fldChar') {
+            const type = attr(piece, 'w:fldCharType');
+            if (type === 'begin') stack.push({ instr: '', phase: 'instr', replaced: false });
+            else if (type === 'separate') {
+              const field = stack[stack.length - 1];
+              if (field) { field.phase = 'result'; const token = fieldToken(field.instr); if (token) { out += token; field.replaced = true; } }
+            } else if (type === 'end') stack.pop();
+            continue;
+          }
+          if (piece.name === 'w:instrText') { const field = stack[stack.length - 1]; if (field && field.instr.length < 500) field.instr += piece.text; continue; }
+          if (stack.some((field) => field.phase === 'instr' || field.replaced)) continue;
+          if (piece.name === 'w:t') out += piece.text;
+          else if (piece.name === 'w:tab') out += ' ';
+        }
+        continue;
+      }
+      if (['w:hyperlink', 'w:sdt', 'w:sdtContent', 'w:ins', 'w:smartTag', 'w:customXml'].includes(child.name)) walk(child);
+    }
+  };
+  walk(paragraph);
+  return out;
+}
+
+// The first non-empty line of a header or footer part; anything richer is reported rather than half-imported.
+function runningFrom(root: XmlNode | null, warn: (warning: ImportWarning) => void): RunningText | null {
+  if (!root) return null;
+  const container = firstNamed(root, 'w:hdr') ?? firstNamed(root, 'w:ftr') ?? root;
+  const paragraphs = childrenNamed(container, 'w:p');
+  const lines = paragraphs.map((paragraph) => ({ paragraph, text: runningLine(paragraph) })).filter((line) => line.text.trim());
+  if (childrenNamed(container, 'w:tbl').length || lines.length > 1 || findDeep(container, 'w:drawing') || findDeep(container, 'w:pict')) warn('runningRich');
+  const first = lines[0];
+  if (!first) return null;
+  const justification = attr(firstNamed(firstNamed(first.paragraph, 'w:pPr') ?? first.paragraph, 'w:jc'), 'w:val');
+  const align = justification === 'center' ? 'center' : justification === 'right' || justification === 'end' ? 'right' : 'left';
+  return asRunningText(first.text, align);
 }
 
 function readXml(files: Map<string, Uint8Array>, path: string | undefined): XmlNode | null {
@@ -258,7 +350,7 @@ function resolvePart(base: string, target: string): string {
   return parts.join('/');
 }
 
-function pageFrom(body: XmlNode, language: string): { pageSize: PageSize; pageMargins: PageMargins } {
+function pageFrom(body: XmlNode, language: string): { pageSize: PageSize; pageMargins: PageMargins; orientation: Orientation; columns: number; section: XmlNode | undefined } {
   const section = childrenNamed(body, 'w:sectPr').pop() ?? findDeep(body, 'w:sectPr');
   const size = section && firstNamed(section, 'w:pgSz');
   const width = Number(attr(size, 'w:w') ?? '0'); const height = Number(attr(size, 'w:h') ?? '0');
@@ -268,11 +360,15 @@ function pageFrom(body: XmlNode, language: string): { pageSize: PageSize; pageMa
     const distance = (page: PageSize) => Math.abs(PAGES[page].width - short) + Math.abs(PAGES[page].height - long);
     pageSize = distance('letter') < distance('a4') ? 'letter' : 'a4';
   }
+  // A sheet wider than it is tall is landscape, whether or not the writer stated w:orient.
+  const orientation: Orientation = attr(size, 'w:orient') === 'landscape' || (width > 0 && height > 0 && width > height) ? 'landscape' : 'portrait';
   const margin = section && firstNamed(section, 'w:pgMar');
   const twips = (name: string) => Math.abs(Math.round(Number(attr(margin, name) ?? 'NaN')));
   const read = margin ? { top: twips('w:top'), right: twips('w:right'), bottom: twips('w:bottom'), left: twips('w:left') + (twips('w:gutter') || 0) } : null;
-  const valid = read && Object.values(read).every(Number.isFinite) ? parseMargins(formatMargins(read), pageSize) : null;
-  return { pageSize, pageMargins: valid ?? { ...PAGES[pageSize].margin } };
+  const valid = read && Object.values(read).every(Number.isFinite) ? parseMargins(formatMargins(read), pageSize, orientation) : null;
+  const columnCount = Number(attr(section && firstNamed(section, 'w:cols'), 'w:num') ?? '1');
+  const columns = asColumns(Math.min(MAX_COLUMNS, Number.isFinite(columnCount) ? columnCount : 1));
+  return { pageSize, pageMargins: valid ?? { ...pageGeometry(pageSize, orientation).margin }, orientation, columns, section };
 }
 
 const titleFrom = (files: Map<string, Uint8Array>): string => {
@@ -308,16 +404,31 @@ export async function docxToEditorDocument(bytes: Uint8Array, options: ImportOpt
     const part = (type: string, fallback: string) => { const target = rels.byType.get(type); return target ? resolvePart(documentPath, target) : fallback; };
     const theme = parseTheme(readXml(files, part('theme', 'word/theme/theme1.xml')));
     const styles: Styles = parseStyles(readXml(files, part('styles', 'word/styles.xml')), theme);
+    const language = options.language ?? 'id';
+    const page = pageFrom(body, language);
+
+    const found = new Set<ImportWarning>();
+    const warn = (warning: ImportWarning) => { found.add(warning); };
     const context: Context = {
       styles, numbering: parseNumbering(readXml(files, part('numbering', 'word/numbering.xml')), styles),
-      relationships: rels.byId, fields: [], notes: [], noteCounts: { footnote: 0, endnote: 0 }, textBoxes: [],
+      relationships: rels.byId, fields: [], textBoxes: [], warn,
+      noteTexts: noteTexts(files, { footnote: part('footnotes', 'word/footnotes.xml'), endnote: part('endnotes', 'word/endnotes.xml') }),
+      contentWidth: contentWidth(page.pageSize, page.pageMargins, page.orientation),
     };
-    const language = options.language ?? 'id';
+    if (files.has('word/comments.xml')) warn('comments');
 
-    const blocks = assemble(entriesFrom(body, context, true));
+    // A header or footer is read from the section's default reference, which is the one Word shows on every page.
+    const reference = (name: 'w:headerReference' | 'w:footerReference') => {
+      const nodes = page.section ? childrenNamed(page.section, name) : [];
+      const chosen = nodes.find((node) => attr(node, 'w:type') === 'default') ?? nodes[0];
+      const target = chosen && rels.byId.get(attr(chosen, 'r:id') ?? '');
+      return target ? readXml(files, resolvePart(documentPath, target)) : null;
+    };
+    const header = runningFrom(reference('w:headerReference'), warn);
+    const footer = runningFrom(reference('w:footerReference'), warn);
+
+    const all = tidyBreaks(assemble(entriesFrom(body, context, true)));
     context.fields.length = 0;
-    const notes = notesSection(files, context, { footnote: part('footnotes', 'word/footnotes.xml'), endnote: part('endnotes', 'word/endnotes.xml') }, language);
-    const all = tidyBreaks([...blocks, ...notes]);
     const tooLong = (characters: number) => new DocxError(`This document has ${characters.toLocaleString('en-US')} characters of text; the limit is ${MAX_IMPORT_CHARACTERS.toLocaleString('en-US')}. Split it into smaller files first.`);
     const characters = all.reduce((sum, node) => sum + textOf(node).length, 0);
     if (!characters) throw new DocxError('This document has no readable text.');
@@ -328,10 +439,13 @@ export async function docxToEditorDocument(bytes: Uint8Array, options: ImportOpt
     // The saved-document limit counts block and cell separators too, so an import it would refuse is refused here.
     const stored = documentText(content).length;
     if (stored > MAX_IMPORT_CHARACTERS) throw tooLong(stored);
-    return { content, title: titleFrom(files) || titleFromContent(content.content) || 'Untitled document', ...pageFrom(body, language) };
+    return {
+      content, title: titleFrom(files) || titleFromContent(content.content) || 'Untitled document',
+      pageSize: page.pageSize, pageMargins: page.pageMargins, orientation: page.orientation, columns: page.columns,
+      header, footer, warnings: [...found],
+    };
   } catch (error) {
     if (error instanceof DocxError) throw error;
     throw new DocxError('This document is too large or too complex to import. Split it into smaller files and try again.');
   }
 }
-

@@ -12,6 +12,7 @@ import { PALETTE } from './ColorPicker';
 import { normalizeColor } from './formatting';
 import { ACTIVE, CONTROL, IDLE, keepSelection, PANEL, Popover } from './Popover';
 import { cellAlign, cellBackground, distributeColumns, GRID_COLS, GRID_ROWS, hasHeaderColumn, hasHeaderRow, type CellAlign } from './table';
+import { TableBorders } from './TableBorders';
 
 type Item = { key: string; label: string; icon: LucideIcon; run: () => void; disabled?: boolean; checked?: boolean; danger?: boolean };
 
@@ -95,6 +96,8 @@ export function TableActions({ editor, close }: { editor: Editor; close: () => v
           ))}
         </div>
       </div>
+      <Separator />
+      <TableBorders editor={editor} close={close} />
       <Separator />
       {removals.map((item) => <ItemButton key={item.key} item={item} close={close} />)}
     </div>
