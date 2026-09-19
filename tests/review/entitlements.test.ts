@@ -10,6 +10,8 @@ vi.mock('../../src/server/runtime', () => ({
 }));
 
 import { autosaveDocument, createDocument, getDocument } from '../../src/server/documents/service';
+import { createStyle, deleteStyle, listStyles } from '../../src/server/writing/styles';
+import { defaults } from '../../src/lib/writing/settings';
 import { entitlement, usageSummary } from '../../src/server/usage/quota';
 import { assertFeature, requireFeature } from '../../src/server/usage/features';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
@@ -45,7 +47,7 @@ beforeEach(() => {
       get: async (key: string) => { const value = objects.get(key); return value === undefined ? null : { size: value.length, text: async () => value, arrayBuffer: async () => new TextEncoder().encode(value).buffer }; },
       delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key); },
     },
-    AI_MONTHLY_REQUEST_LIMIT: '100', AI_MONTHLY_CHARACTER_LIMIT: '100000',
+    AI_MONTHLY_REQUEST_LIMIT: '100', AI_FREE_CHARACTER_ALLOWANCE: '100000',
   };
 });
 afterEach(() => { db.close(); });
@@ -61,14 +63,34 @@ describe('review: entitlements are resolved from the account, not the client', (
     for (const feature of FEATURES) expect(() => assertFeature(rights, feature)).toThrowError(/paid plan/);
   });
 
-  it('opens the paid features on every paid tier and names the cheapest one for the upsell', async () => {
+  it('opens each feature at the tier that sells it and names that tier for the upsell', async () => {
+    const expected: Record<string, readonly string[]> = {
+      plus: ['saved_styles', 'purchase_topup'],
+      pro: ['saved_styles', 'purchase_topup', 'advanced_notebook', 'docx_import', 'docx_export'],
+      max: [...FEATURES],
+    };
     for (const tier of TIERS.filter((value) => value !== 'free')) {
       account(`user-${tier}`, tier);
       const rights = await entitlement(`user-${tier}`);
       expect(rights.tier).toBe(tier);
-      for (const feature of FEATURES) expect(() => assertFeature(rights, feature)).not.toThrow();
+      expect([...rights.features].sort()).toEqual([...expected[tier]].sort());
+      for (const feature of FEATURES) {
+        const allowed = expected[tier].includes(feature);
+        if (allowed) expect(() => assertFeature(rights, feature)).not.toThrow();
+        else expect(() => assertFeature(rights, feature)).toThrowError(/paid plan/);
+      }
     }
-    for (const feature of FEATURES) expect(requiredTierFor(feature)).toBe('plus');
+    expect(requiredTierFor('saved_styles')).toBe('plus');
+    expect(requiredTierFor('docx_import')).toBe('pro');
+    expect(requiredTierFor('freeform_prompt')).toBe('max');
+  });
+
+  it('keeps a legacy team row on the rights it was sold, not on free', async () => {
+    account('legacy', 'team');
+    const rights = await entitlement('legacy');
+    expect(rights.tier).toBe('pro');
+    expect(() => assertFeature(rights, 'docx_export')).not.toThrow();
+    expect(() => assertFeature(rights, 'freeform_prompt')).toThrowError(/paid plan/);
   });
 
   it('treats an admin as unlimited with every feature AND the top-tier run limit', async () => {
@@ -80,15 +102,41 @@ describe('review: entitlements are resolved from the account, not the client', (
     expect([...rights.features].sort()).toEqual([...FEATURES].sort());
     expect(rights.limits.runLimit).toBe(MAX_RUN_LIMIT);
     expect(rights.limits.runLimit).toBe(PLAN_LIMITS.pro.runLimit);
-    expect(rights.characterLimit).toBeGreaterThan(PLAN_LIMITS.team.monthlyCharacters);
+    expect(rights.characterLimit).toBeGreaterThan(PLAN_LIMITS.max.includedCharacters);
     const summary = await usageSummary('boss');
     expect(summary.limits.runLimit).toBe(MAX_RUN_LIMIT);
   });
 
   it('reports FEATURE_LOCKED with the feature and the tier a client can act on', async () => {
     await expect(requireFeature('nobody', 'docx_export')).rejects.toMatchObject({
-      code: 'FEATURE_LOCKED', status: 403, details: { feature: 'docx_export', requiredTier: 'plus' },
+      code: 'FEATURE_LOCKED', status: 403, details: { feature: 'docx_export', requiredTier: 'pro' },
     });
+  });
+
+  it('grants the free allowance once per account, not once per month', async () => {
+    const spend = (period: string) => db.prepare(`INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,source_characters,charge_characters,created_at) VALUES ('${period}','trial','${period}','generate','completed','${period}','r',500,500,1)`).run();
+    spend('2000-01');
+    const free = await usageSummary('trial');
+    expect(free.characterScope).toBe('account');
+    // A run from an old period still counts: the trial is not refilled by the calendar.
+    expect(free.charactersUsed).toBe(500);
+
+    account('subscriber', 'plus');
+    db.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,source_characters,charge_characters,created_at) VALUES ('old','subscriber','old','generate','completed','2000-01','r',500,500,1)").run();
+    const paid = await usageSummary('subscriber');
+    expect(paid.characterScope).toBe('period');
+    expect(paid.charactersUsed).toBe(0);
+    expect(paid.characterLimit).toBe(PLAN_LIMITS.plus.includedCharacters);
+  });
+
+  it('sells saved skills from Plus while leaving what a free account already saved readable and deletable', async () => {
+    account('writer', 'plus');
+    const style = await createStyle('writer', { name: 'Email klien', description: null, color: null, icon: null, settings: defaults });
+    db.prepare("UPDATE user SET tier='free' WHERE id='writer'").run();
+    await expect(createStyle('writer', { name: 'Lainnya', description: null, color: null, icon: null, settings: defaults }))
+      .rejects.toMatchObject({ code: 'FEATURE_LOCKED', status: 403, details: { feature: 'saved_styles', requiredTier: 'plus' } });
+    expect((await listStyles('writer')).map((saved) => saved.id)).toEqual([style.id]);
+    await expect(deleteStyle('writer', style.id)).resolves.toBeUndefined();
   });
 
   it('lets a per-user character override beat the tier quota', async () => {

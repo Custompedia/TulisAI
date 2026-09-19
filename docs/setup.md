@@ -79,7 +79,7 @@ Jika port berbeda, ganti host dan port sesuai URL dev. Tambahkan callback exact 
 
 AI memakai `OPENROUTER_API_KEY` dan `OPENROUTER_MODEL`. Model wajib dipilih dan diuji berdasarkan structured output prompt final v1. Provider request hardcoded `provider.data_collection=deny`. `AI_PUBLIC_ENABLED` harus tetap `false` sampai retensi dan privacy setting provider diverifikasi secara nyata.
 
-`AI_MONTHLY_CHARACTER_LIMIT` (default 100000) adalah kuota karakter bulanan untuk tier Gratis dan merupakan cap yang benar-benar ditegakkan; tier berbayar memakai angka di `src/lib/plans.ts`. `AI_MONTHLY_REQUEST_LIMIT` kini hanya angka informasi di panel admin. Keduanya batas operasional internal, bukan harga atau paket komersial. Timeout, response size, quota reservation, idempotency, dan status provider error harus dipertahankan sebagai error; aplikasi tidak boleh mengganti kegagalan dengan output palsu.
+`AI_FREE_CHARACTER_ALLOWANCE` (default 3000) adalah jatah karakter sekali pakai per akun untuk tier Gratis dan merupakan cap yang benar-benar ditegakkan; tier berbayar memakai angka di `src/lib/plans.ts` dan diisi ulang tiap periode. `AI_MONTHLY_REQUEST_LIMIT` kini hanya pengaman burst dan angka informasi di panel admin. Keduanya batas operasional internal, bukan harga atau paket komersial. Timeout, response size, quota reservation, idempotency, dan status provider error harus dipertahankan sebagai error; aplikasi tidak boleh mengganti kegagalan dengan output palsu.
 
 ## Cloudflare sebelum deployment
 

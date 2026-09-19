@@ -42,11 +42,30 @@ describe('admin service: listing', () => {
     expect(page.items[0]).toMatchObject({ role: 'admin', unlimited: true, requestsThisMonth: 0, lastActiveAt: null });
     expect(page.items[1]).toMatchObject({ role: 'user', tier: 'pro', requestLimit: 2000, requestsThisMonth: 2, failedThisMonth: 1, tokensThisMonth: 15, lastActiveAt: new Date(6000).toISOString() });
     expect(page.items[2]).toMatchObject({ tier: 'free', aiLimitOverride: 7, requestLimit: 7 });
-    expect(page.summary).toMatchObject({ period, users: 3, admins: 1, banned: 0, tiers: { free: 2, plus: 0, pro: 1, team: 0 }, requestsThisMonth: 3, failedThisMonth: 1, tokensThisMonth: 25, monthlyLimit: 100, tierLimits: { free: 100, plus: 500, pro: 2000, team: 3000 }, aiEnabled: true });
+    expect(page.summary).toMatchObject({ period, users: 3, admins: 1, banned: 0, tiers: { free: 2, plus: 0, pro: 1, max: 0 }, requestsThisMonth: 3, failedThisMonth: 1, tokensThisMonth: 25, monthlyLimit: 100, tierLimits: { free: 100, plus: 500, pro: 2000, max: 3000 }, aiEnabled: true });
     expect(page.pageInfo).toEqual({ page: 1, pageSize: PAGE_LIMIT, total: 3, pages: 1 });
     expect((await listUsers({ sort: 'usage' })).items.map((item) => item.id)).toEqual(['user-1', 'user-2', 'admin-1']);
     expect((await listUsers({ sort: 'name' })).items.map((item) => item.name)).toEqual(['Admin', 'Budi', 'Citra']);
   });
+  it('measures a free account against its one-time allowance and a paid one against this period', async () => {
+    const spend = (owner: string, key: string, characters: number) =>
+      db.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,charge_characters,source_characters) VALUES (?,?,?,'generate','completed',?,'r',5000,?,?)")
+        .run(crypto.randomUUID(), owner, crypto.randomUUID(), key, characters, characters);
+    addUser('trial', 'Trial'); addUser('payer', 'Payer', { tier: 'pro' });
+    spend('trial', '2000-01', 400); spend('trial', period, 100);
+    spend('payer', '2000-01', 700); spend('payer', period, 200);
+    const items = (await listUsers()).items;
+    const byId = Object.fromEntries(items.map((item) => [item.id, item]));
+    // The free trial is granted once, so a run from an earlier period still counts against it.
+    expect(byId.trial).toMatchObject({ characterScope: 'account', charactersUsed: 500 });
+    expect(byId.payer).toMatchObject({ characterScope: 'period', charactersUsed: 200 });
+    expect(await getUser('trial')).toMatchObject({ characterScope: 'account', charactersUsed: 500 });
+
+    // A per-user override turns the allowance into a refilling quota, so the figure goes back to this period.
+    await updateUser('trial', { aiCharacterLimitOverride: 50_000 });
+    expect(await getUser('trial')).toMatchObject({ characterScope: 'period', charactersUsed: 100, characterLimit: 50_000 });
+  });
+
   it('filters by search, role, tier, and status, and paginates by page number', async () => {
     for (let index = 0; index < PAGE_LIMIT + 2; index++) addUser(`u${String(index).padStart(3, '0')}`, `User ${index}`, { createdAt: 10_000 - index, tier: index % 2 ? 'plus' : 'free', role: index === 3 ? 'admin' : 'user', banned: index === 4 ? 1 : 0, banExpires: index === 4 ? Date.now() + 60_000 : null });
     addUser('expired', 'Expired ban', { banned: 1, banExpires: 1 });

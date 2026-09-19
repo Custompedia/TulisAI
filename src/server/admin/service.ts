@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { RequestError } from '../http';
 import { runtime } from '../runtime';
 import { isAdminRole } from '../auth/auth';
-import { asTier, characterLimit, monthlyLimit, monthlyCharacterLimit, periodKey, tierLimit, TIERS, type Tier } from '../usage/quota';
+import { asTier, characterLimit, monthlyLimit, freeCharacterAllowance, periodKey, tierLimit, TIERS, type Tier } from '../usage/quota';
+import { planLimits } from '@/lib/plans';
 
 export const RoleSchema = z.enum(['user', 'admin']);
 export const TierSchema = z.enum(TIERS);
@@ -30,10 +31,10 @@ export type UserPatch = z.infer<typeof UserPatchSchema>;
 
 export type AdminUser = {
   id: string; name: string; email: string; username: string | null; image: string | null; role: Role; tier: Tier; emailVerified: boolean; createdAt: string; updatedAt: string;
-  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; charactersThisMonth: number; unlimited: boolean;
+  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; charactersUsed: number; characterScope: 'account' | 'period'; unlimited: boolean;
   requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
 };
-export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; monthlyCharacterLimit: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
+export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; freeCharacterAllowance: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
 export type AuditEntry = { id: string; actorId: string; actorName: string | null; targetUserId: string | null; targetName: string | null; action: string; details: Record<string, unknown>; createdAt: string };
 export type UsageEntry = { id: string; operation: string; promptId: string | null; status: string; sourceCharacters: number | null; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; errorCode: string | null; createdAt: string; completedAt: string | null };
 export type UserSort = 'newest' | 'oldest' | 'name' | 'usage' | 'active';
@@ -49,10 +50,12 @@ function toUser(row: Row): AdminUser {
   const role: Role = isAdminRole(row.role) ? 'admin' : 'user'; const tier = asTier(row.tier);
   const positive = (value: number | null) => (typeof value === 'number' && value > 0 ? value : null);
   const override = positive(row.ai_limit_override); const characterOverride = positive(row.ai_character_limit_override);
+  // Mirrors entitlement(): a plain free account spends one allowance for its whole life, so its usage is not a monthly figure.
+  const scope: 'account' | 'period' = planLimits(tier).oneTime && characterOverride === null && role === 'user' ? 'account' : 'period';
   return {
     id: row.id, name: row.name, email: row.email, username: row.username, image: row.image, role, tier, emailVerified: row.email_verified === 1, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
     banned: activeBan(row), banReason: row.ban_reason, banExpires: iso(row.ban_expires), aiLimitOverride: override, aiCharacterLimitOverride: characterOverride, adminNote: row.admin_note, requestLimit: override ?? tierLimit(tier), characterLimit: characterOverride ?? characterLimit(tier), unlimited: role === 'admin',
-    charactersThisMonth: row.characters ?? 0, requestsThisMonth: row.requests ?? 0, failedThisMonth: row.failed ?? 0, tokensThisMonth: row.tokens ?? 0, lastActiveAt: iso(row.last_active), documents: row.documents ?? 0,
+    charactersUsed: row.characters ?? 0, characterScope: scope, requestsThisMonth: row.requests ?? 0, failedThisMonth: row.failed ?? 0, tokensThisMonth: row.tokens ?? 0, lastActiveAt: iso(row.last_active), documents: row.documents ?? 0,
   };
 }
 
@@ -66,6 +69,18 @@ const USER_SELECT = `
     FROM usage_ledger WHERE period_key=? GROUP BY owner_id
   ) l ON l.owner_id=u.id
   LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents GROUP BY owner_id) d ON d.owner_id=u.id`;
+
+// A one-time allowance is spent against the account's whole ledger, not this period's, so those rows get their own
+// bounded sum: at most one page of owner ids, each served by the covering index's owner_id prefix.
+async function withAccountCharacters(users: AdminUser[]): Promise<AdminUser[]> {
+  const trial = users.filter((user) => user.characterScope === 'account');
+  if (!trial.length) return users;
+  const rows = await runtime().DB.prepare(`SELECT owner_id, COALESCE(SUM(charge_characters),0) AS characters FROM usage_ledger WHERE owner_id IN (${trial.map(() => '?').join(',')}) GROUP BY owner_id`)
+    .bind(...trial.map((user) => user.id)).all<{ owner_id: string; characters: number }>();
+  const spent = new Map((rows.results ?? []).map((row) => [row.owner_id, row.characters]));
+  for (const user of trial) user.charactersUsed = spent.get(user.id) ?? 0;
+  return users;
+}
 
 export const PAGE_LIMIT = 50;
 const parseCursor = (cursor: string | null): [number | null, string | null] => {
@@ -93,7 +108,7 @@ export async function listUsers(filter: UserFilter = {}, page = 1): Promise<{ su
   const total = count?.n ?? 0; const info = pageInfo(Math.min(page, Math.max(1, Math.ceil(total / PAGE_LIMIT))), total);
   const rows = await runtime().DB.prepare(`${USER_SELECT} ${USER_WHERE} ORDER BY ${ORDER[filter.sort ?? 'newest']} LIMIT ? OFFSET ?`)
     .bind(period, ...where, PAGE_LIMIT, (info.page - 1) * PAGE_LIMIT).all<Row>();
-  return { summary: await summary(period), items: rows.results.map(toUser), pageInfo: info };
+  return { summary: await summary(period), items: await withAccountCharacters(rows.results.map(toUser)), pageInfo: info };
 }
 
 async function summary(period: string): Promise<AdminSummary> {
@@ -101,18 +116,18 @@ async function summary(period: string): Promise<AdminSummary> {
   const [users, usage] = await Promise.all([
     runtime().DB.prepare(`SELECT COUNT(1) AS users, SUM(CASE WHEN (','||COALESCE(role,'')||',') LIKE '%,admin,%' THEN 1 ELSE 0 END) AS admins,
       SUM(CASE WHEN banned = 1 AND (ban_expires IS NULL OR ban_expires > ?) THEN 1 ELSE 0 END) AS banned,
-      SUM(CASE WHEN tier='plus' THEN 1 ELSE 0 END) AS plus, SUM(CASE WHEN tier='pro' THEN 1 ELSE 0 END) AS pro, SUM(CASE WHEN tier='team' THEN 1 ELSE 0 END) AS team FROM user`).bind(now)
-      .first<{ users: number; admins: number | null; banned: number | null; plus: number | null; pro: number | null; team: number | null }>(),
+      SUM(CASE WHEN tier='plus' THEN 1 ELSE 0 END) AS plus, SUM(CASE WHEN tier='pro' OR tier='team' THEN 1 ELSE 0 END) AS pro, SUM(CASE WHEN tier='max' THEN 1 ELSE 0 END) AS max FROM user`).bind(now)
+      .first<{ users: number; admins: number | null; banned: number | null; plus: number | null; pro: number | null; max: number | null }>(),
     runtime().DB.prepare(`SELECT COUNT(1) AS requests, COALESCE(SUM(charge_characters),0) AS characters, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens FROM usage_ledger WHERE period_key=?`).bind(period)
       .first<{ requests: number; characters: number | null; failed: number | null; tokens: number | null }>(),
   ]);
-  const env = runtime(); const total = users?.users ?? 0; const plus = users?.plus ?? 0; const pro = users?.pro ?? 0; const team = users?.team ?? 0;
+  const env = runtime(); const total = users?.users ?? 0; const plus = users?.plus ?? 0; const pro = users?.pro ?? 0; const max = users?.max ?? 0;
   return {
-    period, users: total, admins: users?.admins ?? 0, banned: users?.banned ?? 0, tiers: { free: Math.max(0, total - plus - pro - team), plus, pro, team },
+    period, users: total, admins: users?.admins ?? 0, banned: users?.banned ?? 0, tiers: { free: Math.max(0, total - plus - pro - max), plus, pro, max },
     requestsThisMonth: usage?.requests ?? 0, charactersThisMonth: usage?.characters ?? 0, failedThisMonth: usage?.failed ?? 0, tokensThisMonth: usage?.tokens ?? 0,
-    monthlyLimit: monthlyLimit(), monthlyCharacterLimit: monthlyCharacterLimit(),
-    tierLimits: { free: tierLimit('free'), plus: tierLimit('plus'), pro: tierLimit('pro'), team: tierLimit('team') },
-    tierCharacterLimits: { free: characterLimit('free'), plus: characterLimit('plus'), pro: characterLimit('pro'), team: characterLimit('team') },
+    monthlyLimit: monthlyLimit(), freeCharacterAllowance: freeCharacterAllowance(),
+    tierLimits: { free: tierLimit('free'), plus: tierLimit('plus'), pro: tierLimit('pro'), max: tierLimit('max') },
+    tierCharacterLimits: { free: characterLimit('free'), plus: characterLimit('plus'), pro: characterLimit('pro'), max: characterLimit('max') },
     aiEnabled: env.AI_PUBLIC_ENABLED === 'true', model: env.OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna',
   };
 }
@@ -120,7 +135,7 @@ async function summary(period: string): Promise<AdminSummary> {
 export async function getUser(userId: string): Promise<AdminUser> {
   const row = await runtime().DB.prepare(`${USER_SELECT} WHERE u.id=?`).bind(periodKey(), userId).first<Row>();
   if (!row) throw new RequestError('NOT_FOUND', 'User not found.', 404);
-  return toUser(row);
+  return (await withAccountCharacters([toUser(row)]))[0]!;
 }
 
 export async function countAdmins(): Promise<number> {

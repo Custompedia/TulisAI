@@ -188,12 +188,12 @@ function SettingsView() {
           )}
 
           {tab === 'pemakaian' && (
-            <Card title={t('Pemakaian AI', 'AI usage')} description={usage ? `${t('Periode', 'Period')} ${usage.period} (UTC)` : undefined}>
+            <Card title={t('Pemakaian AI', 'AI usage')} description={usage ? (usage.characterScope === 'account' ? t('Jatah sekali pakai untuk akun ini', 'A one-time allowance for this account') : `${t('Periode', 'Period')} ${usage.period} (UTC)`) : undefined}>
               {usage ? (
                 <>
                   <div className="flex items-end justify-between"><p className="text-3xl font-bold text-ink-950">{numberFormat(usage.charactersUsed, locale)}<span className="text-base font-medium text-ink-400"> / {usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span></p><p className="text-sm text-ink-500">{usage.unlimited ? t('Tanpa batas', 'Unlimited') : `${numberFormat(usage.charactersRemaining, locale)} ${t('karakter tersisa', 'characters remaining')}`}</p></div>
                   {!usage.unlimited && <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper-deep"><div className={`h-full rounded-full ${usedPercent >= 90 ? 'bg-amber-500' : 'bg-brand-600'}`} style={{ width: `${usedPercent}%` }} /></div>}
-                  <p className="mt-3 text-[13px] text-ink-500">{t('Termasuk perbaikan otomatis dan percobaan yang gagal. Mengetik, riwayat, dan perbandingan tidak dihitung.', 'Includes automatic repairs and failed attempts. Typing, history, and comparisons are never counted.')}</p>
+                  <p className="mt-3 text-[13px] text-ink-500">{t('Yang dihitung hanya teks sumber yang berhasil diproses. Perbaikan otomatis, percobaan gagal, mengetik, riwayat, dan perbandingan tidak dihitung.', 'Only source text that was processed successfully is counted. Automatic repairs, failed attempts, typing, history, and comparisons are never counted.')}</p>
                 </>
               ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-ink-500">{t('Data pemakaian belum tersedia.', 'Usage data is unavailable.')}</p><Button size="sm" icon={RotateCw} onClick={() => void refresh()}>{t('Muat ulang', 'Reload')}</Button></div>

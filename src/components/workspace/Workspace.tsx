@@ -805,7 +805,9 @@ export default function Workspace() {
   const updateSettings = (next: Settings) => { const value = reconcileStyle(next, styleList.styles); setSettings(value); markMetadata(title, value); };
   // Applying a skill hides the chip for this session only; the permanent dismissal stays with the explicit "ignore".
   const chooseStyle = (style: WritingStyle) => { setSuggestionOff(true); updateSettings(applyStyle(latest.current.settings, style)); };
-  const openStyleDialog = (style: WritingStyle | null, preset: Settings, apply: boolean) => setStyleDialog({ style, preset, apply });
+  // Saving a skill starts at Plus, so a free account is shown the plans instead of a 403 from the save.
+  const openStyleDialog = (style: WritingStyle | null, preset: Settings, apply: boolean) =>
+    (has('saved_styles') ? setStyleDialog({ style, preset, apply }) : setPlans(true));
   // Deleting the applied skill only drops the marker; the notebook keeps the settings it is running with.
   function onStyleDeleted(removed: WritingStyle) {
     setStyleDialog(null);

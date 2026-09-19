@@ -43,7 +43,7 @@ beforeEach(() => {
       get: async (key: string) => { const value = objects.get(key); return value === undefined ? null : { size: value.length, text: async () => value, arrayBuffer: async () => new TextEncoder().encode(value).buffer }; },
       delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key); },
     },
-    AI_PUBLIC_ENABLED: 'true', OPENROUTER_API_KEY: 'test-key', AI_MONTHLY_REQUEST_LIMIT: '100', AI_MONTHLY_CHARACTER_LIMIT: '100000',
+    AI_PUBLIC_ENABLED: 'true', OPENROUTER_API_KEY: 'test-key', AI_MONTHLY_REQUEST_LIMIT: '100', AI_FREE_CHARACTER_ALLOWANCE: '100000',
   };
 });
 afterEach(() => { vi.unstubAllGlobals(); db.close(); });
@@ -106,7 +106,7 @@ describe('review: rejection copy tells the user which check failed', () => {
 });
 
 describe('review: a free-form instruction is paid, scoped and free', () => {
-  const paid = (id: string) => db.prepare(`INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('${id}','U','${id}@example.test','${id}','user','pro',1,1)`).run();
+  const paid = (id: string) => db.prepare(`INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('${id}','U','${id}@example.test','${id}','user','max',1,1)`).run();
   // null means "send no anchor at all"; a default parameter would be replaced by `undefined`.
   const instruct = (owner: string, documentId: string, revision: number, text: string, instruction: string, anchor: { from: number; to: number } | null = { from: 0, to: text.length }) =>
     generatePreview(owner, `key-${Math.random()}`, {
@@ -123,6 +123,40 @@ describe('review: a free-form instruction is paid, scoped and free', () => {
     await expect(instruct('free-user', doc.id, doc.revision, source, 'ubah ini ke english'))
       .rejects.toMatchObject({ code: 'FEATURE_LOCKED', status: 403, details: { feature: 'freeform_prompt' } });
     expect(transport).not.toHaveBeenCalled();
+  });
+
+  it('is still locked on Pro, because AI Mode is what Max sells', async () => {
+    db.prepare("INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('pro-user','U','pro@example.test','pro-user','user','pro',1,1)").run();
+    const source = 'Kami memiliki 10 unit gudang.';
+    const doc = await createDocument('pro-user', { title: 'F', language: 'id', content: content(source) });
+    const transport = vi.fn();
+    vi.stubGlobal('fetch', transport);
+    await expect(instruct('pro-user', doc.id, doc.revision, source, 'ubah ini ke english'))
+      .rejects.toMatchObject({ code: 'FEATURE_LOCKED', status: 403, details: { feature: 'freeform_prompt', requiredTier: 'max' } });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  // AI Mode is charged MAX(source, output): the hold taken before the call is released down to what was really used.
+  const charge = () => Number((db.prepare("SELECT COALESCE(SUM(charge_characters),0) AS total FROM usage_ledger WHERE operation='generate'").get() as { total: number }).total);
+
+  it('charges the generated output when it is longer than the source', async () => {
+    paid('payer-i');
+    const source = 'Kami memiliki 10 unit gudang.';
+    const longer = 'Kami memiliki 10 unit gudang di Bandung.';
+    const doc = await createDocument('payer-i', { title: 'F', language: 'id', content: content(source) });
+    always(transform(longer));
+    await instruct('payer-i', doc.id, doc.revision, source, 'tambahkan lokasinya');
+    expect(longer.length).toBeGreaterThan(source.length);
+    expect(charge()).toBe(longer.length);
+  });
+
+  it('charges the source when the output came back shorter', async () => {
+    paid('payer-j');
+    const source = 'Kami memiliki 10 unit gudang.';
+    const doc = await createDocument('payer-j', { title: 'F', language: 'id', content: content(source) });
+    always(transform('Kami punya 10 gudang.'));
+    await instruct('payer-j', doc.id, doc.revision, source, 'persingkat ini');
+    expect(charge()).toBe(source.length);
   });
 
   it('needs a selected passage, so it cannot be aimed at a whole notebook', async () => {

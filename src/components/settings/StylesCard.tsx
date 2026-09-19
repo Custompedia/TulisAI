@@ -6,7 +6,9 @@ import { errorText } from '@/lib/client/api';
 import { removeStyle, useWritingStyles } from '@/lib/client/styles-store';
 import { defaults } from '@/lib/writing/settings';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
-import { useSessionGuard } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard } from '@/components/app/AppShell';
+import { PlansDialog } from '@/components/app/PlansDialog';
+import { useRequiredTierName } from '@/components/app/PaidLock';
 import { Alert } from '@/components/ui/Alert';
 import { Button, IconButton, pillButton } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
@@ -25,7 +27,12 @@ export function StylesCard() {
   const [confirm, setConfirm] = useState<WritingStyle | null>(null);
   const [busy, setBusy] = useState('');
   const [notice, setNotice] = useState('');
-  const full = styles.length >= STYLE_LIMIT;
+  const [plans, setPlans] = useState(false);
+  const { has } = useEntitlements();
+  // Saving a skill starts at Plus. Existing skills stay listed, editable only after an upgrade, and always deletable.
+  const locked = !has('saved_styles');
+  const requiredTier = useRequiredTierName('saved_styles');
+  const full = styles.length >= STYLE_LIMIT || locked;
   const en = locale === 'en';
 
   // Duplicating opens a prefilled form instead of saving straight away, so repeated clicks cannot pile up copies.
@@ -55,6 +62,12 @@ export function StylesCard() {
       </header>
 
       <div className="px-5 pb-5 pt-4 sm:px-6">
+        {locked && (
+          <Alert tone="info" className="mb-4" title={t('Skill tersimpan mulai dari Plus', 'Saved skills start at Plus')}
+            actions={<Button size="sm" onClick={() => setPlans(true)}>{t('Lihat paket', 'See plans')}</Button>}>
+            {t(`Skill yang sudah tersimpan tetap bisa dipakai dan dihapus. Untuk membuat atau mengubah skill, naik ke ${requiredTier}.`, `Skills you already saved stay usable and deletable. To create or edit a skill, upgrade to ${requiredTier}.`)}
+          </Alert>
+        )}
         {loading ? (
           <div role="status" aria-label={t('Memuat skill…', 'Loading skills…')} className="space-y-2">
             {[0, 1, 2].map((row) => <div key={row} className="h-14 animate-pulse rounded-xl bg-paper-deep" />)}
@@ -70,7 +83,7 @@ export function StylesCard() {
           <ul className="space-y-2">
             {styles.map((style) => {
               const actions = [
-                { label: t(`Ubah skill ${style.name}`, `Edit skill ${style.name}`), short: t('Ubah', 'Edit'), icon: PencilLine, danger: false, disabled: false, run: () => setDialog({ style }) },
+                { label: t(`Ubah skill ${style.name}`, `Edit skill ${style.name}`), short: t('Ubah', 'Edit'), icon: PencilLine, danger: false, disabled: locked, run: () => setDialog({ style }) },
                 { label: t(`Duplikat skill ${style.name}`, `Duplicate skill ${style.name}`), short: t('Duplikat', 'Duplicate'), icon: Copy, danger: false, disabled: full, run: () => duplicate(style) },
                 { label: t(`Hapus skill ${style.name}`, `Delete skill ${style.name}`), short: t('Hapus', 'Delete'), icon: Trash2, danger: true, disabled: false, run: () => setConfirm(style) },
               ];
@@ -110,11 +123,12 @@ export function StylesCard() {
       <footer className="flex flex-wrap items-center justify-end gap-2 rounded-b-2xl border-t border-line bg-paper/60 px-5 py-3 sm:px-6">
         <p className={`mr-auto text-sm ${full ? 'font-medium text-amber-700' : 'text-ink-500'}`}>
           <span className="tabular-nums">{styles.length}/{STYLE_LIMIT}</span> skill
-          {full && ` · ${t('Batas tercapai. Hapus satu skill sebelum membuat yang baru.', 'Limit reached. Delete a skill before creating a new one.')}`}
+          {full && !locked && ` · ${t('Batas tercapai. Hapus satu skill sebelum membuat yang baru.', 'Limit reached. Delete a skill before creating a new one.')}`}
         </p>
         <Button variant="primary" icon={Plus} disabled={loading || full || busy !== ''} onClick={() => setDialog({ style: null })}>{t('Buat skill', 'Create skill')}</Button>
       </footer>
 
+      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {dialog && <StyleDialog styles={styles} style={dialog.style} initial={dialog.initial} preset={defaults} onClose={() => setDialog(null)} onSaved={() => setDialog(null)} onDeleted={() => setDialog(null)} />}
       {confirm && (
         <ConfirmDialog title={t('Hapus skill ini?', 'Delete this skill?')} tone="danger" busy={busy === confirm.id} confirmLabel={t('Hapus skill', 'Delete skill')} onClose={() => { if (!busy) setConfirm(null); }} onConfirm={() => void remove()}>

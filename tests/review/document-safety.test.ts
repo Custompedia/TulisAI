@@ -15,6 +15,7 @@ import { generatePreview, applyPreview, discardPreview } from '../../src/server/
 import { runtimeControls, defaults, INLINE_LIMIT } from '../../src/lib/writing/settings';
 import { PLAN_LIMITS } from '../../src/lib/plans';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
+import { createLock } from '../../src/server/documents/locks';
 
 let db: DatabaseSync;
 let objects: Map<string, string>;
@@ -104,7 +105,7 @@ describe('review: scoped editor replacement', () => {
 });
 
 describe('review: actual AI pipeline with mocked provider transport',()=>{
-  function enable(){state.env.AI_PUBLIC_ENABLED='true';state.env.OPENROUTER_API_KEY='test-key';state.env.AI_MONTHLY_REQUEST_LIMIT='100';state.env.AI_MONTHLY_CHARACTER_LIMIT='100000';}
+  function enable(){state.env.AI_PUBLIC_ENABLED='true';state.env.OPENROUTER_API_KEY='test-key';state.env.AI_MONTHLY_REQUEST_LIMIT='100';state.env.AI_FREE_CHARACTER_ALLOWANCE='100000';}
   const ledger=()=>db.prepare('SELECT status,charge_characters AS charge,error_code AS reason FROM usage_ledger ORDER BY created_at,id').all() as Array<{status:string;charge:number;reason:string|null}>;
   const held=()=>Number((db.prepare('SELECT COALESCE(SUM(charge_characters),0) AS total FROM usage_ledger').get() as {total:number}).total);
   const tierRow=(id:string,tier:string)=>db.prepare(`INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('${id}','U','${id}@example.test','${id}','user','${tier}',1,1)`).run();
@@ -123,9 +124,9 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Tulisan awal.');expect((await listVersions('owner-a',doc.id)).items).toHaveLength(2);
     expect(db.prepare('SELECT input_tokens FROM usage_ledger').get()).toMatchObject({input_tokens:12});
   });
-  it('enforces the monthly character cap for users and lifts it for admins',async()=>{
+  it('enforces the character allowance for users and lifts it for admins',async()=>{
     // 'Sumber asli.' is 12 characters, so a quota of 12 pays for exactly one run.
-    enable();state.env.AI_MONTHLY_CHARACTER_LIMIT='12';const doc=await create();
+    enable();state.env.AI_FREE_CHARACTER_ALLOWANCE='12';const doc=await create();
     const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
     await generatePreview('owner-a','first',input(doc));
     expect(held()).toBe(12);
@@ -133,6 +134,35 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     db.prepare("INSERT INTO user (id,name,email,username,role,created_at,updated_at) VALUES ('owner-a','Admin','admin@example.test','admin','admin',1,1)").run();
     const preview=await generatePreview('owner-a','third',input(doc));
     expect(preview.id).toBeTruthy();expect(transport).toHaveBeenCalledTimes(2);
+  });
+  it('does not refill the free allowance when the month rolls over',async()=>{
+    // The free trial is granted once per account, so a run recorded in an earlier period still counts against it.
+    enable();state.env.AI_FREE_CHARACTER_ALLOWANCE='12';const doc=await create();
+    db.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,source_characters,charge_characters,created_at) VALUES ('old','owner-a','old','generate','completed','2000-01','r',12,12,1)").run();
+    const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
+    await expect(generatePreview('owner-a','fresh',input(doc))).rejects.toMatchObject({code:'QUOTA_EXCEEDED'});
+    expect(transport).not.toHaveBeenCalled();
+  });
+  it('names the guard that refused the run: burst, plan request cap, or characters',async()=>{
+    enable();state.env.AI_MONTHLY_REQUEST_LIMIT='1';const doc=await create();
+    const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
+    await generatePreview('owner-a','one',input(doc));
+    // The plan's request cap is a different answer from "shorten your text", so it gets its own code.
+    await expect(generatePreview('owner-a','two',input(doc))).rejects.toMatchObject({code:'REQUEST_LIMIT_REACHED',status:429});
+    state.env.AI_MONTHLY_REQUEST_LIMIT='100';
+    for(let index=0;index<10;index+=1)db.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,charge_characters) VALUES (?,'owner-a',?,'generate','completed','2000-01','r',?,0)").run(`burst-${index}`,`burst-${index}`,Date.now());
+    await expect(generatePreview('owner-a','three',input(doc))).rejects.toMatchObject({code:'RATE_LIMITED',status:429});
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
+  it('lets our own repair pass through the plan request cap without counting against it',async()=>{
+    // The repair is ours, not the writer's: it must neither consume a request slot nor be blocked by one.
+    enable();state.env.AI_MONTHLY_REQUEST_LIMIT='1';const doc=await create();
+    const replies=[{transformed_text:'Teks baru.',change_categories:[],warnings:[],no_change_needed:false},{corrected_text:'Sumber asli diubah.',unrepairable_spans:[]}];
+    let turn=0;const transport=vi.fn(async()=>response(replies[Math.min(turn++,1)]!));vi.stubGlobal('fetch',transport);
+    await createLock('owner-a',doc.id,'Sumber asli');
+    await generatePreview('owner-a','repaired',input(doc));
+    expect(transport).toHaveBeenCalledTimes(2);
+    expect(db.prepare("SELECT COUNT(1) AS n FROM usage_ledger WHERE operation='repair'").get()).toMatchObject({n:1});
   });
   it('charges characters only for a run that returned usable output',async()=>{
     enable();const doc=await create();

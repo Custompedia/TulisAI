@@ -175,3 +175,53 @@ Toggle Dasar/Lanjutan memakai `Segmented` yang sudah ada, dengan opsi `fit` baru
 ### Tidak diklaim
 
 Verifikasi visual di browser tidak dijalankan (sesuai AGENTS.md), jadi kanvas berhalaman, kartu perintah inline, tombol gutter paragraf, dan dialog impor belum pernah dilihat dirender. Microsoft Word sendiri tidak tersedia di lingkungan ini: fidelity dibuktikan lewat python-docx, LibreOffice, dan metrik font, bukan lewat Word. `pnpm smoke` pada model live belum dijalankan karena butuh izin biaya. Paginasi editor sungguhan (page break otomatis) dan ekspor PDF tidak dibangun.
+
+## Paket Free/Plus/Pro/Max, jatah karakter, dan gating fitur (2026-09-19)
+
+Scope: menyelaraskan katalog paket, jatah karakter AI, aturan penagihan, dan gating fitur dengan `TULISAI_OWNER_DECISIONS_ADDENDUM_2026-09-19.md`. Billing, top-up berbayar, dan integrasi MKL **tidak** diimplementasikan di fase ini.
+
+### Yang berubah
+
+| Area | Sebelum | Sesudah |
+| --- | --- | --- |
+| Tangga paket | free/plus/pro/team | free/plus/pro/max; `asTier('team')` → `pro` supaya baris lama tidak jatuh ke free |
+| Harga | mock (49k/99k/79k per anggota) | Rp0 / Rp49.000 / Rp179.000 / Rp499.000 di `PLAN_LIMITS[...].priceIdr` |
+| Jatah karakter | 100k/500k/2jt/3jt per bulan | 3.000 sekali pakai per akun (Free), 25.000 / 100.000 / 350.000 per periode |
+| Batas per run | 1.000/2.000/5.000/5.000 | tetap, Max = 5.000 |
+| Fitur berbayar | semua fitur untuk semua tier berbayar | Plus: skills tersimpan + kelayakan top-up; Pro: + workspace lanjutan & impor/ekspor DOCX; Max: + AI Mode |
+| Penagihan AI Mode | karakter sumber | `MAX(sumber, output)`, di-hold `2×` sumber sebelum panggilan provider lalu di-settle turun |
+| Env | `AI_MONTHLY_CHARACTER_LIMIT` (100000) | `AI_FREE_CHARACTER_ALLOWANCE` (3000) |
+
+Jatah Free dihitung lintas periode (`WHERE owner_id=?`), bukan per bulan, baik saat reservasi di `reserve()` maupun di `usageSummary()`; `UsageSummary.characterScope` membawa bedanya ke UI supaya label tidak menjanjikan reset bulanan. Override karakter per user tetap membuat kuota terisi ulang per periode.
+
+Gating baru ditegakkan di server: `createStyle`/`updateStyle` menuntut `saved_styles` (list dan delete tetap terbuka — turun paket tidak menyandera skill yang sudah tersimpan), `freeform_prompt` kini hanya Max, dan impor/ekspor DOCX serta mode notebook lanjutan naik dari Plus ke Pro.
+
+### Penegakan per tier setelah sapu ulang
+
+| Yang dijaga | Di mana | Berlaku untuk |
+| --- | --- | --- |
+| `saved_styles` | `createStyle`/`updateStyle` (`src/server/writing/styles.ts`) | Plus ke atas; list & delete tetap terbuka |
+| `advanced_notebook` | `src/server/documents/service.ts` (create + autosave) | Pro ke atas |
+| `docx_import` / `docx_export` | route impor & ekspor | Pro ke atas |
+| `freeform_prompt` | `generatePreview` | Max saja |
+| Batas karakter per run | `scopeLimit()` dari `rights.limits` | 1.000 / 2.000 / 5.000 / 5.000 |
+| Jatah karakter | `reserve()` + `usageSummary()` | Free lintas periode, berbayar per periode |
+| Batas permintaan per periode | `reserve()` | 100 / 500 / 2.000 / 3.000; admin dilewati |
+| Burst 10 permintaan / menit | `reserve()` | semua akun |
+
+`purchase_topup` belum punya endpoint apa pun untuk dijaga — tidak ada jalur pembelian di kode.
+
+Dua celah yang ditemukan saat sapu ulang dan sudah ditutup:
+
+1. **Batas permintaan per tier tidak pernah ditegakkan.** `TIER_LIMITS` hanya ditampilkan di panel admin dan ringkasan pemakaian, padahal kolom "Batas permintaan khusus" menyiratkan penegakan. Kini menjadi guard ketiga di `reserve()`. Pass repair P10 tidak menghitung dan tidak ikut diblokir — itu pass kami, bukan permintaan penulis. Karena satu INSERT memeriksa tiga guard sekaligus, penolakan didiagnosis setelahnya supaya kodenya tepat: `RATE_LIMITED` (tunggu sebentar), `REQUEST_LIMIT_REACHED` (naikkan paket), `QUOTA_EXCEEDED` (persingkat teks). Copy `QUOTA_EXCEEDED` juga tidak lagi menjanjikan reset bulanan.
+2. **Panel admin mengukur akun Free per bulan.** Jatah Free sekali pakai membuat angka "karakter bulan ini" salah setelah ganti bulan. `AdminUser` kini membawa `charactersUsed` + `characterScope`, dan baris sekali-pakai pada halaman yang sedang dilihat dijumlahkan lewat satu query `owner_id IN (...)` terbatas satu halaman — tetap memakai covering index, bukan scan tabel.
+
+### Bukti
+
+`pnpm typecheck`, `pnpm lint`, `pnpm test` (600 tes, 37 file), `pnpm build`, `pnpm cf:check` lulus. `EXPLAIN QUERY PLAN` pada migrasi lokal: `SELECT SUM(charge_characters) ... WHERE owner_id=?` tetap `SEARCH usage_ledger USING COVERING INDEX usage_owner_period_charge_idx (owner_id=?)`, jadi agregat seumur akun tidak memicu scan.
+
+Test baru: `tests/review/plan-catalogue.test.ts` (harga, jatah, batas paket, pemetaan tier `team` lama, katalog top-up), `tests/review/entitlements.test.ts` (jatah Free sekali pakai, batas fitur per tier, skills mulai Plus), `tests/review/rejection-codes.test.ts` (AI Mode terkunci di Pro, penagihan `MAX(sumber, output)`), `tests/review/document-safety.test.ts` (jatah Free tidak terisi ulang saat bulan berganti, diagnosis tiga guard, repair lolos dari batas permintaan), `tests/review/admin-service.test.ts` (ukuran pemakaian mengikuti scope jatah).
+
+### Tidak diklaim
+
+Pembayaran, checkout, pembelian top-up, pencairan saldo top-up, siklus perpanjangan/pembekuan, dan integrasi identitas MKL belum ada di kode. Halaman paket menyatakan hal ini apa adanya: tombol paket dan blok top-up menjelaskan pembelian belum tersedia di aplikasi. Migrasi database tidak ditambahkan; tidak ada verifikasi browser atau deployment.

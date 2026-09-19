@@ -10,7 +10,7 @@ export function PaidLock({ size = 14, className = '' }: { size?: number; classNa
 }
 
 const TIER_NAMES: Record<string, [string, string]> = {
-  plus: ['Plus', 'Plus'], pro: ['Pro', 'Pro'], team: ['Tim', 'Team'], free: ['Gratis', 'Free'],
+  plus: ['Plus', 'Plus'], pro: ['Pro', 'Pro'], max: ['Max', 'Max'], free: ['Gratis', 'Free'],
 };
 
 // "Plus" rather than a hardcoded plan name, read from the catalogue so copy cannot drift from the gate.

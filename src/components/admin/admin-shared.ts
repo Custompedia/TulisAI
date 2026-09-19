@@ -1,12 +1,14 @@
+import { TIERS as PLAN_TIERS, type Tier } from '@/lib/plans';
+
 export type Role = 'user' | 'admin';
-export type Tier = 'free' | 'plus' | 'pro' | 'team';
+export type { Tier };
 export type T = (id: string, en: string) => string;
 export type AdminUser = {
   id: string; name: string; email: string; username: string | null; image: string | null; role: Role; tier: Tier; emailVerified: boolean; createdAt: string; updatedAt: string;
-  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; unlimited: boolean;
-  requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
+  banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; charactersUsed: number; characterScope: 'account' | 'period'; unlimited: boolean;
+  requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
 };
-export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; monthlyCharacterLimit: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
+export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; freeCharacterAllowance: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
 export type AuditEntry = { id: string; actorId: string; actorName: string | null; targetUserId: string | null; targetName: string | null; action: string; details: Record<string, unknown>; createdAt: string };
 export type UsageEntry = { id: string; operation: string; promptId: string | null; status: string; sourceCharacters: number | null; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; errorCode: string | null; createdAt: string; completedAt: string | null };
 export type SessionEntry = { id: string; token: string; createdAt: string; expiresAt: string; ipAddress: string | null; userAgent: string | null };
@@ -26,8 +28,8 @@ export const ADMIN_ACTIONS = ['user.create', 'user.update', 'user.role', 'user.b
 export const sortLabel = (sort: UserSort, t: T) => ({ newest: t('Terbaru bergabung', 'Newest'), oldest: t('Terlama bergabung', 'Oldest'), name: t('Nama A–Z', 'Name A–Z'), usage: t('AI terbanyak bulan ini', 'Most AI this month'), active: t('Terakhir aktif', 'Recently active') })[sort];
 export const promptLabel = (promptId: string) => ({ P01_STANDARD_REWRITE: 'Parafrase', P02_ACADEMIC: 'Akademik', P03_HUMANIZER: 'Humanize', P04_PROFESSIONAL: 'Profesional', P05_CREATIVE: 'Kreatif', P06_SIMPLIFY: 'Sederhanakan', P07_INLINE_ALTERNATIVES: 'Alternatif inline', P08_CUSTOM_TRANSFORM: 'Sesuaikan', P09_QUALITY_EVALUATION: 'Analisis kualitas', P10_REPAIR: 'Perbaikan', generate: 'Rewrite', repair: 'Perbaikan', analyze: 'Analisis' } as Record<string, string>)[promptId] ?? promptId;
 
-export const TIERS: Tier[] = ['free', 'plus', 'pro', 'team'];
-export const tierLabel = (tier: Tier, t: T) => ({ free: t('Gratis', 'Free'), plus: 'Plus', pro: 'Pro', team: t('Tim', 'Team') })[tier];
+export const TIERS: readonly Tier[] = PLAN_TIERS;
+export const tierLabel = (tier: Tier, t: T) => ({ free: t('Gratis', 'Free'), plus: 'Plus', pro: 'Pro', max: 'Max' })[tier];
 export const roleLabel = (role: Role) => (role === 'admin' ? 'Admin' : 'User');
 export const actionLabel = (action: string, t: T) => ({
   'user.create': t('Membuat akun', 'Created account'), 'user.update': t('Mengubah data', 'Updated details'), 'user.role': t('Mengubah role', 'Changed role'), 'user.ban': t('Menonaktifkan akun', 'Disabled account'),

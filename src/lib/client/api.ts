@@ -80,7 +80,8 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'SERVICE_UNAVAILABLE': return t('Layanan akun sedang tidak tersedia. Coba lagi nanti.', 'Account services are temporarily unavailable. Try again later.');
     case code === 'REVISION_CONFLICT' || code === 'SOURCE_MISMATCH': return t('Dokumen berubah di tempat lain. Tulisanmu tetap aman; muat ulang atau simpan sebagai salinan.', 'The document changed elsewhere. Your writing is safe; reload or save a copy.');
     case code.includes('CONFIGURATION'): return t('Layanan AI belum dikonfigurasi. Tulisanmu tetap tersedia.', 'The AI service is not configured yet. Your writing is still available.');
-    case code === 'QUOTA_EXCEEDED': return t('Kuota karakter AI bulan ini habis. Persingkat teks, tunggu bulan depan, atau naikkan paket.', 'This month’s AI character quota is used up. Shorten the text, wait for next month, or upgrade.');
+    case code === 'QUOTA_EXCEEDED': return t('Jatah karakter AI-mu habis. Persingkat teks, tunggu kuota terisi lagi, atau naikkan paket.', 'Your AI character allowance is used up. Shorten the text, wait for it to refill, or upgrade.');
+    case code === 'REQUEST_LIMIT_REACHED': return t('Batas jumlah permintaan AI untuk paket ini sudah tercapai pada periode berjalan.', 'This plan’s AI request limit for the current period has been reached.');
     case code === 'FEATURE_LOCKED': return t('Fitur ini tersedia di paket berbayar.', 'This feature is available on a paid plan.');
     case code === 'RATE_LIMITED': return t('Terlalu banyak permintaan. Tunggu sebentar lalu coba lagi.', 'Too many requests. Wait a moment and try again.');
     case code === 'SCOPE_TOO_LARGE' || code === 'PAYLOAD_TOO_LARGE': return t('Teks terlalu panjang untuk sekali proses. Pilih paragraf atau bagian tertentu.', 'The text is too long for one run. Select a paragraph or a shorter passage.');

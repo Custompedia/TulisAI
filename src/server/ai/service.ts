@@ -8,12 +8,17 @@ import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejec
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
-import type { PlanLimits } from '@/lib/plans';
+import { FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
 import {collapseBlankLines} from '@/lib/editor/document';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
 
 const DAY = 86_400_000;
+// The three reservation guards, as SQL fragments so the INSERT and its diagnosis cannot drift apart.
+const BURST_LIMIT = 10;
+const GUARD_CHARACTERS = '(SELECT COALESCE(SUM(charge_characters),0) FROM usage_ledger WHERE {scope}) + ? <= ?';
+const GUARD_BURST = `(SELECT COUNT(1) FROM usage_ledger WHERE owner_id=? AND created_at>?) < ${BURST_LIMIT}`;
+const GUARD_REQUESTS = '(SELECT COUNT(1) FROM usage_ledger WHERE {countable}) < ?';
 const model = () => runtime().OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna';
 const outputText = (output: AIResponse, selectedAlternative?: number): string => {
   if (Array.isArray(output.alternatives)) {
@@ -22,19 +27,28 @@ const outputText = (output: AIResponse, selectedAlternative?: number): string =>
   }
   return String(output.transformed_text ?? output.corrected_text ?? '');
 };
-// The monthly cap is characters, held in charge_characters so one covering-index SUM sees both in-flight and settled usage.
+// The commercial cap is characters, held in charge_characters so one covering-index SUM sees both in-flight and settled usage.
 // billable=false still writes the row (observability, burst guard) but holds nothing: the user never pays for our own repair pass.
-async function reserve(ownerId: string, key: string, promptId: string, characters: number, rights: Entitlement, billable = true) {
-  // Admins bypass the monthly cap by comparing against a limit no ledger can reach; the 10-per-minute burst guard stays.
+// `hold` is what the reservation takes now; a free-form run holds more than its source and settles down once the output is known.
+async function reserve(ownerId: string, key: string, promptId: string, characters: number, rights: Entitlement, billable = true, hold = characters) {
+  // Admins bypass both caps by comparing against limits no ledger can reach; the 10-per-minute burst guard stays.
   const limit = rights.unlimited ? Number.MAX_SAFE_INTEGER : rights.characterLimit;
-  const charge = billable ? characters : 0;
+  // The plan's request cap is an abuse safeguard, not the commercial meter, so our own repair pass neither counts nor is blocked by it.
+  const requestLimit = rights.unlimited ? Number.MAX_SAFE_INTEGER : rights.requestLimit;
+  const charge = billable ? Math.max(characters, hold) : 0;
   const existing = await runtime().DB.prepare('SELECT id FROM usage_ledger WHERE owner_id=? AND idempotency_key=?').bind(ownerId, key).first();
   if (existing) throw new RequestError('IDEMPOTENCY_PENDING', 'This request was already attempted. Check its result before retrying.', 409);
   const id = crypto.randomUUID();
+  // Free's allowance is granted once per account, so its held total is summed across every period rather than this one.
+  const scope = rights.oneTime ? 'owner_id=?' : 'owner_id=? AND period_key=?';
+  const scopeValues = rights.oneTime ? [ownerId] : [ownerId, periodKey()];
+  const countable = "owner_id=? AND period_key=? AND operation<>'repair'";
+  const guards = billable ? `${GUARD_CHARACTERS} AND ${GUARD_BURST} AND ${GUARD_REQUESTS}` : `${GUARD_CHARACTERS} AND ${GUARD_BURST}`;
   try {
-    const result = await runtime().DB.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,prompt_id,source_characters,charge_characters) SELECT ?,?,?,?,'reserved',?,?,?,?,?,? WHERE (SELECT COALESCE(SUM(charge_characters),0) FROM usage_ledger WHERE owner_id=? AND period_key=?) + ? <= ? AND (SELECT COUNT(1) FROM usage_ledger WHERE owner_id=? AND created_at>?) < 10")
-      .bind(id, ownerId, key, promptId === 'P10_REPAIR' ? 'repair' : promptId === 'P09_QUALITY_EVALUATION' ? 'analyze' : 'generate', periodKey(), id, Date.now(), promptId, characters, charge, ownerId, periodKey(), charge, limit, ownerId, Date.now() - 60_000).run();
-    if (result.meta.changes !== 1) throw new RequestError('QUOTA_EXCEEDED', 'Monthly character quota reached. Shorten the text or review your usage.', 429);
+    const result = await runtime().DB.prepare(`INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,prompt_id,source_characters,charge_characters) SELECT ?,?,?,?,'reserved',?,?,?,?,?,? WHERE ${guards.replace('{scope}', scope).replace('{countable}', countable)}`)
+      .bind(id, ownerId, key, promptId === 'P10_REPAIR' ? 'repair' : promptId === 'P09_QUALITY_EVALUATION' ? 'analyze' : 'generate', periodKey(), id, Date.now(), promptId, characters, charge,
+        ...scopeValues, charge, limit, ownerId, Date.now() - 60_000, ...(billable ? [ownerId, periodKey(), requestLimit] : [])).run();
+    if (result.meta.changes !== 1) throw await refusedReservation(rights, countable, ownerId, billable, requestLimit);
     return id;
   } catch (error) {
     if (error instanceof RequestError) throw error;
@@ -42,6 +56,20 @@ async function reserve(ownerId: string, key: string, promptId: string, character
     if (raced) throw new RequestError('IDEMPOTENCY_PENDING', 'This request is already being processed.', 409);
     throw new RequestError('USAGE_UNAVAILABLE', 'Usage reservation could not be created.', 503);
   }
+}
+// One INSERT checks all three guards at once, so the refusal is diagnosed afterwards: the user has to be told which
+// one stopped them — waiting a minute, upgrading the plan, or shortening the text are three different answers.
+async function refusedReservation(rights: Entitlement, countable: string, ownerId: string, billable: boolean, requestLimit: number) {
+  const row = await runtime().DB.prepare(`SELECT (SELECT COUNT(1) FROM usage_ledger WHERE owner_id=? AND created_at>?) AS burst, (SELECT COUNT(1) FROM usage_ledger WHERE ${countable}) AS requests`)
+    .bind(ownerId, Date.now() - 60_000, ownerId, periodKey()).first<{ burst: number; requests: number }>().catch(() => null);
+  if ((row?.burst ?? 0) >= BURST_LIMIT) return new RequestError('RATE_LIMITED', 'Too many AI requests in a short time. Wait a moment and try again.', 429);
+  if (billable && (row?.requests ?? 0) >= requestLimit) return new RequestError('REQUEST_LIMIT_REACHED', 'This plan\'s AI request limit for the period is used up.', 429, { limit: requestLimit, tier: rights.tier });
+  return new RequestError('QUOTA_EXCEEDED', 'AI character allowance reached. Shorten the text or review your usage.', 429);
+}
+// A free-form run is charged MAX(source, output) once the output is known, releasing whatever the hold did not need.
+// Never above the hold that was already checked against the allowance, so a long output cannot push the account negative.
+async function settleUsage(id: string, charge: number) {
+  await runtime().DB.prepare("UPDATE usage_ledger SET charge_characters=MIN(charge_characters,?) WHERE id=? AND charge_characters>0").bind(Math.max(1, charge), id).run().catch(() => undefined);
 }
 // A failed provider call releases its hold in the same statement that marks it failed, so nothing is charged for it.
 async function completeUsage(id: string, result: ProviderResult, started: number) {
@@ -107,7 +135,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
   let mainUsageId = '';
   const call = async (promptId: PromptId, callKey: string, runtimeControls: RuntimeInput, repair=false, requiredTerms=trusted.protectedTerms) => {
-    const usageId = await reserve(ownerId, callKey, promptId, input.source.text.length, rights, !repair);
+    const usageId = await reserve(ownerId, callKey, promptId, input.source.text.length, rights, !repair, !repair && freeform ? input.source.text.length * FREEFORM_RESERVE_FACTOR : input.source.text.length);
     if (!repair && !mainUsageId) mainUsageId = usageId;
     const started = Date.now();
     const result = await provider.generate({promptId,runtime:runtimeControls,sourceText:input.source.text,requestId:usageId,protectedTerms:requiredTerms,protectedCitations:trusted.protectedCitations,...(repair?{repairAttempt:1}:{})});
@@ -172,6 +200,8 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
+  // AI Mode can return more than it was given, so its charge settles to MAX(source, output) inside the hold taken above.
+  if (freeform && mainUsageId) await settleUsage(mainUsageId, Math.max(input.source.text.length, outputText(output).length));
   const id=crypto.randomUUID();const expiry=Date.now()+DAY;
   await runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .bind(id,input.documentId,ownerId,input.promptId,PROMPT_VERSION,model(),input.expectedRevision,input.source.text,anchor?JSON.stringify(anchor):null,JSON.stringify({...controls,style_reference:undefined,style_reference_used:typeof controls.style_reference==='string'&&controls.style_reference.length>0,prompt_version:PROMPT_VERSION,reasoning_effort:REASONING_EFFORT[input.promptId]}),JSON.stringify(output),'preview',key,expiry,Date.now()).run();

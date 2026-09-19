@@ -46,8 +46,12 @@ describe("writing settings", () => {
     expect(PLAN_LIMITS.free.runLimit).toBe(1_000);
     expect(PLAN_LIMITS.pro.runLimit).toBe(5_000);
     expect(PLAN_LIMITS.free.features).toEqual([]);
-    for (const tier of ['plus', 'pro', 'team'] as const) expect(PLAN_LIMITS[tier].features).toContain('docx_export');
-    expect(requiredTierFor('docx_export')).toBe('plus');
+    expect(PLAN_LIMITS.max.runLimit).toBe(5_000);
+    for (const tier of ['pro', 'max'] as const) expect(PLAN_LIMITS[tier].features).toContain('docx_export');
+    expect(PLAN_LIMITS.plus.features).not.toContain('docx_export');
+    expect(requiredTierFor('docx_export')).toBe('pro');
+    expect(requiredTierFor('saved_styles')).toBe('plus');
+    expect(requiredTierFor('freeform_prompt')).toBe('max');
   });
 });
 
