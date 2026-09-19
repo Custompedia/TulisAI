@@ -9,6 +9,8 @@ import { pageGeometry, pageStyle } from '../../src/lib/docx/office-defaults';
 import { documentSchema } from '../../src/lib/editor/extensions';
 import { applyCellBorders } from '../../src/lib/editor/extensions/table-style';
 import { formatTabStops, parseTabStops } from '../../src/lib/editor/extensions/paragraph-format';
+import { nextStop, planTabs } from '../../src/lib/editor/extensions/tab-stops';
+import { indentCommand, indentPoints } from '../../src/lib/editor/extensions/indent';
 import { anchorFromText } from '../../src/lib/editor/extensions/anchors';
 import { layoutPreferences, readLayout } from '../../src/components/workspace/page-layout';
 import type { EditorNode } from '../../src/lib/editor/document';
@@ -236,5 +238,119 @@ describe('DOCX: tab stops', () => {
     expect(formatTabStops([])).toBeNull();
     expect(parseTabStops('36pt:left')).toEqual([{ position: 36, align: 'left' }]);
     expect(parseTabStops('nonsense')).toEqual([]);
+  });
+});
+
+describe('DOCX: paragraph borders', () => {
+  it('keeps the rule Word draws under a section heading', async () => {
+    const value = doc({
+      type: 'heading', attrs: { level: 1, borderBottom: '1pt solid #000000', spaceAfter: '6pt' },
+      content: [{ type: 'text', text: 'PROFIL' }],
+    }, paragraph('Isi'));
+    const { xml } = documentXml(value, 'a4');
+    expect(xml).toContain('<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="1" w:color="000000"/></w:pBdr>');
+    // w:pPr fixes the child order: borders come before spacing and indents.
+    expect(xml.indexOf('<w:pBdr>')).toBeLessThan(xml.indexOf('<w:spacing'));
+
+    const back = await docxToEditorDocument(await editorDocumentToDocx(value));
+    expect(find(back.content.content, 'heading')!.attrs!.borderBottom).toBe('1pt solid #000000');
+  });
+
+  it('still reads a bare bordered paragraph as a horizontal rule', async () => {
+    const back = await docxToEditorDocument(await editorDocumentToDocx(doc({ type: 'horizontalRule' }, paragraph('x'))));
+    expect(back.content.content.map((node) => node.type)).toEqual(['horizontalRule', 'paragraph']);
+  });
+});
+
+describe('editor: tab stops', () => {
+  it('places text on the next stop, and right stops pull the text back onto them', () => {
+    const stops = [{ position: 468, align: 'right' as const }];
+    // "Universitas ...	Agustus 2023" — the date ends exactly on the right margin stop.
+    expect(planTabs([200, 60], stops, 0, 468)).toEqual([208]);
+    expect(planTabs([100, 50], [{ position: 180, align: 'left' as const }], 0, 468)).toEqual([80]);
+    expect(planTabs([100, 40], [{ position: 200, align: 'center' as const }], 0, 468)).toEqual([80]);
+  });
+
+  it('falls back to Word\u2019s half-inch grid past the last stated stop', () => {
+    expect(nextStop([], 10, 468)).toEqual({ position: 36, align: 'left' });
+    expect(nextStop([], 36, 468)).toEqual({ position: 72, align: 'left' });
+    expect(nextStop([{ position: 90, align: 'right' }], 10, 468)).toEqual({ position: 90, align: 'right' });
+    expect(nextStop([{ position: 90, align: 'right' }], 100, 468)).toEqual({ position: 108, align: 'left' });
+  });
+
+  it('never gives a tab a negative width when the text overruns its stop', () => {
+    expect(planTabs([0, 500], [{ position: 100, align: 'right' as const }], 0, 468)).toEqual([0]);
+  });
+});
+
+describe('editor: indent', () => {
+  const caretAt = (value: unknown, at: number) => {
+    const created = EditorState.create({ doc: documentSchema.nodeFromJSON(value) });
+    return created.apply(created.tr.setSelection(TextSelection.near(created.doc.resolve(at))));
+  };
+  const listDoc = {
+    type: 'doc',
+    content: [{ type: 'bulletList', content: [
+      { type: 'listItem', content: [paragraph('Satu')] },
+      { type: 'listItem', content: [paragraph('Dua')] },
+    ] }],
+  };
+
+  // Regression: mixing the chain's shared transaction with a second dispatched one threw
+  // "Applying a mismatched transaction" the moment Tab was pressed inside a list.
+  it('dispatches exactly one transaction, in a list as well as in a paragraph', () => {
+        // The second item, because ProseMirror cannot nest the first one under anything.
+    for (const [value, at] of [[doc(paragraph('teks')), 1], [listDoc, 8]] as const) {
+      const state = caretAt(value, at);
+      const dispatched: unknown[] = [];
+      expect(indentCommand(1)(state, (tr) => dispatched.push(tr))).toBe(true);
+      expect(dispatched).toHaveLength(1);
+    }
+  });
+
+  it('moves a paragraph by half an inch and never below zero', () => {
+    const state = caretAt(doc(paragraph('teks')), 1);
+    let next = state;
+    indentCommand(1)(state, (tr) => { next = state.apply(tr); });
+    expect(next.doc.child(0).attrs.indentLeft).toBe('36pt');
+    let back = next;
+    indentCommand(-1)(next, (tr) => { back = next.apply(tr); });
+    expect(back.doc.child(0).attrs.indentLeft).toBeNull();
+    // Nothing left to outdent, so the command reports that it did not apply.
+    expect(indentCommand(-1)(back, () => undefined)).toBe(false);
+  });
+
+  it('nests a list item instead of indenting its paragraph', () => {
+    const state = caretAt(listDoc, 8);
+    let next = state;
+    expect(indentCommand(1)(state, (tr) => { next = state.apply(tr); })).toBe(true);
+    const list = next.doc.child(0);
+    expect(list.childCount).toBe(1);
+    expect(list.child(0).child(1).type.name).toBe('bulletList');
+  });
+
+  it('reads an indent in whatever unit the document stored it', () => {
+    expect(indentPoints('36pt')).toBe(36);
+    expect(indentPoints('48px')).toBe(36);
+    expect(indentPoints('1in')).toBe(72);
+    expect(indentPoints(null)).toBe(0);
+  });
+});
+
+describe('DOCX: list indents', () => {
+  it('carries a tighter list indent through the file and back', async () => {
+    const value = doc({
+      type: 'bulletList', attrs: { indent: '18pt' },
+      content: [{ type: 'listItem', content: [paragraph('Satu')] }],
+    });
+    expect(documentXml(value, 'a4').xml).toContain('<w:ind w:left="360" w:hanging="360"/>');
+    const back = await docxToEditorDocument(await editorDocumentToDocx(value));
+    expect(find(back.content.content, 'bulletList')!.attrs!.indent).toBe('18pt');
+  });
+
+  it('leaves a default half-inch list without an indent of its own', async () => {
+    const value = doc({ type: 'bulletList', content: [{ type: 'listItem', content: [paragraph('Satu')] }] });
+    const back = await docxToEditorDocument(await editorDocumentToDocx(value));
+    expect(find(back.content.content, 'bulletList')!.attrs?.indent).toBeUndefined();
   });
 });

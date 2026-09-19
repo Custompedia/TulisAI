@@ -1,10 +1,11 @@
 import { Extension } from '@tiptap/core';
 import type { EditorState, Transaction } from '@tiptap/pm/state';
+import { BORDER_SIDES, borderAttr, cssBorder, parseCssBorder } from '../../docx/borders';
 
 // Block-level spacing and indents as CSS lengths, so pasted Docs/Word paragraphs and DOCX imports keep their layout.
 const STYLE: Record<string, string> = { lineHeight: 'line-height', spaceBefore: 'margin-top', spaceAfter: 'margin-bottom', indentLeft: 'margin-left', indentRight: 'margin-right', indentFirstLine: 'text-indent' };
 const SAFE = /^-?[\d.]+(?:pt|px|em|rem|in|cm|mm|%)?$/u;
-export const PARAGRAPH_FORMAT_KEYS = [...Object.keys(STYLE), 'tabStops'];
+export const PARAGRAPH_FORMAT_KEYS = [...Object.keys(STYLE), 'tabStops', ...BORDER_SIDES.map(borderAttr)];
 // Tab stops as "36pt:left,180pt:right"; the canvas renders the default half-inch grid, Word uses the real stops.
 export const TAB_ALIGNS = ['left', 'center', 'right', 'decimal'] as const;
 const TAB_STOPS = /^\d+(?:\.\d+)?pt:(?:left|center|right|decimal)(?:,\d+(?:\.\d+)?pt:(?:left|center|right|decimal)){0,19}$/u;
@@ -24,7 +25,7 @@ export const safeLength = (value: unknown): string | null => typeof value === 's
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
     paragraphFormat: {
-      setParagraphFormat: (attrs: Partial<Record<'lineHeight' | 'spaceBefore' | 'spaceAfter' | 'indentLeft' | 'indentRight' | 'indentFirstLine' | 'tabStops', string | null>>) => ReturnType;
+      setParagraphFormat: (attrs: Partial<Record<'lineHeight' | 'spaceBefore' | 'spaceAfter' | 'indentLeft' | 'indentRight' | 'indentFirstLine' | 'tabStops' | 'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft', string | null>>) => ReturnType;
       unsetParagraphFormat: () => ReturnType;
     };
   }
@@ -40,6 +41,20 @@ export const ParagraphFormat = Extension.create({
           default: null,
           parseHTML: (element: HTMLElement) => safeLength(element.style.getPropertyValue(css)),
           renderHTML: (attrs: Record<string, unknown>) => { const value = safeLength(attrs[key]); return value ? { style: `${css}: ${value}` } : {}; },
+        }])),
+        // The rule under a heading is a paragraph border in Word, so it travels as one here too.
+        ...Object.fromEntries(BORDER_SIDES.map((side) => [borderAttr(side), {
+          default: null,
+          parseHTML: (element: HTMLElement) => {
+            const style = element.style;
+            const width = style.getPropertyValue(`border-${side}-width`); const kind = style.getPropertyValue(`border-${side}-style`);
+            const parsed = parseCssBorder(width || kind ? `${width} ${kind} ${style.getPropertyValue(`border-${side}-color`)}`.trim() : style.getPropertyValue(`border-${side}`));
+            return parsed === undefined ? null : cssBorder(parsed);
+          },
+          renderHTML: (attrs: Record<string, unknown>) => {
+            const parsed = parseCssBorder(attrs[borderAttr(side)]);
+            return parsed === undefined ? {} : { style: `border-${side}: ${cssBorder(parsed)}` };
+          },
         }])),
         tabStops: {
           default: null,

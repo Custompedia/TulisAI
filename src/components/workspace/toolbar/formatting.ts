@@ -1,6 +1,7 @@
 import type { Editor } from '@tiptap/react';
 import type { Mark, Node as PMNode } from '@tiptap/pm/model';
 import { DEFAULT_FONT, DEFAULT_FONT_POINTS, FONT_LINE_HEIGHT, HEADINGS, SPACE_AFTER_TWIPS, SPACE_BEFORE_TWIPS, TWIPS_PER_POINT } from '@/lib/docx/office-defaults';
+import { INDENT_STEP_POINTS } from '@/lib/editor/extensions/indent';
 import { PARAGRAPH_FORMAT_KEYS } from '@/lib/editor/extensions/paragraph-format';
 
 export type BlockStyle = 'normal' | 'title' | 'subtitle' | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6';
@@ -11,7 +12,7 @@ export const SUBTITLE = { fontSize: '15pt', color: '#666666' };
 export const FONT_SIZES = [8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72, 96];
 export const MIN_FONT_SIZE = 1;
 export const MAX_FONT_SIZE = 400;
-export const INDENT_STEP = 36;
+export const INDENT_STEP = INDENT_STEP_POINTS;
 export const LINE_SPACINGS = [1, 1.15, 1.5, 2];
 export const SPACE_BEFORE_ADDED = '10pt';
 export const DEFAULT_SPACE_AFTER = SPACE_AFTER_TWIPS / TWIPS_PER_POINT;
@@ -113,20 +114,10 @@ export function stepFontSize(editor: Editor, direction: 1 | -1) {
 
 const inListItem = (editor: Editor) => editor.isActive('taskItem') ? 'taskItem' : editor.isActive('listItem') ? 'listItem' : null;
 
-// Lists nest and un-nest; paragraphs move their left indent in 36 pt steps, never below zero.
+// One path for the toolbar and for Tab: lists nest and un-nest, paragraphs move by half an inch.
 export function shiftIndent(editor: Editor, direction: 1 | -1) {
-  const item = inListItem(editor);
-  if (item) { if (direction > 0) editor.chain().focus().sinkListItem(item).run(); else editor.chain().focus().liftListItem(item).run(); return; }
-  editor.chain().focus().command(({ tr, state }) => {
-    let changed = false;
-    state.doc.nodesBetween(state.selection.from, state.selection.to, (node, pos) => {
-      if (node.type.name !== 'paragraph' && node.type.name !== 'heading') return true;
-      const next = Math.max(0, roundPoints((lengthToPoints(node.attrs.indentLeft) ?? 0) + INDENT_STEP * direction));
-      tr.setNodeMarkup(pos, undefined, { ...node.attrs, indentLeft: next > 0 ? `${next}pt` : null }); changed = true;
-      return false;
-    });
-    return changed;
-  }).run();
+  const chain = editor.chain().focus();
+  (direction > 0 ? chain.indentBlock() : chain.outdentBlock()).run();
 }
 
 export function canShiftIndent(editor: Editor, direction: 1 | -1) {

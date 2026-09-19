@@ -10,6 +10,7 @@ import { TaskItem, TaskList } from '@tiptap/extension-list';
 import { HeadingAnchor } from './anchors';
 import { CellStyle } from './cell-style';
 import { Footnote } from './footnote';
+import { Indent } from './indent';
 import { ListStyle } from './list-style';
 import { PageBreak } from './page-break';
 import { ParagraphFormat } from './paragraph-format';
@@ -24,7 +25,7 @@ export const documentExtensions: AnyExtension[] = [
   TextStyle, FontFamily, FontSize, Color, BackgroundColor,
   Highlight.configure({ multicolor: true }), Subscript, Superscript,
   TaskList, TaskItem.configure({ nested: true }),
-  ParagraphFormat, ListStyle, CellStyle, TableStyle, PageBreak, Footnote, HeadingAnchor, TableOfContents,
+  ParagraphFormat, ListStyle, CellStyle, TableStyle, Indent, PageBreak, Footnote, HeadingAnchor, TableOfContents,
 ];
 
 export const documentSchema = getSchema(documentExtensions);

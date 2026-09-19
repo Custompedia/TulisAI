@@ -40,6 +40,7 @@ import { InstructionDock } from './InstructionDock';
 import { FormattingToolbar } from './FormattingToolbar';
 import { usePageZoom } from './toolbar/zoom';
 import { PAGE_GUTTER, paginationExtension } from '@/lib/editor/extensions/pagination';
+import { tabStopsExtension } from '@/lib/editor/extensions/tab-stops';
 import { SearchExtension } from '@/lib/editor/extensions/search';
 import { spellcheckExtension } from '@/lib/editor/extensions/spellcheck';
 import { renderRunning } from '@/lib/docx/running';
@@ -204,6 +205,7 @@ export default function Workspace() {
       protectionExtension(() => termsRef.current, () => protectedLabel.current),
       // Newspaper columns flow as one long sheet: the page splitter measures single-column blocks only.
       SearchExtension, paginationExtension({ enabled: () => pagedRef.current && columnsRef.current === 1, onPages: setPageCount }), spellcheckExtension(() => pagedRef.current),
+      tabStopsExtension({ enabled: () => pagedRef.current }),
       inlineTargetExtension,
       paragraphGutterExtension({ enabled: () => pagedRef.current, label: () => englishRef.current ? 'Act on this paragraph' : 'Tindakan untuk paragraf ini' }),
       documentLimits(() => setNotice({ tone: 'error', message: englishRef.current ? 'This content exceeds the document limit or uses unsupported formatting.' : 'Isi melewati batas dokumen atau memakai format yang belum didukung.' })),
@@ -903,7 +905,7 @@ export default function Workspace() {
   );
 
   const writing = (
-    <main aria-label={t('Tulisan', 'Writing')} className={`flex h-full min-w-0 flex-col overflow-hidden ${paged ? 'ww-writing-paged' : 'rounded-2xl border border-line bg-white'}`}>
+    <main aria-label={t('Tulisan', 'Writing')} className={`flex h-full min-w-0 flex-col overflow-hidden rounded-2xl ${paged ? 'ww-writing-paged' : 'border border-line bg-white'}`}>
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-white pl-4 pr-3">
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink-900">{t('Tulisan', 'Writing')}</h2>
         {/* Advanced mode has undo and redo in the formatting toolbar, so they are not repeated here. */}

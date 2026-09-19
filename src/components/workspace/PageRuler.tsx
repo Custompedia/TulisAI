@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { useLocale } from '@/lib/client/locale';
 import { pageGeometry, TWIPS_PER_INCH, twipsToPx, type PageMargins } from '@/lib/docx/office-defaults';
@@ -23,11 +23,15 @@ export function PageRuler({ editor, layout, zoom, language, disabled, onMargins 
   const { t } = useLocale();
   const root = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{ handle: Handle; delta: number } | null>(null);
+  // The markers belong to the paragraph the caret is in, so the ruler redraws on every transaction.
+  const [, bump] = useState(0);
+  useEffect(() => {
+    const refresh = () => bump((value) => value + 1);
+    editor.on('transaction', refresh);
+    return () => { editor.off('transaction', refresh); };
+  }, [editor]);
   const page = pageGeometry(layout.size, layout.orientation);
   const pageWidth = twipsToPx(page.width);
-  const marginLeft = twipsToPx(layout.margins.left);
-  const marginRight = twipsToPx(layout.margins.right);
-  const contentWidth = pageWidth - marginLeft - marginRight;
 
   const block = editor.state.selection.$from.parent;
   const inText = block.type.name === 'paragraph' || block.type.name === 'heading';
@@ -45,6 +49,11 @@ export function PageRuler({ editor, layout, zoom, language, disabled, onMargins 
     indentRight: Math.max(0, stored.indentRight + moving('indentRight')),
     firstLine: stored.firstLine + moving('firstLine'),
   };
+
+  // Where the text column sits while a margin is being dragged, which is what every marker is measured against.
+  const leftPx = value.marginLeft * PX_PER_POINT;
+  const rightPx = value.marginRight * PX_PER_POINT;
+  const trackWidth = Math.max(0, pageWidth - leftPx - rightPx);
 
   function commit(handle: Handle, delta: number) {
     if (!delta) return;
@@ -83,40 +92,39 @@ export function PageRuler({ editor, layout, zoom, language, disabled, onMargins 
   const addStop = (event: React.MouseEvent<HTMLDivElement>) => {
     if (disabled || !inText || drag) return;
     const box = event.currentTarget.getBoundingClientRect();
-    const scale = box.width / contentWidth;
+    const scale = box.width / trackWidth;
     const points = snap(((event.clientX - box.left) / scale) / PX_PER_POINT);
     if (points <= 0) return;
     setStops([...stops, { position: points, align: 'left' }]);
   };
 
   const unit = marginUnit(language);
-  const step = unit === 'cm' ? TWIPS_PER_INCH / 2.54 : TWIPS_PER_INCH;
-  const ticks = Math.floor(page.width / step);
+  // Word numbers its ruler from the left margin, not from the edge of the paper.
+  const stepPx = twipsToPx(unit === 'cm' ? TWIPS_PER_INCH / 2.54 : TWIPS_PER_INCH);
+  const ticks = Array.from({ length: Math.max(0, Math.ceil(trackWidth / stepPx) - 1) }, (_, index) => index + 1);
 
   return (
     <div ref={root} aria-hidden="true" className="ww-ruler" style={{ width: pageWidth, zoom }}>
-      <div className="ww-ruler-band" style={{ left: 0, width: value.marginLeft * PX_PER_POINT }} />
-      <div className="ww-ruler-band" style={{ right: 0, width: value.marginRight * PX_PER_POINT }} />
-      <div className="ww-ruler-track" style={{ left: value.marginLeft * PX_PER_POINT, right: value.marginRight * PX_PER_POINT }} onClick={addStop}>
-        {Array.from({ length: ticks + 1 }, (_, index) => {
-          const at = index * step;
-          const left = twipsToPx(at) - value.marginLeft * PX_PER_POINT;
-          if (left < 0 || left > contentWidth) return null;
-          return <span key={index} className="ww-ruler-tick" style={{ left }}>{index}</span>;
-        })}
+      <div className="ww-ruler-band" style={{ left: 0, width: leftPx }} />
+      <div className="ww-ruler-band" style={{ right: 0, width: rightPx }} />
+      <div className="ww-ruler-track" style={{ left: leftPx, right: rightPx }} onClick={addStop}>
+        {ticks.map((tick) => <span key={tick} className="ww-ruler-tick" style={{ left: tick * stepPx }}>{tick}</span>)}
         {stops.map((stop) => (
           <button key={`${stop.position}-${stop.align}`} type="button" tabIndex={-1} title={t('Hapus tab stop', 'Remove tab stop')}
             className="ww-ruler-stop" style={{ left: stop.position * PX_PER_POINT }}
             onClick={(event) => { event.stopPropagation(); setStops(stops.filter((other) => other.position !== stop.position)); }} />
         ))}
       </div>
-      <div className="ww-ruler-edge ww-ruler-edge-left" style={{ left: value.marginLeft * PX_PER_POINT }} onPointerDown={start('marginLeft')} />
-      <div className="ww-ruler-edge ww-ruler-edge-right" style={{ right: value.marginRight * PX_PER_POINT }} onPointerDown={start('marginRight')} />
+      <div className="ww-ruler-edge ww-ruler-edge-left" style={{ left: leftPx }} onPointerDown={start('marginLeft')} />
+      <div className="ww-ruler-edge ww-ruler-edge-right" style={{ right: rightPx }} onPointerDown={start('marginRight')} />
       {inText && (
         <>
-          <span className="ww-ruler-marker ww-ruler-first" style={{ left: (value.marginLeft + value.indentLeft + value.firstLine) * PX_PER_POINT }} onPointerDown={start('firstLine')} />
-          <span className="ww-ruler-marker ww-ruler-left" style={{ left: (value.marginLeft + value.indentLeft) * PX_PER_POINT }} onPointerDown={start('indentLeft')} />
-          <span className="ww-ruler-marker ww-ruler-right" style={{ left: (pageWidth / PX_PER_POINT - value.marginRight - value.indentRight) * PX_PER_POINT }} onPointerDown={start('indentRight')} />
+          <span className="ww-ruler-marker ww-ruler-first" title={t('Baris pertama', 'First line')}
+            style={{ left: leftPx + (value.indentLeft + value.firstLine) * PX_PER_POINT }} onPointerDown={start('firstLine')} />
+          <span className="ww-ruler-marker ww-ruler-left" title={t('Indentasi kiri', 'Left indent')}
+            style={{ left: leftPx + value.indentLeft * PX_PER_POINT }} onPointerDown={start('indentLeft')} />
+          <span className="ww-ruler-marker ww-ruler-right" title={t('Indentasi kanan', 'Right indent')}
+            style={{ left: pageWidth - rightPx - value.indentRight * PX_PER_POINT }} onPointerDown={start('indentRight')} />
         </>
       )}
     </div>

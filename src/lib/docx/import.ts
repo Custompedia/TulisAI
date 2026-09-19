@@ -5,8 +5,9 @@ import { safeAnchor } from '../editor/extensions/anchors';
 import { MAX_FOOTNOTE_CHARS } from '../editor/extensions/footnote';
 import { formatTabStops } from '../editor/extensions/paragraph-format';
 import { unzip, ZipError, type ZipLimits } from './zip';
+import { BORDER_SIDES, borderAttr, cssBorder } from './borders';
 import { asRunningText, PAGE_TOKEN, PAGES_TOKEN, type RunningText } from './running';
-import { asColumns, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontLineFactor, HEADING_FONT, HEADINGS, LINE_HEIGHT, MAX_COLUMNS, PAGES, pageGeometry, parseMargins, formatMargins, SPACE_AFTER_TWIPS, type Orientation, type PageMargins, type PageSize } from './office-defaults';
+import { asColumns, contentWidth, TWIPS_PER_POINT, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontLineFactor, HEADING_FONT, HEADINGS, LINE_HEIGHT, MAX_COLUMNS, PAGES, pageGeometry, parseMargins, formatMargins, SPACE_AFTER_TWIPS, type Orientation, type PageMargins, type PageSize } from './office-defaults';
 import { advance, levelOf, listShape, parseNumbering, type ListShape, type Numbering } from './numbering';
 import { inlinesFrom, marksFor, PAGE_BREAK, pushText, type Baseline, type ImportWarning, type NoteKind, type RunContext } from './runs';
 import { applyParagraph, applyRun, defaultParagraph, defaultRun, headingLevel, paragraphStyleProps, parseStyles, parseTheme, type ParaProps, type Styles } from './styles';
@@ -28,7 +29,9 @@ const DECODER = new TextDecoder();
 export const looksLikeDocx = (bytes: Uint8Array) => bytes.length > 4 && bytes[0] === 0x50 && bytes[1] === 0x4b && bytes[2] === 0x03 && bytes[3] === 0x04;
 
 type Context = RunContext & { numbering: Numbering; contentWidth: number };
-type ListInfo = { ilvl: number; shape: Exclude<ListShape, { kind: 'literal' }>; value: number | null };
+// `indent` is where the item's text sits, in points from the left margin, which is the second axis Word nests on:
+// a CV often uses one numbering level and a deeper indent instead of a real sub-level.
+type ListInfo = { ilvl: number; shape: Exclude<ListShape, { kind: 'literal' }>; value: number | null; indent: number };
 type ParaRecord = {
   kind: 'para'; styleId: string; para: ParaProps; before: number; after: number; role: 'paragraph' | 'heading' | 'quote';
   level: number; top: boolean; firstFont?: string; content: EditorNode[]; list?: ListInfo; anchor?: string; toc?: boolean;
@@ -50,6 +53,13 @@ const ALIGN: Partial<Record<string, string>> = { both: 'justify', distribute: 'j
 
 // A bookmark Word wrote just before a heading belongs to that heading, not to the body.
 const bookmarkNames = (node: XmlNode): string[] => childrenNamed(node, 'w:bookmarkStart').map((mark) => safeAnchor(attr(mark, 'w:name'))).filter((name): name is string => !!name);
+
+// Word's own default is half an inch per level, which is also what the canvas draws when nothing says otherwise.
+const LIST_STEP_POINTS = 36;
+const listIndent = (para: ParaProps, ilvl: number) => {
+  const left = (para.left ?? 0) / TWIPS_PER_POINT;
+  return left > 0 ? left : LIST_STEP_POINTS * (ilvl + 1);
+};
 
 function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: CellBase, pending?: string): Entry[] {
   const styles = context.styles;
@@ -79,10 +89,13 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
       const suffix = level.suffix === 'space' ? ' ' : level.suffix === 'nothing' ? '' : '\t';
       const text = counted.label ? `${counted.label}${suffix}` : '';
       if (text) pushText(prefix, text, marksFor(applyRun(run, level.rPr, styles.theme), baseline));
-    } else if (counted && shape.kind !== 'literal') list = { ilvl, shape, value: shape.kind === 'ordered' ? counted.value : null };
+    } else if (counted && shape.kind !== 'literal') list = { ilvl, shape, value: shape.kind === 'ordered' ? counted.value : null, indent: listIndent(para, ilvl) };
   } else if (!para.numId && !heading) {
     const match = LIST_STYLE.exec(styles.byId.get(styleId)?.name ?? styleId);
-    if (match) list = { ilvl: match[2] ? Number(match[2]) - 1 : 0, shape: /bullet/iu.test(match[1]!) ? { kind: 'bullet', listStyle: 'disc' } : { kind: 'ordered', type: '1' }, value: null };
+    if (match) {
+      const ilvl = match[2] ? Number(match[2]) - 1 : 0;
+      list = { ilvl, shape: /bullet/iu.test(match[1]!) ? { kind: 'bullet', listStyle: 'disc' } : { kind: 'ordered', type: '1' }, value: null, indent: listIndent(para, ilvl) };
+    }
   }
 
   // A TOC field spans several paragraphs; the field stack tells us which side of it this paragraph sits on.
@@ -175,6 +188,8 @@ function paragraphNode(record: ParaRecord): EditorNode {
     if (!record.list && para.firstLine) attrs.indentFirstLine = pt(para.firstLine);
   }
   if (record.role === 'heading') { attrs.level = record.level; if (record.anchor) attrs.id = record.anchor; }
+  // Word's section rule is a border on the heading paragraph itself, so it has to survive as one.
+  for (const side of BORDER_SIDES) { const line = para.borders?.[side]; if (line !== undefined) attrs[borderAttr(side)] = cssBorder(line); }
   const tabs = formatTabStops((para.tabs ?? []).map((stop) => ({ position: stop.pos / 20, align: stop.val as 'left' })));
   if (tabs) attrs.tabStops = tabs;
   const node: EditorNode = { type: record.role === 'heading' ? 'heading' : 'paragraph', ...(Object.keys(attrs).length ? { attrs } : {}), ...(record.content.length ? { content: record.content } : {}) };
@@ -185,7 +200,7 @@ function paragraphNode(record: ParaRecord): EditorNode {
 function assemble(records: Entry[]): EditorNode[] {
   contextualSpacing(records);
   const output: EditorNode[] = [];
-  type Open = { ilvl: number; key: string; node: EditorNode; next: number | null };
+  type Open = { ilvl: number; key: string; node: EditorNode; next: number | null; indent: number };
   let stack: Open[] = [];
   let lastItem: EditorNode | null = null;
   // Consecutive paragraphs that came out of one TOC field become the notebook's own table of contents block.
@@ -211,17 +226,22 @@ function assemble(records: Entry[]): EditorNode[] {
     const list = record.list;
     if (!list) { closeList(); output.push(node); continue; }
     const key = JSON.stringify(list.shape);
-    while (stack.length && stack[stack.length - 1]!.ilvl > list.ilvl) stack.pop();
+    const deeper = (open: Open) => open.ilvl > list.ilvl || open.indent > list.indent + 0.5;
+    const level = (open: Open) => open.ilvl === list.ilvl && Math.abs(open.indent - list.indent) <= 0.5;
+    while (stack.length && deeper(stack[stack.length - 1]!)) stack.pop();
     let top = stack[stack.length - 1];
-    if (top && top.ilvl === list.ilvl && (top.key !== key || (list.value !== null && top.next !== null && list.value !== top.next))) { stack.pop(); top = stack[stack.length - 1]; }
-    if (!top || top.ilvl < list.ilvl) {
+    // A different glyph, a restarted counter or a different indent all start a new list rather than continue this one.
+    if (top && level(top) && (top.key !== key || (list.value !== null && top.next !== null && list.value !== top.next))) { stack.pop(); top = stack[stack.length - 1]; }
+    if (!top || !level(top)) {
       const attrs: Record<string, unknown> = {};
       if (list.shape.kind === 'ordered') { if ((list.value ?? 1) !== 1) attrs.start = list.value; if (list.shape.type !== '1') attrs.type = list.shape.type; }
       else if (list.shape.listStyle !== 'disc') attrs.listStyle = list.shape.listStyle;
+      const step = Math.round((list.indent - (top?.indent ?? 0)) * 100) / 100;
+      if (step > 0 && Math.abs(step - LIST_STEP_POINTS) > 0.5) attrs.indent = `${step}pt`;
       const created: EditorNode = { type: list.shape.kind === 'ordered' ? 'orderedList' : 'bulletList', ...(Object.keys(attrs).length ? { attrs } : {}), content: [] };
       const parentItem = top?.node.content?.[top.node.content.length - 1];
       if (parentItem) parentItem.content!.push(created); else output.push(created);
-      top = { ilvl: list.ilvl, key, node: created, next: null };
+      top = { ilvl: list.ilvl, key, node: created, next: null, indent: list.indent };
       stack.push(top);
     }
     lastItem = node.type === 'paragraph' ? node : { type: 'paragraph', ...(node.content ? { content: node.content } : {}) };

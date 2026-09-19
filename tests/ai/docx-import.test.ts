@@ -202,6 +202,26 @@ describe('DOCX import: numbering', () => {
     + '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>'
     + '<w:num w:numId="3"><w:abstractNumId w:val="0"/><w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride></w:num>';
 
+  // A CV often uses one numbering level with a deeper indent instead of a real sub-level.
+  it('nests a deeper-indented list even when the numbering level never changes', async () => {
+    const tight = `<w:abstractNum w:abstractNumId="9"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val=""/><w:pPr><w:ind w:left="360" w:hanging="180"/></w:pPr></w:lvl></w:abstractNum>`
+      + `<w:abstractNum w:abstractNumId="10"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val=""/><w:pPr><w:ind w:left="900" w:hanging="180"/></w:pPr></w:lvl></w:abstractNum>`
+      + '<w:num w:numId="8"><w:abstractNumId w:val="9"/></w:num><w:num w:numId="9"><w:abstractNumId w:val="10"/></w:num>';
+    const result = await blocks(p(r('Pencapaian'), numPr(8)) + p(r('Finalis'), numPr(9)) + p(r('Lagi'), numPr(8)), { numbering: tight });
+    expect(result).toHaveLength(1);
+    const outer = result[0]!;
+    // 360 twips is 18 pt, half of the canvas default, so the list states its own step.
+    expect(outer.attrs!.indent).toBe('18pt');
+    const items = outer.content!;
+    expect(items).toHaveLength(2);
+    const nested = items[0]!.content![1]!;
+    expect(nested.type).toBe('bulletList');
+    // 900 twips is 45 pt, so the step down from the 18 pt parent is 27 pt rather than the default half inch.
+    expect(nested.attrs!.indent).toBe('27pt');
+    expect(textOf(nested)).toBe('Finalis');
+    expect(textOf(items[1]!)).toBe('Lagi');
+  });
+
   it('builds nested ordered lists with their formats and continues across an interruption', async () => {
     const result = await blocks(
       p(r('satu'), numPr(1)) + p(r('dua'), numPr(1)) + p(r('dua-a'), numPr(1, 1)) + p(r('dua-b'), numPr(1, 1)) + p(r('dua-b-I'), numPr(1, 2)) + p(r('tiga'), numPr(1))

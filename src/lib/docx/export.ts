@@ -108,13 +108,18 @@ function runs(node: EditorNode, writer: Writer): string {
   return element('w:hyperlink', { 'r:id': id }, run);
 }
 
-type ParagraphOptions = { style?: string; list?: { numId: number; level: number }; indent?: number; prefix?: string; header?: boolean };
+type ParagraphOptions = { style?: string; list?: { numId: number; level: number }; indent?: number; hanging?: number; prefix?: string; header?: boolean };
 
 function paragraphProperties(node: EditorNode, options: ParagraphOptions): string {
   const attrs = node.attrs ?? {};
   const properties: string[] = [];
   if (options.style) properties.push(element('w:pStyle', { 'w:val': options.style }));
   if (options.list) properties.push(element('w:numPr', {}, `${element('w:ilvl', { 'w:val': options.list.level })}${element('w:numId', { 'w:val': options.list.numId })}`));
+  // w:pPr has a fixed child order: borders and tab stops come before spacing and indents.
+  const sides = BORDER_SIDES.map((side) => ({ side, line: parseCssBorder(attrs[borderAttr(side)]) })).filter((entry) => entry.line !== undefined);
+  if (sides.length) properties.push(element('w:pBdr', {}, sides.map((entry) => element(`w:${entry.side}`, { ...ooxmlBorderAttrs(entry.line!), 'w:space': 1 })).join('')));
+  const stops = parseTabStops(attrs.tabStops);
+  if (stops.length) properties.push(element('w:tabs', {}, stops.map((stop) => element('w:tab', { 'w:val': stop.align === 'decimal' ? 'decimal' : stop.align, 'w:pos': Math.round(stop.position * 20) })).join('')));
   // List items sit tight on the canvas, so once List Paragraph's contextual spacing is off both sides are stated.
   const listed = options.style === 'ListParagraph' && (attrs.spaceBefore != null || attrs.spaceAfter != null);
   const before = lengthTwips(attrs.spaceBefore) ?? (listed ? 0 : null); const after = lengthTwips(attrs.spaceAfter) ?? (listed ? 0 : null);
@@ -129,14 +134,14 @@ function paragraphProperties(node: EditorNode, options: ParagraphOptions): strin
     else if (Number.isFinite(ratio) && ratio > 0) line = { 'w:line': Math.round((ratio / factor) * 240), 'w:lineRule': 'auto' };
   } else if (factor !== fontLineFactor(DEFAULT_FONT)) line = { 'w:line': Math.round((LINE_HEIGHT / factor) * 240), 'w:lineRule': 'auto' };
   if (before !== null || after !== null || line['w:line'] !== undefined) properties.push(element('w:spacing', { 'w:before': before ?? undefined, 'w:after': after ?? undefined, ...line }));
-  const left = lengthTwips(attrs.indentLeft) ?? options.indent ?? null; const right = lengthTwips(attrs.indentRight); const first = lengthTwips(attrs.indentFirstLine);
+  const left = lengthTwips(attrs.indentLeft) ?? options.indent ?? null; const right = lengthTwips(attrs.indentRight);
+  // A list marker hangs to the left of its text, which is the only place `hanging` comes from.
+  const first = lengthTwips(attrs.indentFirstLine) ?? (options.hanging ? -options.hanging : null);
   if (left !== null || right !== null || first !== null) {
     properties.push(element('w:ind', { 'w:left': left ?? undefined, 'w:right': right ?? undefined, ...(first !== null ? (first < 0 ? { 'w:hanging': -first } : { 'w:firstLine': first }) : {}) }));
   }
   // List Paragraph drops spacing between items; stated spacing has to switch that off to survive.
   if (listed) properties.push(element('w:contextualSpacing', { 'w:val': 0 }));
-  const stops = parseTabStops(attrs.tabStops);
-  if (stops.length) properties.push(element('w:tabs', {}, stops.map((stop) => element('w:tab', { 'w:val': stop.align === 'decimal' ? 'decimal' : stop.align, 'w:pos': Math.round(stop.position * 20) })).join('')));
   const align = alignmentFrom(attrs.textAlign);
   if (align) properties.push(element('w:jc', { 'w:val': JUSTIFICATION[align] }));
   return properties.length ? `<w:pPr>${properties.join('')}</w:pPr>` : '';
@@ -148,9 +153,14 @@ function paragraph(node: EditorNode, writer: Writer, options: ParagraphOptions =
   return `<w:p>${paragraphProperties(node, options)}${prefix}${body}</w:p>`;
 }
 
-function listParagraphs(node: EditorNode, writer: Writer, level: number): string {
+const LIST_STEP_TWIPS = 720;
+const LIST_HANGING_TWIPS = 360;
+
+function listParagraphs(node: EditorNode, writer: Writer, level: number, base = 0): string {
   const ordered = node.type === 'orderedList';
   const attrs = node.attrs ?? {};
+  // How far this level sits from the one around it, so an imported list keeps the indent it came with.
+  const indent = base + (lengthTwips(attrs.indent) ?? LIST_STEP_TWIPS);
   const definition: ListDefinition = {
     id: writer.lists.length + 1, level: Math.min(level, 8), ordered,
     type: typeof attrs.type === 'string' && ORDERED_FORMAT[attrs.type] ? attrs.type : '1',
@@ -160,8 +170,12 @@ function listParagraphs(node: EditorNode, writer: Writer, level: number): string
   writer.lists.push(definition);
   return (node.content ?? []).flatMap((item) => (item.content ?? []).map((block, index) => {
     // The marker belongs to the item's first block; later blocks continue the item at its indent.
-    if (block.type === 'paragraph') return paragraph(block, writer, index === 0 ? { style: 'ListParagraph', list: { numId: definition.id, level: definition.level } } : { style: 'ListParagraph', indent: 720 * (definition.level + 1) });
-    if (block.type === 'bulletList' || block.type === 'orderedList') return listParagraphs(block, writer, level + 1);
+    if (block.type === 'paragraph') {
+      return paragraph(block, writer, index === 0
+        ? { style: 'ListParagraph', list: { numId: definition.id, level: definition.level }, indent, hanging: LIST_HANGING_TWIPS }
+        : { style: 'ListParagraph', indent });
+    }
+    if (block.type === 'bulletList' || block.type === 'orderedList') return listParagraphs(block, writer, level + 1, indent);
     if (block.type === 'taskList') return taskParagraphs(block, writer, level + 1);
     return blocks(block, writer);
   })).join('');

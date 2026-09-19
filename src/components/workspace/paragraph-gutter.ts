@@ -77,6 +77,8 @@ function build(doc: PMNode, label: string): DecorationSet {
   const decorations = gutterTargets(doc).map((target) => Decoration.widget(target.from, () => {
     const button = window.document.createElement('button');
     button.type = 'button';
+    // Out of the tab order: Tab belongs to the text, and the same action sits in the instruction dock.
+    button.tabIndex = -1;
     button.className = 'ww-paragraph-gutter';
     button.setAttribute('data-paragraph-gutter', '');
     button.setAttribute('data-from', String(target.from));
