@@ -11,14 +11,16 @@ import { AuthView } from '@/components/auth/AuthView';
 function render(overrides: Partial<ComponentProps<typeof AuthView>> = {}) {
   return renderToStaticMarkup(createElement(AuthView, {
     values: { name: '', username: '', email: '', password: '', confirm: '' }, remember: true, busy: null, error: '', fieldErrors: {}, next: null,
-    inputRefs: { name: { current: null }, username: { current: null }, email: { current: null }, password: { current: null }, confirm: { current: null } }, onChange: vi.fn(), onRemember: vi.fn(), onSubmit: vi.fn(), onGoogle: vi.fn(), ...overrides,
+    inputRefs: { name: { current: null }, username: { current: null }, email: { current: null }, password: { current: null }, confirm: { current: null } }, onChange: vi.fn(), onRemember: vi.fn(), onSubmit: vi.fn(), onGoogle: vi.fn(), onMkl: vi.fn(), ...overrides,
   }));
 }
 
 describe('login presentation', () => {
-  it('offers Google and email/password in an accessible standalone card', () => {
+  it('offers MKL as the primary action while preserving Google and email/password', () => {
     const html = render();
+    expect(html).toContain('Continue with MKL');
     expect(html).toContain('Continue with Google');
+    expect(html.indexOf('Continue with MKL')).toBeLessThan(html.indexOf('<form'));
     expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Continue with Google'));
     expect(html).toContain('type="email"');
     expect(html).toContain('type="password"');
@@ -32,11 +34,11 @@ describe('login presentation', () => {
     expect(html).not.toMatch(/>ID<|>EN<|Username or email/);
   });
 
-  it.each(['form', 'google'] as const)('locks all authentication controls while %s is pending', busy => {
+  it.each(['form', 'google', 'mkl'] as const)('locks all authentication controls while %s is pending', busy => {
     const html = render({ busy });
     expect(html).toMatch(/<fieldset[^>]*disabled=""/);
-    expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(2);
-    expect(html).toContain(busy === 'google' ? 'Connecting to Google…' : 'Signing in…');
+    expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(3);
+    expect(html).toContain(busy === 'google' ? 'Connecting to Google…' : busy === 'mkl' ? 'Connecting to MKL…' : 'Signing in…');
   });
 
   it('connects field errors to inputs and displays recoverable provider errors', () => {

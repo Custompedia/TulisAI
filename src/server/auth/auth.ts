@@ -5,9 +5,35 @@ import { APIError, createAuthMiddleware } from "better-auth/api";
 import { drizzle } from "drizzle-orm/d1";
 import { runtime, requiredSetting } from "../runtime";
 import { emailConfigured, renderEmail, sendEmail, type EmailTemplate } from "../email/send";
+import { getMklLinkByUserId } from "../identity/links";
+import { mklIdentityPlugin } from "./mkl-plugin";
 
 const EMAIL_PATHS = new Set(["/request-password-reset", "/change-email", "/send-verification-email"]);
 import * as schema from "@/db/schema";
+
+type AdminMutationBody = { userId?: unknown; role?: unknown; data?: { role?: unknown } };
+
+function containsAdminRole(value: unknown): boolean {
+  const roles = Array.isArray(value) ? value : [value];
+  return roles.some((role) => typeof role === "string" && role.split(",").some((item) => item.trim() === "admin"));
+}
+
+async function enforceMklAdminBoundary(path: string, body: unknown): Promise<void> {
+  if (path !== "/admin/set-role" && path !== "/admin/update-user" && path !== "/admin/remove-user") return;
+  const mutation = body && typeof body === "object" ? body as AdminMutationBody : {};
+  const userId = typeof mutation.userId === "string" ? mutation.userId : null;
+  if (!userId) return;
+  const isPromotion = path === "/admin/set-role"
+    ? containsAdminRole(mutation.role)
+    : path === "/admin/update-user" && containsAdminRole(mutation.data?.role);
+  if (path !== "/admin/remove-user" && !isPromotion) return;
+  if (!await getMklLinkByUserId(userId)) return;
+  const code = path === "/admin/remove-user" ? "MKL_LINKED_ACCOUNT_DELETE_FORBIDDEN" : "MKL_LINKED_ADMIN_FORBIDDEN";
+  const message = path === "/admin/remove-user"
+    ? "An MKL-linked account cannot be deleted."
+    : "An MKL-linked customer account cannot become a local admin.";
+  throw APIError.from("FORBIDDEN", { code, message });
+}
 
 export function auth() {
   const value = runtime();
@@ -39,6 +65,7 @@ export function auth() {
       }),
     },
     user: { changeEmail: { enabled: true } },
+    account: { accountLinking: { disableImplicitLinking: true } },
     socialProviders: google,
     advanced: { disableOriginCheck: false, ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] } },
     rateLimit: {
@@ -59,6 +86,7 @@ export function auth() {
     hooks: {
       before: createAuthMiddleware(async (ctx) => {
         if (EMAIL_PATHS.has(ctx.path) && !emailConfigured()) throw APIError.from("SERVICE_UNAVAILABLE", { code: "EMAIL_CONFIGURATION_REQUIRED", message: "Email delivery is not configured." });
+        await enforceMklAdminBoundary(ctx.path, ctx.body);
       }),
     },
     databaseHooks: {
@@ -82,7 +110,7 @@ export function auth() {
         },
       },
     },
-    plugins: [username({
+    plugins: [mklIdentityPlugin(), username({
       displayUsername: false,
       minUsernameLength: 3,
       maxUsernameLength: 30,

@@ -44,11 +44,15 @@
 .error { margin-bottom: 16px; font-size: 12px; }
 .remember { display: inline-flex; align-self: flex-start; align-items: center; gap: 8px; min-height: 20px; font-size: 12px; color: #656c5b; cursor: pointer; }
 .remember input { width: 15px; height: 15px; accent-color: #3c4733; }
-.submit, .google { width: 100%; min-height: 44px; display: flex; justify-content: center; align-items: center; gap: 10px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+.submit, .google, .mkl { width: 100%; min-height: 44px; display: flex; justify-content: center; align-items: center; gap: 10px; border-radius: 8px; font-size: 13px; font-weight: 500; }
+.mkl { color: white; border: 1px solid #171815; background: #20231e; box-shadow: 0 2px 5px #1d221830; transition: background-color 140ms, transform 140ms; }
+.mkl:hover:not(:disabled) { background: #10120f; }
+.mkl:active:not(:disabled) { transform: translateY(1px); }
+.mklMark { display: grid; width: 21px; height: 21px; place-items: center; border-radius: 6px; background: #eef2e9; color: #273020; font-size: 12px; font-weight: 800; }
 .submit { color: white; border: 1px solid transparent; background: #425b34; transition: background-color 140ms, transform 140ms; }
 .submit:hover:not(:disabled) { background: #34472a; }
 .submit:active:not(:disabled) { transform: translateY(1px); }
-.submit:disabled, .google:disabled { cursor: wait; opacity: .6; }
+.submit:disabled, .google:disabled, .mkl:disabled { cursor: wait; opacity: .6; }
 .divider { display: flex; align-items: center; gap: 12px; margin: 18px 0; color: #92968a; font-size: 11px; }
 .divider span { flex: 1; height: 1px; background: #e8ebe2; }
 .google { border: 1px solid #dadce0; background: white; color: #30332d; transition: background 140ms, border-color 140ms; }

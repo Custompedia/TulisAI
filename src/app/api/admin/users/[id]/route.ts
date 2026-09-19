@@ -27,7 +27,7 @@ export async function PATCH(request: Request, { params }: Context) {
 export async function DELETE(request: Request, { params }: Context) {
   try {
     const admin = await requireAdmin(request); idempotencyKey(request); const { id } = await params;
-    const target = await getUser(id); assertRemove(admin.id, target);
+    const target = await getUser(id); await assertRemove(admin.id, target);
     await purgeUserData(id);
     await auth().api.removeUser({ headers: request.headers, body: { userId: id } });
     await audit(admin.id, id, "user.delete", { email: target.email, name: target.name });

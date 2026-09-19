@@ -96,8 +96,8 @@ describe("account routes", () => {
     const response = await getAccount(cookie);
     expect(response.status).toBe(200);
     const { data } = await response.json() as { data: Record<string, unknown> };
-    expect(Object.keys(data).sort()).toEqual(["createdAt", "email", "emailVerified", "hasPassword", "id", "image", "name", "providers", "username"]);
-    expect(data).toMatchObject({ name: "Ada Lovelace", email: "ada@example.test", username: "ada", emailVerified: false, image: null, hasPassword: true, providers: ["credential"] });
+    expect(Object.keys(data).sort()).toEqual(["createdAt", "email", "emailVerified", "hasPassword", "id", "image", "mkl", "name", "providers", "username"]);
+    expect(data).toMatchObject({ name: "Ada Lovelace", email: "ada@example.test", username: "ada", emailVerified: false, image: null, hasPassword: true, providers: ["credential"], mkl: { linked: false } });
     expect(new Date(String(data.createdAt)).getTime()).not.toBeNaN();
     expect((await getAccount("")).status).toBe(401);
   });

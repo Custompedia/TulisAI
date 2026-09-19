@@ -78,6 +78,18 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'CREDENTIAL_ACCOUNT_NOT_FOUND': return t('Akun ini belum punya password.', 'This account does not have a password yet.');
     case code === 'EMAIL_CONFIGURATION_REQUIRED': return t('Pengiriman email belum dikonfigurasi. Hubungi admin.', 'Email delivery is not configured yet. Contact the administrator.');
     case code === 'SERVICE_UNAVAILABLE': return t('Layanan akun sedang tidak tersedia. Coba lagi nanti.', 'Account services are temporarily unavailable. Try again later.');
+    case code === 'MKL_NOT_CONFIGURED': return t('Masuk dengan MKL belum dikonfigurasi.', 'MKL sign-in is not configured yet.');
+    case code === 'MKL_UNAVAILABLE': return t('MKL sedang tidak tersedia. Coba lagi nanti.', 'MKL is temporarily unavailable. Try again later.');
+    case code === 'MKL_AUTH_CANCELLED': return t('Masuk dengan MKL dibatalkan.', 'MKL sign-in was cancelled.');
+    case code === 'MKL_STATE_INVALID' || code === 'MKL_STATE_EXPIRED': return t('Permintaan MKL tidak valid atau sudah kedaluwarsa. Mulai lagi.', 'The MKL request is invalid or expired. Start again.');
+    case code === 'MKL_TOKEN_INVALID': return t('Identitas MKL tidak dapat diverifikasi.', 'The MKL identity could not be verified.');
+    case code === 'MKL_PROFILE_INCOMPLETE': return t('MKL harus menyediakan email terverifikasi untuk membuat akun baru.', 'MKL must provide a verified email to create a new account.');
+    case code === 'MKL_EMAIL_CONFLICT': return t('Email ini sudah dipakai akun lokal. Masuk secara lokal lalu hubungkan MKL dari Pengaturan.', 'This email belongs to a local account. Sign in locally, then link MKL from Settings.');
+    case code === 'MKL_IDENTITY_LINKED_ELSEWHERE': return t('Identitas MKL ini tidak dapat dihubungkan ke akun tersebut.', 'This MKL identity cannot be linked to that account.');
+    case code === 'MKL_ACCOUNT_ALREADY_LINKED': return t('Akun lokal ini sudah terhubung ke identitas MKL.', 'This local account is already linked to an MKL identity.');
+    case code === 'MKL_ADMIN_LINK_FORBIDDEN' || code === 'MKL_LINKED_ADMIN_FORBIDDEN': return t('Identitas pelanggan MKL harus terpisah dari akun admin lokal.', 'MKL customer identity must remain separate from local admin accounts.');
+    case code === 'MKL_CONFIRMATION_REQUIRED' || code === 'MKL_CONFIRMATION_EXPIRED': return t('Konfirmasi MKL tidak tersedia atau kedaluwarsa. Mulai lagi.', 'The MKL confirmation is unavailable or expired. Start again.');
+    case code === 'MKL_LINKED_ACCOUNT_DELETE_FORBIDDEN': return t('Akun yang terhubung ke MKL belum dapat dihapus.', 'An MKL-linked account cannot be deleted.');
     case code === 'REVISION_CONFLICT' || code === 'SOURCE_MISMATCH': return t('Dokumen berubah di tempat lain. Tulisanmu tetap aman; muat ulang atau simpan sebagai salinan.', 'The document changed elsewhere. Your writing is safe; reload or save a copy.');
     case code.includes('CONFIGURATION'): return t('Layanan AI belum dikonfigurasi. Tulisanmu tetap tersedia.', 'The AI service is not configured yet. Your writing is still available.');
     case code === 'QUOTA_EXCEEDED': return t('Jatah karakter AI-mu habis. Persingkat teks, tunggu kuota terisi lagi, atau naikkan paket.', 'Your AI character allowance is used up. Shorten the text, wait for it to refill, or upgrade.');

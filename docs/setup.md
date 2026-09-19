@@ -19,7 +19,7 @@ cp .env.example .dev.vars
 
 ## Database dan development
 
-Migrasi `0000`–`0002` diterapkan berurutan; `0002_workspace_metadata.sql` menambah preferensi onboarding dan metadata mode/scope versi.
+Migrasi `0000`–`0011` diterapkan berurutan. `0011_mkl_identity_bridge.sql` menambah otoritas link identitas eksternal `(issuer, subject)` serta guard database yang menolak link admin, promosi linked customer menjadi admin, dan penghapusan akun yang masih linked; migrasi ini tidak mengubah tier, entitlement, wallet, atau commerce.
 
 Konfigurasi Worker ada di `wrangler.jsonc`. Binding lokal yang digunakan adalah `DB` (D1) dan `DOCUMENTS` (R2). Terapkan migrasi lokal:
 
@@ -75,6 +75,19 @@ Untuk Google, isi `GOOGLE_CLIENT_ID` dan `GOOGLE_CLIENT_SECRET`, lalu set `BETTE
 
 Jika port berbeda, ganti host dan port sesuai URL dev. Tambahkan callback exact tersebut di Google Cloud OAuth client. Login UI memulai `POST /api/auth/sign-in/social` dengan `{ provider: "google", callbackURL: "/app" }`; cancel, expired session, dan konfigurasi yang hilang harus menghasilkan pesan yang dapat dipahami pengguna.
 
+## MKL OIDC identity bridge
+
+Bridge MKL memakai Authorization Code + PKCE S256 dan mempertahankan Better Auth sebagai otoritas sesi lokal. Konfigurasi runtime yang dibutuhkan adalah `MKL_ISSUER`, `MKL_CLIENT_ID`, `MKL_CLIENT_SECRET`, dan `BETTER_AUTH_URL`. Secret klien hanya boleh diberikan melalui binding secret lokal/Cloudflare; jangan menaruh nilainya di repository. Nilai produksi yang dikunci adalah:
+
+- issuer: `https://marikitalembur.com`
+- origin aplikasi: `https://tulis.marikitalembur.com`
+- callback: `https://tulis.marikitalembur.com/api/auth/mkl/callback`
+- post-logout: `https://tulis.marikitalembur.com/`
+
+Client ID belum ditetapkan di source karena registrasi MKL belum dilakukan. Untuk test/dev, gunakan nilai test eksplisit dan origin localhost. Endpoint lokal bridge adalah `POST /api/auth/mkl/start`, `POST /api/auth/mkl/link/start`, `GET /api/auth/mkl/callback`, serta `GET`/`POST /api/account/mkl/link/confirm`.
+
+Email dari MKL hanya profil dan pemeriksaan konflik; link selalu menggunakan pasangan issuer + subject. Email yang sama tidak pernah mengadopsi akun lokal. Akun admin lokal tidak dapat memakai link pelanggan MKL. Logout TulisAI hanya mencabut sesi TulisAI dan tidak menghapus link atau mengklaim logout global MKL. Unlink belum tersedia; implementasinya menunggu reautentikasi, alternate login, recovery, tombstone audit, dan semantik suspensi B3.
+
 ## OpenRouter dan privacy gate
 
 AI memakai `OPENROUTER_API_KEY` dan `OPENROUTER_MODEL`. Model wajib dipilih dan diuji berdasarkan structured output prompt final v1. Provider request hardcoded `provider.data_collection=deny`. `AI_PUBLIC_ENABLED` harus tetap `false` sampai retensi dan privacy setting provider diverifikasi secara nyata.
@@ -113,10 +126,11 @@ Set secret memakai input interaktif Wrangler agar nilainya tidak menjadi argumen
 pnpm exec wrangler secret put BETTER_AUTH_SECRET
 pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
+pnpm exec wrangler secret put MKL_CLIENT_SECRET
 pnpm exec wrangler secret put OPENROUTER_API_KEY
 ```
 
-Set `BETTER_AUTH_URL` pada vars ke origin Worker/domain target dan daftarkan callback Google yang sama. Terapkan migrasi dengan `wrangler d1 migrations apply <database_name> --remote` hanya setelah database target diverifikasi. Build dan dry-run dahulu; `pnpm exec wrangler deploy` merupakan langkah eksternal terpisah setelah persetujuan rilis. AI tetap `false` sampai konfigurasi provider, kuota, dan evaluasi hasil disetujui.
+Set `BETTER_AUTH_URL` pada vars ke origin Worker/domain target dan daftarkan callback Google yang sama. `MKL_CLIENT_ID` baru boleh diisi setelah client row disetujui dan diregistrasikan; registrasi redirect/post-logout, aktivasi SSO, dan penyerahan secret adalah commissioning terpisah. Terapkan migrasi dengan `wrangler d1 migrations apply <database_name> --remote` hanya setelah database target diverifikasi. Build dan dry-run dahulu; `pnpm exec wrangler deploy` merupakan langkah eksternal terpisah setelah persetujuan rilis. AI tetap `false` sampai konfigurasi provider, kuota, dan evaluasi hasil disetujui.
 
 Sebelum update berikutnya, catat versi Worker aktif dan ambil backup D1 menggunakan `wrangler d1 export <database_name> --remote --output <backup.sql>` ke lokasi privat. Rollback Worker melalui `wrangler rollback <version-id>` tidak mengembalikan data D1/R2; migrasi data memerlukan rencana pemulihan tersendiri. Migrasi initial hanya dijalankan sekali dan belum memiliki migrasi destruktif.
 

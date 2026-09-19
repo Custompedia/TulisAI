@@ -7,6 +7,7 @@ import {
   normalizeName, normalizeUsername, validateLogin, validateEmail, validateRegistration, validationMessages, safeAuthNext,
 } from "@/lib/auth/form";
 import { useLocale } from "@/lib/client/locale";
+import { ApiError, errorText } from "@/lib/client/api";
 import { AuthView } from "./AuthView";
 
 const TIMEOUT_MS = 30_000;
@@ -25,7 +26,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [remember, setRemember] = useState(true);
-  const [busy, setBusy] = useState<"form" | "google" | null>(null);
+  const [busy, setBusy] = useState<"form" | "google" | "mkl" | null>(null);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<AuthErrors>({});
   const inFlight = useRef(false);
@@ -33,7 +34,11 @@ export function AuthForm({ register = false }: { register?: boolean }) {
   const refs: Record<AuthField, React.RefObject<HTMLInputElement | null>> = { name: useRef(null), username: useRef(null), email: useRef(null), password: useRef(null), confirm: useRef(null) };
 
   useEffect(() => () => controller.current?.abort(), []);
-  useEffect(() => { if (searchParams.get("error")) setError(copy.googleCallback); }, [copy.googleCallback, searchParams]);
+  useEffect(() => {
+    const providerError = searchParams.get("error");
+    if (providerError === "mkl") setError(errorText(new ApiError(searchParams.get("code") || "MKL_TOKEN_INVALID", 400), en));
+    else if (providerError) setError(copy.googleCallback);
+  }, [copy.googleCallback, en, searchParams]);
 
   const focusFirst = (errors: AuthErrors) => {
     const first = (["name", "username", "email", "password", "confirm"] as AuthField[]).find((field) => errors[field]);
@@ -84,12 +89,23 @@ export function AuthForm({ register = false }: { register?: boolean }) {
     } catch { setError(copy.google); } finally { inFlight.current = false; setBusy(null); }
   }
 
+  async function mkl() {
+    if (inFlight.current) return;
+    inFlight.current = true; setBusy("mkl"); setError("");
+    try {
+      const { response, data } = await post("/api/auth/mkl/start", { returnTo: next ?? "/app" });
+      if (!response.ok || !data?.url) { setError(errorText(new ApiError((data as { code?: string } | null)?.code || "MKL_NOT_CONFIGURED", response.status), en)); return; }
+      window.location.assign(data.url);
+    } catch { setError(errorText(new ApiError("MKL_UNAVAILABLE", 503), en)); }
+    finally { inFlight.current = false; setBusy(null); }
+  }
+
   const setters = { name: setName, username: setUsername, email: setIdentifier, password: setPassword, confirm: setConfirm };
   return <AuthView
     register={register} values={{ name, username, email: identifier, password, confirm }}
     remember={remember} busy={busy} error={error.replace("Username/email", "Email").replace("username or email", "email and password")}
     fieldErrors={fieldErrors} next={next} inputRefs={refs}
     onChange={(field, value) => { setters[field](value); setFieldErrors(current => ({ ...current, [field]: undefined })); setError(""); }}
-    onRemember={setRemember} onSubmit={event => void submit(event)} onGoogle={() => void google()}
+    onRemember={setRemember} onSubmit={event => void submit(event)} onGoogle={() => void google()} onMkl={() => void mkl()}
   />;
 }
