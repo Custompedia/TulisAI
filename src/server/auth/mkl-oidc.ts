@@ -107,7 +107,7 @@ export async function verifyMklIdToken(token: string, discovery: MklDiscovery, c
   let payload: JWTPayload;
   try {
     const jwks = createRemoteJWKSet(new URL(discovery.jwks_uri), { [customFetch]: fetcher, cooldownDuration: 0 });
-    ({ payload } = await jwtVerify(token, jwks, { algorithms: ["RS256"], issuer: config.issuer, audience: config.clientId, clockTolerance: 5 }));
+    ({ payload } = await jwtVerify(token, jwks, { algorithms: ["RS256"], issuer: config.issuer, audience: config.clientId, requiredClaims: ["exp"], clockTolerance: 5 }));
   } catch { throw new MklProtocolError("MKL_TOKEN_INVALID", "The MKL ID token is invalid."); }
   if (payload.aud !== config.clientId || payload.nonce !== expectedNonce || typeof payload.sub !== "string" || !payload.sub.trim()) {
     throw new MklProtocolError("MKL_TOKEN_INVALID", "The MKL ID token claims are invalid.");

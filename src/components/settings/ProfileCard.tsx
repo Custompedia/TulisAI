@@ -19,6 +19,10 @@ export function memberSince(createdAt: string, locale: 'id' | 'en') {
   return Number.isNaN(date.getTime()) ? '—' : new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'id-ID', { month: 'short', year: 'numeric' }).format(date);
 }
 
+export function canOfferMklLink(account: Pick<AccountDetails, 'mkl'>, role: string | null | undefined) {
+  return role !== 'admin' && !account.mkl.linked;
+}
+
 function Row({ label, children, action }: { label: string; children: React.ReactNode; action?: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3 py-3.5 first:pt-0">
@@ -45,7 +49,7 @@ export function ProfileSkeleton() {
   );
 }
 
-export function ProfileCard({ account, onUpdated, notify }: { account: AccountDetails; onUpdated: () => Promise<void>; notify: (notice: Notice) => void }) {
+export function ProfileCard({ account, role, onUpdated, notify }: { account: AccountDetails; role: string | null | undefined; onUpdated: () => Promise<void>; notify: (notice: Notice) => void }) {
   const { t, locale } = useLocale();
   const guard = useSessionGuard();
   const { signOut, busy: signingOut } = useSignOut();
@@ -126,7 +130,7 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
         <div className="flex flex-col border-t border-line pt-5 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
           <h3 className="text-[13px] text-ink-500">{t('Akun', 'Account')}</h3>
           <div className="mt-2 flex flex-col items-start gap-1">
-            {!account.mkl.linked && <LinkAction icon={Link2} onClick={() => void startMklLink()}>{mklBusy ? t('Menghubungkan MKL…', 'Connecting MKL…') : t('Hubungkan akun MKL', 'Link MKL account')}</LinkAction>}
+            {canOfferMklLink(account, role) && <LinkAction icon={Link2} onClick={() => void startMklLink()}>{mklBusy ? t('Menghubungkan MKL…', 'Connecting MKL…') : t('Hubungkan akun MKL', 'Link MKL account')}</LinkAction>}
             {account.hasPassword ? (
               <>
                 <LinkAction icon={Lock} onClick={() => setDialog('password')}>{t('Ganti password', 'Change password')}</LinkAction>

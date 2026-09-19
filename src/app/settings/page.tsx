@@ -158,7 +158,7 @@ function SettingsView() {
         <div className="min-w-0 flex-1">
           {tab === 'profil' && (
             <Card title={t('Profil', 'Profile')}>
-              {account ? <ProfileCard account={account} onUpdated={onUpdated} notify={setNotice} />
+              {account ? <ProfileCard account={account} role={user.role} onUpdated={onUpdated} notify={setNotice} />
                 : loadError && !loading ? <ProfileError message={errorText(loadError, en)} retrying={loading} onRetry={() => void loadAccount()} />
                   : <div role="status" aria-label={t('Memuat detail akun…', 'Loading account details…')}><ProfileSkeleton /></div>}
             </Card>

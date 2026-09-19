@@ -17,9 +17,14 @@ function expireConsent(response: Response, name: string, secure: boolean): Respo
   return response;
 }
 
-async function loadPending(request: Request) {
+function consentContext(request: Request) {
   const config = mklConfig(runtime()); const names = mklCookieNames(config);
   const receipt = readCookie(request.headers, names.consent);
+  return { config, names, receipt };
+}
+
+async function loadPending(request: Request, context: ReturnType<typeof consentContext>) {
+  const { config, names, receipt } = context;
   if (!receipt || !/^[A-Za-z0-9_-]{43}$/.test(receipt)) throw new RequestError("MKL_CONFIRMATION_REQUIRED", "Start MKL linking again.", 400);
   const pending = await pendingConsent(receipt);
   if (!pending) throw new RequestError("MKL_CONFIRMATION_REQUIRED", "Start MKL linking again.", 400);
@@ -33,23 +38,31 @@ async function loadPending(request: Request) {
 }
 
 export async function GET(request: Request) {
+  let clear: { name: string; secure: boolean } | null = null;
   try {
-    const user = await requireUser(request); const { pending } = await loadPending(request);
+    const context = consentContext(request);
+    if (context.receipt) clear = { name: context.names.consent, secure: context.names.secure };
+    const user = await requireUser(request); const { pending } = await loadPending(request, context);
     if (pending.value.userId !== user.id) throw new RequestError("MKL_CONFIRMATION_REQUIRED", "This confirmation belongs to another account.", 400);
     if (user.role !== "user") throw new RequestError("MKL_ADMIN_LINK_FORBIDDEN", "Local admin accounts cannot link MKL customer identities.", 403);
     return jsonData({ profile: { name: pending.value.name, email: pending.value.email, issuer: pending.value.issuer }, expiresAt: new Date(pending.row.expires_at).toISOString() }, { headers: { "cache-control": "no-store" } });
-  } catch (error) { return handleRouteError(error); }
+  } catch (error) {
+    const response = handleRouteError(error);
+    return clear ? expireConsent(response, clear.name, clear.secure) : response;
+  }
 }
 
 export async function POST(request: Request) {
   let clear: { name: string; secure: boolean } | null = null;
   try {
-    const user = await requireUser(request); const loaded = await loadPending(request); clear = { name: loaded.names.consent, secure: loaded.names.secure };
+    const context = consentContext(request);
+    if (context.receipt) clear = { name: context.names.consent, secure: context.names.secure };
+    const user = await requireUser(request); const loaded = await loadPending(request, context);
     sameOrigin(request, loaded.config.appOrigin); idempotencyKey(request);
     if (loaded.pending.value.userId !== user.id) throw new RequestError("MKL_CONFIRMATION_REQUIRED", "This confirmation belongs to another account.", 400);
     try {
       const link = await confirmMklLink(loaded.receipt, loaded.pending);
-      return expireConsent(jsonData({ linked: true, profile: { name: link.profileName, email: link.profileEmail } }), clear.name, clear.secure);
+      return expireConsent(jsonData({ linked: true, profile: { name: link.profileName, email: link.profileEmail } }), loaded.names.consent, loaded.names.secure);
     } catch (error) {
       if (error instanceof RequestError) await writeAudit(user.id, user.id, "identity.mkl.link-refused", { code: error.code, issuer: loaded.pending.value.issuer, subject: loaded.pending.value.subject, method: "explicit-link", correlationRef: loaded.pending.value.correlationRef });
       throw error;

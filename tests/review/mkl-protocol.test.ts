@@ -42,6 +42,8 @@ describe("MKL OIDC protocol", () => {
     await expect(verifyMklIdToken(await multipleAudience, discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
     const expired = new SignJWT({ nonce: "expected" }).setProtectedHeader({ alg: "RS256", kid: "new" }).setIssuer(config.issuer).setSubject("s").setAudience(config.clientId).setExpirationTime(Math.floor(Date.now() / 1000) - 10).sign(second.privateKey);
     await expect(verifyMklIdToken(await expired, discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
+    const missingExpiry = new SignJWT({ nonce: "expected" }).setProtectedHeader({ alg: "RS256", kid: "new" }).setIssuer(config.issuer).setSubject("s").setAudience(config.clientId).sign(second.privateKey);
+    await expect(verifyMklIdToken(await missingExpiry, discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
     const wrongIssuer = new SignJWT({ nonce: "expected" }).setProtectedHeader({ alg: "RS256", kid: "new" }).setIssuer("https://wrong.test").setSubject("s").setAudience(config.clientId).setExpirationTime("5m").sign(second.privateKey);
     await expect(verifyMklIdToken(await wrongIssuer, discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
     const missingSub = new SignJWT({ nonce: "expected" }).setProtectedHeader({ alg: "RS256", kid: "new" }).setIssuer(config.issuer).setAudience(config.clientId).setExpirationTime("5m").sign(second.privateKey);

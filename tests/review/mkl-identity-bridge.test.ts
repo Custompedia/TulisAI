@@ -145,20 +145,36 @@ describe("explicit MKL linking", () => {
     const registered = await post("/sign-up/email", { name: "Local Ada", email: "ada@example.test", username: "ada", password: "correct horse battery" });
     const localCookie = cookieJar(registered); const flow = await begin("/mkl/link/start", localCookie); rememberNonce(flow);
     const returned = await callback(flow); expect(returned.headers.get("location")).toBe(`${APP}/settings?mkl=confirm#profil`);
+    const callbackCookies = returned.headers.getSetCookie();
+    expect(callbackCookies.find((cookie) => cookie.startsWith("__Host-tulis_mkl_browser="))).toContain("Max-Age=600");
+    expect(callbackCookies.find((cookie) => cookie.startsWith("__Host-tulis_mkl_consent="))).toContain("Max-Age=600");
     expect(db.prepare("SELECT COUNT(*) AS n FROM external_identity_link").get()).toEqual({ n: 0 });
     const allCookies = cookieJar(flow.cookie, returned); expect(allCookies).toContain("__Host-tulis_mkl_consent=");
     const preview = await getConfirmation(new Request(`${APP}/api/account/mkl/link/confirm`, { headers: { cookie: allCookies } }));
     expect(preview.status).toBe(200); expect(await preview.json()).toMatchObject({ data: { profile: { name: "Ada MKL", email: "ada@example.test", issuer: ISSUER } } });
     const confirmed = await confirmLink(new Request(`${APP}/api/account/mkl/link/confirm`, { method: "POST", headers: { cookie: allCookies, origin: APP, "Idempotency-Key": "confirm-1" } }));
     expect(confirmed.status).toBe(200); expect(db.prepare("SELECT link_method FROM external_identity_link").get()).toEqual({ link_method: "explicit-link" });
+    expect(confirmed.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-tulis_mkl_consent="))).toContain("Max-Age=0");
     expect(db.prepare("SELECT action FROM admin_audit_log").all()).toEqual([{ action: "identity.mkl.linked" }]);
     const replay = await confirmLink(new Request(`${APP}/api/account/mkl/link/confirm`, { method: "POST", headers: { cookie: allCookies, origin: APP, "Idempotency-Key": "confirm-2" } }));
     expect(replay.status).toBe(400); expect(db.prepare("SELECT COUNT(*) AS n FROM admin_audit_log").get()).toEqual({ n: 1 });
+    expect(replay.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-tulis_mkl_consent="))).toContain("Max-Age=0");
     const deletion = await deleteAccount(new Request(`${APP}/api/account`, { method: "DELETE", headers: { cookie: localCookie, "Idempotency-Key": "delete-1" } }));
     expect(deletion.status).toBe(409); expect(await deletion.json()).toMatchObject({ error: { code: "MKL_LINKED_ACCOUNT_DELETE_FORBIDDEN" } });
     const linked = await getUser((db.prepare("SELECT id FROM user").get() as { id: string }).id);
     await expect(assertRoleChange("admin", linked, "admin")).rejects.toMatchObject({ code: "MKL_LINKED_ADMIN_FORBIDDEN" });
   }, 30000);
+
+  it("expires the consent cookie when a pending confirmation has expired", async () => {
+    const registered = await post("/sign-up/email", { name: "Local Ada", email: "ada@example.test", username: "ada", password: "correct horse battery" });
+    const flow = await begin("/mkl/link/start", cookieJar(registered)); rememberNonce(flow);
+    const returned = await callback(flow); const allCookies = cookieJar(flow.cookie, returned);
+    db.prepare("UPDATE verification SET expires_at=0 WHERE identifier LIKE 'mkl:consent:%'").run();
+    const preview = await getConfirmation(new Request(`${APP}/api/account/mkl/link/confirm`, { headers: { cookie: allCookies } }));
+    expect(preview.status).toBe(410); expect(await preview.json()).toMatchObject({ error: { code: "MKL_CONFIRMATION_EXPIRED" } });
+    expect(preview.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-tulis_mkl_consent="))).toContain("Max-Age=0");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM verification WHERE identifier LIKE 'mkl:consent:%'").get()).toEqual({ n: 0 });
+  }, 20000);
 
   it("rejects a callback in a different browser before token exchange", async () => {
     const registered = await post("/sign-up/email", { name: "Local Ada", email: "ada@example.test", username: "ada", password: "correct horse battery" });

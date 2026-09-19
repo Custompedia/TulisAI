@@ -14,6 +14,7 @@ import { validateUsername } from "@/lib/auth/form";
 import { ApiError, authErrorCode, errorText } from "@/lib/client/api";
 import { GET } from "@/app/api/account/route";
 import { POST as setPassword } from "@/app/api/account/password/route";
+import { canOfferMklLink } from "@/components/settings/ProfileCard";
 
 let db: DatabaseSync;
 class Statement {
@@ -70,6 +71,12 @@ describe("email rendering and delivery", () => {
 });
 
 describe("account validation and error copy", () => {
+  it("offers explicit MKL linking only to unlinked non-admin accounts", () => {
+    expect(canOfferMklLink({ mkl: { linked: false } }, "user")).toBe(true);
+    expect(canOfferMklLink({ mkl: { linked: false } }, "admin")).toBe(false);
+    expect(canOfferMklLink({ mkl: { linked: true, profileEmail: null, profileName: null, linkedAt: new Date(0).toISOString() } }, "user")).toBe(false);
+  });
+
   it.each(["ada", "ada.lovelace", "a_1.b", "ADA"])("accepts username %s", (value) => expect(validateUsername(value)).toBe(true));
   it.each(["ab", ".ada", "ada.", "ada lovelace", "ada!", "a".repeat(31)])("rejects username %s", (value) => expect(validateUsername(value)).toBe(false));
   it("maps Better Auth responses to codes", () => {

@@ -75,6 +75,8 @@ Untuk Google, isi `GOOGLE_CLIENT_ID` dan `GOOGLE_CLIENT_SECRET`, lalu set `BETTE
 
 Jika port berbeda, ganti host dan port sesuai URL dev. Tambahkan callback exact tersebut di Google Cloud OAuth client. Login UI memulai `POST /api/auth/sign-in/social` dengan `{ provider: "google", callbackURL: "/app" }`; cancel, expired session, dan konfigurasi yang hilang harus menghasilkan pesan yang dapat dipahami pengguna.
 
+Implicit provider linking dinonaktifkan untuk mencegah pengambilalihan akun berdasarkan kecocokan email. Akibatnya, akun Google yang sudah tertaut tetap dapat login dan akun Google baru dengan email yang belum dipakai tetap dapat dibuat, tetapi Google dengan email terverifikasi yang sudah dimiliki akun lokal lain akan ditolak dan tidak pernah diadopsi otomatis. Pengguna harus masuk melalui metode yang sudah dimiliki akun lokal tersebut; B2 tidak menambahkan UI penautan Google baru.
+
 ## MKL OIDC identity bridge
 
 Bridge MKL memakai Authorization Code + PKCE S256 dan mempertahankan Better Auth sebagai otoritas sesi lokal. Konfigurasi runtime yang dibutuhkan adalah `MKL_ISSUER`, `MKL_CLIENT_ID`, `MKL_CLIENT_SECRET`, dan `BETTER_AUTH_URL`. Secret klien hanya boleh diberikan melalui binding secret lokal/Cloudflare; jangan menaruh nilainya di repository. Nilai produksi yang dikunci adalah:

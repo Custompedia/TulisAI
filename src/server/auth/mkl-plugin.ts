@@ -104,6 +104,7 @@ export function mklIdentityPlugin() {
           if (await getMklLinkByUserId(userId)) { await rejectLink(userId, "MKL_ACCOUNT_ALREADY_LINKED", identity); redirectError(ctx, config!, "MKL_ACCOUNT_ALREADY_LINKED"); }
           if (await getIdentityOwner(identity.issuer, identity.subject)) { await rejectLink(userId, "MKL_IDENTITY_LINKED_ELSEWHERE", identity); redirectError(ctx, config!, "MKL_IDENTITY_LINKED_ELSEWHERE"); }
           const receipt = await createConsentState(ctx.context.internalAdapter, { userId, browserHash: state.browserHash, identity, correlationRef: state.correlationRef });
+          ctx.setCookie(names.browser, browser, cookieAttributes(names.secure));
           ctx.setCookie(names.consent, receipt, cookieAttributes(names.secure));
           ctx.setHeader("cache-control", "no-store");
           throw ctx.redirect(new URL("/settings?mkl=confirm#profil", config!.appOrigin).toString());
