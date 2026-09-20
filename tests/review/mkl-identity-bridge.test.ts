@@ -277,7 +277,7 @@ describe("migration authority", () => {
   it("upgrades representative credential and Google accounts without changing them", () => {
     const existing = new DatabaseSync(":memory:");
     try {
-      for (const name of migrationFiles().filter((name) => name !== "0011_mkl_identity_bridge.sql" && name !== "0012_b3_entitlement_authority.sql")) existing.exec(readFileSync(join("migrations", name), "utf8"));
+      for (const name of migrationFiles().filter((name) => name !== "0011_mkl_identity_bridge.sql" && name !== "0012_b3_entitlement_authority.sql" && name !== "0013_b4_character_wallet.sql")) existing.exec(readFileSync(join("migrations", name), "utf8"));
       existing.prepare("INSERT INTO user (id,name,email,email_verified,username,role,tier,banned,created_at,updated_at) VALUES ('credential-user','Credential','credential@example.test',1,'credential','user','free',0,1,1),('google-user','Google','google@example.test',1,NULL,'user','free',0,1,1)").run();
       existing.prepare("INSERT INTO account (id,account_id,provider_id,user_id,password,created_at,updated_at) VALUES ('credential-account','credential-user','credential','credential-user','hash',1,1),('google-account','google-sub','google','google-user',NULL,1,1)").run();
       existing.exec(readFileSync(join("migrations", "0011_mkl_identity_bridge.sql"), "utf8"));

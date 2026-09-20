@@ -91,7 +91,6 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
   async function save(roleDone = false) {
     if (!form || !user) return;
     const override = form.aiLimitOverride.trim() === '' ? null : Number(form.aiLimitOverride);
-    const characterOverride = form.aiCharacterLimitOverride.trim() === '' ? null : Number(form.aiCharacterLimitOverride);
     if (override !== null && (!Number.isInteger(override) || override < 1)) { setFormError(t('Batas khusus harus bilangan bulat positif.', 'The custom limit must be a positive whole number.')); return; }
     if (!roleDone && form.role !== user.role) { setConfirm({ kind: 'role', role: form.role }); return; }
     const patch: Record<string, unknown> = {};
@@ -99,7 +98,6 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
     if (form.emailVerified !== user.emailVerified) patch.emailVerified = form.emailVerified;
     if (form.tier !== user.tier) patch.tier = form.tier;
     if (override !== user.aiLimitOverride) patch.aiLimitOverride = override;
-    if (characterOverride !== user.aiCharacterLimitOverride) patch.aiCharacterLimitOverride = characterOverride;
     if ((form.adminNote.trim() || null) !== (user.adminNote ?? null)) patch.adminNote = form.adminNote.trim() || null;
     if (!Object.keys(patch).length) return;
     setBusy('save'); setFormError('');
@@ -188,7 +186,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
                 <div><FieldLabel htmlFor="u-name">{t('Nama', 'Name')}</FieldLabel><input id="u-name" className={inputClass} value={form.name} maxLength={100} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
                 <div><FieldLabel htmlFor="u-role" hint={self ? t('role sendiri terkunci', 'own role is locked') : undefined}>Role</FieldLabel><HintSelect id="u-role" label="Role" value={form.role} disabled={self} onChange={(value) => setForm({ ...form, role: value })} options={[{ value: 'user', label: 'User', hint: t('Akses biasa, ikut batas tier', 'Regular access, tier limits apply') }, { value: 'admin', label: 'Admin', hint: t('Panel admin dan AI tanpa batas', 'Admin panel and unlimited AI') }]} /></div>
                 <div><FieldLabel htmlFor="u-tier">Tier</FieldLabel><HintSelect id="u-tier" label="Tier" value={form.tier} onChange={(value) => setForm({ ...form, tier: value })} options={TIERS.map((tier) => ({ value: tier, label: tierLabel(tier, t), hint: summary ? `${numberFormat(summary.tierLimits[tier], locale)} ${t('permintaan AI / bulan', 'AI requests / month')}` : undefined }))} /></div>
-                <div><FieldLabel htmlFor="u-chars" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Kuota karakter khusus / bulan', 'Custom character quota / month')}</FieldLabel><input id="u-chars" type="number" min={1} step={1000} inputMode="numeric" className={inputClass} value={form.aiCharacterLimitOverride} placeholder={summary ? String(summary.tierCharacterLimits[form.tier]) : ''} onChange={(event) => setForm({ ...form, aiCharacterLimitOverride: event.target.value })} /></div>
+                <div><FieldLabel htmlFor="u-chars" hint={t('legacy saja — bukan saldo wallet', 'legacy only — not wallet balance')}>{t('Override karakter lama', 'Legacy character override')}</FieldLabel><input id="u-chars" type="text" className={inputClass} value={form.aiCharacterLimitOverride || '—'} disabled readOnly /></div>
                 <div><FieldLabel htmlFor="u-limit" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Batas permintaan khusus / bulan', 'Custom request limit / month')}</FieldLabel><input id="u-limit" type="number" min={1} step={1} inputMode="numeric" className={inputClass} value={form.aiLimitOverride} placeholder={summary ? String(summary.tierLimits[form.tier]) : ''} onChange={(event) => setForm({ ...form, aiLimitOverride: event.target.value })} /></div>
               </div>
               <label className="flex cursor-pointer items-center gap-2.5 text-sm text-ink-800"><input type="checkbox" checked={form.emailVerified} onChange={(event) => setForm({ ...form, emailVerified: event.target.checked })} className="h-4 w-4 accent-brand-600" />{t('Email sudah terverifikasi', 'Email is verified')}</label>

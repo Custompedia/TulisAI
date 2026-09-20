@@ -9,6 +9,7 @@ import { aiMetrics, assertBan, assertRemove, assertRoleChange, audit, getUser, l
 import { entitlement, usageSummary } from '../../src/server/usage/quota';
 import { handleRouteError } from '../../src/server/http';
 import { ForbiddenError } from '../../src/server/auth/auth';
+import { ensureFreeGrant } from '../../src/server/usage/wallet';
 
 let db: DatabaseSync;
 class Statement {
@@ -39,7 +40,7 @@ describe('admin service: listing', () => {
     addUsage('user-1', 'completed', [10, 5]); addUsage('user-1', 'failed', [0, 0], 6000); addUsage('user-2', 'completed', [7, 3]); addUsage('user-1', 'completed', [1, 1], 1, '2000-01');
     const page = await listUsers();
     expect(page.items.map((item) => item.id)).toEqual(['admin-1', 'user-1', 'user-2']);
-    expect(page.items[0]).toMatchObject({ role: 'admin', unlimited: true, requestsThisMonth: 0, lastActiveAt: null });
+    expect(page.items[0]).toMatchObject({ role: 'admin', unlimited: false, requestsThisMonth: 0, lastActiveAt: null });
     expect(page.items[1]).toMatchObject({ role: 'user', tier: 'pro', requestLimit: 2000, requestsThisMonth: 2, failedThisMonth: 1, tokensThisMonth: 15, lastActiveAt: new Date(6000).toISOString() });
     expect(page.items[2]).toMatchObject({ tier: 'free', aiLimitOverride: 7, requestLimit: 7 });
     expect(page.summary).toMatchObject({ period, users: 3, admins: 1, banned: 0, tiers: { free: 2, plus: 0, pro: 1, max: 0 }, requestsThisMonth: 3, failedThisMonth: 1, tokensThisMonth: 25, monthlyLimit: 100, tierLimits: { free: 100, plus: 500, pro: 2000, max: 3000 }, aiEnabled: true });
@@ -54,16 +55,18 @@ describe('admin service: listing', () => {
     addUser('trial', 'Trial'); addUser('payer', 'Payer', { tier: 'pro' });
     spend('trial', '2000-01', 400); spend('trial', period, 100);
     spend('payer', '2000-01', 700); spend('payer', period, 200);
+    await ensureFreeGrant('trial'); await ensureFreeGrant('payer');
+    db.prepare("UPDATE character_grants SET settled_amount=500 WHERE owner_id='trial' AND kind='free'").run();
+    db.prepare("UPDATE character_grants SET settled_amount=200 WHERE owner_id='payer' AND kind='free'").run();
     const items = (await listUsers()).items;
     const byId = Object.fromEntries(items.map((item) => [item.id, item]));
     // The free trial is granted once, so a run from an earlier period still counts against it.
     expect(byId.trial).toMatchObject({ characterScope: 'account', charactersUsed: 500 });
-    expect(byId.payer).toMatchObject({ characterScope: 'period', charactersUsed: 200 });
+    expect(byId.payer).toMatchObject({ characterScope: 'account', charactersUsed: 200 });
     expect(await getUser('trial')).toMatchObject({ characterScope: 'account', charactersUsed: 500 });
 
-    // A per-user override turns the allowance into a refilling quota, so the figure goes back to this period.
-    await updateUser('trial', { aiCharacterLimitOverride: 50_000 });
-    expect(await getUser('trial')).toMatchObject({ characterScope: 'period', charactersUsed: 100, characterLimit: 50_000 });
+    await expect(updateUser('trial', { aiCharacterLimitOverride: 50_000 })).rejects.toMatchObject({ code: 'LEGACY_CHARACTER_OVERRIDE_READ_ONLY' });
+    expect(await getUser('trial')).toMatchObject({ characterScope: 'account', charactersUsed: 500, characterLimit: 3000 });
   });
 
   it('filters by search, role, tier, and status, and paginates by page number', async () => {

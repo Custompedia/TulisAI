@@ -16,6 +16,7 @@ import { entitlement, usageSummary } from '../../src/server/usage/quota';
 import { assertFeature, requireFeature } from '../../src/server/usage/features';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
 import { FEATURES, MAX_RUN_LIMIT, PLAN_LIMITS, requiredTierFor, TIERS } from '../../src/lib/plans';
+import { ensureFreeGrant } from '../../src/server/usage/wallet';
 
 let db: DatabaseSync;
 class Statement {
@@ -116,8 +117,9 @@ describe('review: entitlements are resolved from the account, not the client', (
   });
 
   it('grants the free allowance once per account, not once per month', async () => {
+    account('trial', 'free'); await ensureFreeGrant('trial');
     const spend = (period: string) => db.prepare(`INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,source_characters,charge_characters,created_at) VALUES ('${period}','trial','${period}','generate','completed','${period}','r',500,500,1)`).run();
-    spend('2000-01');
+    spend('2000-01'); db.prepare("UPDATE character_grants SET settled_amount=500 WHERE owner_id='trial' AND kind='free'").run();
     const free = await usageSummary('trial');
     expect(free.characterScope).toBe('account');
     // A run from an old period still counts: the trial is not refilled by the calendar.
@@ -126,9 +128,9 @@ describe('review: entitlements are resolved from the account, not the client', (
     account('subscriber', 'plus');
     db.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,source_characters,charge_characters,created_at) VALUES ('old','subscriber','old','generate','completed','2000-01','r',500,500,1)").run();
     const paid = await usageSummary('subscriber');
-    expect(paid.characterScope).toBe('period');
+    expect(paid.characterScope).toBe('account');
     expect(paid.charactersUsed).toBe(0);
-    expect(paid.characterLimit).toBe(PLAN_LIMITS.plus.includedCharacters);
+    expect(paid.characterLimit).toBe(PLAN_LIMITS.free.includedCharacters);
   });
 
   it('sells saved skills from Plus while leaving what a free account already saved readable and deletable', async () => {
@@ -141,12 +143,12 @@ describe('review: entitlements are resolved from the account, not the client', (
     await expect(deleteStyle('writer', style.id)).resolves.toBeUndefined();
   });
 
-  it('lets a per-user character override beat the tier quota', async () => {
+  it('keeps legacy character overrides out of commercial wallet value', async () => {
     account('generous', 'free');
     db.prepare("UPDATE user SET ai_character_limit_override=250000 WHERE id='generous'").run();
     const summary = await usageSummary('generous');
-    expect(summary.characterLimit).toBe(250_000);
-    expect(summary.charactersRemaining).toBe(250_000);
+    expect(summary.characterLimit).toBe(3_000);
+    expect(summary.charactersRemaining).toBe(3_000);
   });
 });
 

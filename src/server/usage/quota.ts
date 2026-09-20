@@ -1,6 +1,7 @@
 import { ConfigurationError, runtime } from '../runtime';
 import { isAdminRole } from '../auth/auth';
 import { asTier, effectiveLimits, FEATURES, PLAN_LIMITS, TIERS, type Feature, type PlanLimits, type Tier } from '@/lib/plans';
+import { walletSummary, type WalletSummary } from './wallet';
 
 export { TIERS, asTier };
 export type { Tier, Feature, PlanLimits };
@@ -14,6 +15,7 @@ export type UsageSummary = {
   characterScope: 'account' | 'period';
   unlimited: boolean; limits: PlanLimits; features: readonly Feature[];
   access: AccessSummary;
+  wallet: WalletSummary;
 };
 export type AccessAuthority = 'free' | 'mkl' | 'local_admin' | 'legacy_local' | 'support' | 'test';
 export type AccessSummary = {
@@ -41,9 +43,7 @@ export const tierLimit = (tier: Tier): number => (tier === 'free' ? monthlyLimit
 
 // Free's one-time trial allowance stays deployment-tunable; paid tiers come from the shared catalogue.
 export function freeCharacterAllowance(): number {
-  const limit = Number(runtime().AI_FREE_CHARACTER_ALLOWANCE ?? String(PLAN_LIMITS.free.includedCharacters));
-  if (!Number.isSafeInteger(limit) || limit < 1) throw new ConfigurationError('AI_FREE_CHARACTER_ALLOWANCE must be a positive integer.');
-  return limit;
+  return PLAN_LIMITS.free.includedCharacters;
 }
 export const characterLimit = (tier: Tier): number => (tier === 'free' ? freeCharacterAllowance() : PLAN_LIMITS[tier].includedCharacters);
 
@@ -115,19 +115,23 @@ export async function usageSummary(ownerId: string): Promise<UsageSummary> {
   const rights = await entitlement(ownerId);
   // No status filter: every ledger row is reserved/completed/failed, and charge_characters is already zero for the ones that cost nothing.
   // That keeps both statements on the covering index usage_owner_period_charge_idx, whose owner_id prefix also serves the account-wide sum.
-  const [requests, characters] = await Promise.all([
+  const [requests, wallet] = await Promise.all([
     // Our own repair pass is excluded here for the same reason the request cap ignores it: the writer did not ask for it.
     runtime().DB.prepare("SELECT COUNT(1) AS total FROM usage_ledger WHERE owner_id=? AND period_key=? AND operation<>'repair'").bind(ownerId, period).first<{ total: number }>(),
-    rights.oneTime
-      ? runtime().DB.prepare('SELECT COALESCE(SUM(charge_characters),0) AS characters FROM usage_ledger WHERE owner_id=?').bind(ownerId).first<{ characters: number }>()
-      : runtime().DB.prepare('SELECT COALESCE(SUM(charge_characters),0) AS characters FROM usage_ledger WHERE owner_id=? AND period_key=?').bind(ownerId, period).first<{ characters: number }>(),
+    walletSummary(ownerId),
   ]);
-  const requestsUsed = requests?.total ?? 0; const charactersUsed = characters?.characters ?? 0;
+  const requestsUsed = requests?.total ?? 0;
+  const charactersUsed = wallet.mode === 'paid'
+    ? (wallet.included?.settled ?? 0) + wallet.purchased.settled
+    : wallet.free ? wallet.free.original - wallet.free.remaining : 0;
   const remaining = (used: number, limit: number) => (rights.unlimited ? limit : Math.max(0, limit - used));
   return {
-    period, tier: rights.tier, unlimited: rights.unlimited, limits: rights.limits, features: rights.features, access: rights.access,
+    // `unlimited` is retained for client compatibility but now describes the
+    // commercial character meter. Admin role may bypass operational request
+    // caps; it does not create unlimited wallet inventory.
+    period, tier: rights.tier, unlimited: false, limits: rights.limits, features: rights.features, access: rights.access,
     requestsUsed, requestLimit: rights.requestLimit, requestsRemaining: remaining(requestsUsed, rights.requestLimit),
-    charactersUsed, characterLimit: rights.characterLimit, charactersRemaining: remaining(charactersUsed, rights.characterLimit),
-    characterScope: rights.oneTime ? 'account' : 'period',
+    charactersUsed, characterLimit: charactersUsed + wallet.spendableTotal, charactersRemaining: wallet.spendableTotal,
+    characterScope: wallet.mode === 'free' ? 'account' : 'period', wallet,
   };
 }

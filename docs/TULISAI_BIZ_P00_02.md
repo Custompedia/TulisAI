@@ -22,7 +22,7 @@
 
 This contract incorporates the owner's explicit B0 approval and all thirteen locked decisions. B0 is complete as a contract/reconciliation gate only. B1–B9 remain later work: this approval does not certify Sandbox or Production readiness or claim payment integration. MKL and Mari Rekap source were not modified or audited here. No approved MKL wire contract was supplied: all cross-repository requirements below are semantic requirements, not endpoint names, issuer values, token schemas, JWT claims, or OAuth routes.
 
-## Implementation status addendum — 20 September 2026
+## Implementation status addendum — 21 September 2026
 
 This addendum records implementation completed after the B0 audit without rewriting that audit's historical evidence or approved contract. The original `CURRENT`, `MATCH`, `PARTIAL`, `MISSING`, and `CONFLICT` labels below remain observations of the source at the audited B0 baseline. They are intentionally preserved and must not be read as a fresh audit of the current `main` branch.
 
@@ -31,8 +31,16 @@ This addendum records implementation completed after the B0 audit without rewrit
 - **B2:** COMPLETE / MERGED — TulisAI identity bridge merged through PR #2, `feat(auth): add MKL identity bridge`.
 - **B2 merge commit:** `5f835c5a87faa96183c1904dad8b11a40c8e51e8`.
 - **Current source status:** the identity bridge now exists in TulisAI `main`; it provides Continue with MKL and explicit account linking using issuer + subject as external identity authority.
-- **B3:** NEXT — entitlement projection and capability resolution.
-- **B4–B9:** NOT STARTED.
+- **B3:** COMPLETE / MERGED — verified entitlement projection and capability authority landed in `main` at merge commit `59edeb36d5a1703dc9019d6932f964b537c300c6`.
+- **B4:** IMPLEMENTED LOCALLY ONLY — the character wallet, Unicode usage accounting, reservations/allocations, lease recovery, internal purchased-lot/correction contracts, and canonical wallet summary are implemented on `codex/b4-character-wallet`. See `docs/b4-character-wallet.md`.
+- **B5:** REQUIRED — real MKL purchased-lot fulfillment and correction transport remains pending. Local B4 fixtures are not commerce integration.
+- **B6–B9:** NOT STARTED.
+
+No B4 production migration has been applied. TulisAI has not been commissioned
+in MKL and no client, secret, offer, checkout, payment, Midtrans, or production
+configuration was created or changed. The authenticated B3 live-integration
+follow-up remains pending. The old UTC-calendar character total is retained
+only for compatibility/analytics; B4 wallet records are commercial authority.
 
 B2 did **not** project entitlements, change commercial tier authority, implement character wallets, implement checkout or commerce, commission TulisAI, apply a remote migration, or deploy anything. B2 source completeness is not production commissioning readiness.
 

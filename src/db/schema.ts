@@ -60,4 +60,55 @@ export const lockedTerms = sqliteTable("locked_terms", { id: text("id").primaryK
 export const transformations = sqliteTable("transformations", { id: text("id").primaryKey(), documentId: text("document_id").notNull(), ownerId: text("owner_id").notNull(), promptId: text("prompt_id").notNull(), promptVersion: text("prompt_version").notNull(), model: text("model").notNull(), sourceRevision: integer("source_revision").notNull(), sourceText: text("source_text").notNull(), anchorJson: text("anchor_json"), runtimeJson: text("runtime_json").notNull(), outputJson: text("output_json").notNull(), status: text("status").notNull(), idempotencyKey: text("idempotency_key").notNull(), expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(), appliedAt: integer("applied_at", { mode: "timestamp_ms" }), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull() }, (t) => [uniqueIndex("transforms_owner_idem_unique").on(t.ownerId, t.idempotencyKey), index("transforms_document_created_idx").on(t.documentId, t.createdAt, t.id)]);
 export const usageLedger = sqliteTable("usage_ledger", { id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), idempotencyKey: text("idempotency_key").notNull(), operation: text("operation").notNull(), status: text("status").notNull(), periodKey: text("period_key").notNull(), requestId: text("request_id").notNull(), providerRequestId: text("provider_request_id"), promptId: text("prompt_id"), sourceCharacters: integer("source_characters"), chargeCharacters: integer("charge_characters").notNull().default(0), inputTokens: integer("input_tokens"), outputTokens: integer("output_tokens"), latencyMs: integer("latency_ms"), costUsd: real("cost_usd"), errorCode: text("error_code"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), completedAt: integer("completed_at", { mode: "timestamp_ms" }) }, (t) => [uniqueIndex("usage_owner_idem_unique").on(t.ownerId, t.idempotencyKey), index("usage_owner_period_idx").on(t.ownerId, t.periodKey, t.status), index("usage_owner_period_charge_idx").on(t.ownerId, t.periodKey, t.chargeCharacters)]);
 
+export const characterWalletAccounts = sqliteTable("character_wallet_account", {
+  ownerId: text("owner_id").primaryKey().references(() => users.id, { onDelete: "cascade" }), freeGrantState: text("free_grant_state").notNull(),
+  legacyReason: text("legacy_reason"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+export const characterGrants = sqliteTable("character_grants", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }), kind: text("kind").notNull(),
+  identityLinkId: text("identity_link_id").references(() => externalIdentityLinks.id, { onDelete: "restrict" }), entitlementId: text("entitlement_id"),
+  applicationAppKey: text("application_app_key"), catalogItemId: text("catalog_item_id"), planCode: text("plan_code"), planVersion: text("plan_version"),
+  periodStart: text("period_start"), periodEnd: text("period_end"), periodStartMs: integer("period_start_ms"), periodEndMs: integer("period_end_ms"),
+  authorityRevision: integer("authority_revision"), authorityPayloadHash: text("authority_payload_hash"), originalAmount: integer("original_amount").notNull(),
+  reservedAmount: integer("reserved_amount").notNull().default(0), settledAmount: integer("settled_amount").notNull().default(0), state: text("state").notNull(),
+  measurementVersion: text("measurement_version").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [index("character_grants_spend_idx").on(t.ownerId, t.kind, t.state, t.periodEnd)]);
+export const characterPurchasedLots = sqliteTable("character_purchased_lots", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  identityLinkId: text("identity_link_id").notNull().references(() => externalIdentityLinks.id, { onDelete: "restrict" }), fulfillmentId: text("fulfillment_id").notNull(),
+  customerBindingHash: text("customer_binding_hash").notNull(), applicationAppKey: text("application_app_key").notNull(), catalogItemId: text("catalog_item_id").notNull(),
+  offerId: text("offer_id"), offerVersion: text("offer_version"), originalAmount: integer("original_amount").notNull(), reservedAmount: integer("reserved_amount").notNull().default(0),
+  settledAmount: integer("settled_amount").notNull().default(0), fulfilledAt: text("fulfilled_at").notNull(), expiresAt: text("expires_at").notNull(),
+  fulfilledAtMs: integer("fulfilled_at_ms").notNull(), expiresAtMs: integer("expires_at_ms").notNull(), verificationRevision: text("verification_revision").notNull(),
+  verificationPayloadHash: text("verification_payload_hash").notNull(), state: text("state").notNull(), reversalState: text("reversal_state").notNull().default("none"),
+  measurementVersion: text("measurement_version").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [uniqueIndex("character_lots_fulfillment_unique").on(t.applicationAppKey, t.fulfillmentId), index("character_purchased_lots_spend_idx").on(t.ownerId, t.applicationAppKey, t.state, t.expiresAtMs, t.fulfilledAtMs, t.id)]);
+export const characterReservations = sqliteTable("character_reservations", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }), idempotencyKey: text("idempotency_key").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(), operation: text("operation").notNull(), sourceCharacters: integer("source_characters").notNull(),
+  measurementVersion: text("measurement_version").notNull(), currentHold: integer("current_hold").notNull().default(0), settledAmount: integer("settled_amount").notNull().default(0),
+  state: text("state").notNull(), leaseDeadline: integer("lease_deadline", { mode: "timestamp_ms" }).notNull(), fencingToken: integer("fencing_token").notNull().default(1), mode: text("mode").notNull(),
+  applicationAppKey: text("application_app_key"), entitlementId: text("entitlement_id"), entitlementPeriodStart: text("entitlement_period_start"), entitlementPeriodEnd: text("entitlement_period_end"), authorityRevision: integer("authority_revision"),
+  eligibilitySnapshotJson: text("eligibility_snapshot_json").notNull(),
+  providerRequestId: text("provider_request_id"), resultReference: text("result_reference"), failureReason: text("failure_reason"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(), settledAt: integer("settled_at", { mode: "timestamp_ms" }), releasedAt: integer("released_at", { mode: "timestamp_ms" }),
+}, (t) => [uniqueIndex("character_reservations_owner_idem_unique").on(t.ownerId, t.idempotencyKey), index("character_reservations_reaper_idx").on(t.state, t.leaseDeadline, t.id)]);
+export const characterAllocations = sqliteTable("character_allocations", {
+  id: text("id").primaryKey(), reservationId: text("reservation_id").notNull().references(() => characterReservations.id, { onDelete: "restrict" }),
+  ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }), sourceKind: text("source_kind").notNull(), sourceId: text("source_id").notNull(), ordinal: integer("ordinal").notNull(),
+  reservedAmount: integer("reserved_amount").notNull(), settledAmount: integer("settled_amount").notNull().default(0), releasedAmount: integer("released_amount").notNull().default(0),
+  measurementVersion: text("measurement_version").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [uniqueIndex("character_allocations_reservation_ordinal_unique").on(t.reservationId, t.ordinal), uniqueIndex("character_allocations_reservation_source_unique").on(t.reservationId, t.sourceKind, t.sourceId), index("character_allocations_source_idx").on(t.sourceKind, t.sourceId, t.reservationId)]);
+export const characterWalletEvents = sqliteTable("character_wallet_events", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }), eventType: text("event_type").notNull(),
+  reservationId: text("reservation_id").references(() => characterReservations.id, { onDelete: "restrict" }), grantId: text("grant_id").references(() => characterGrants.id, { onDelete: "restrict" }),
+  lotId: text("lot_id").references(() => characterPurchasedLots.id, { onDelete: "restrict" }), quantity: integer("quantity"), causalReference: text("causal_reference"),
+  metadataJson: text("metadata_json").notNull().default("{}"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [index("character_wallet_events_owner_idx").on(t.ownerId, t.createdAt, t.id)]);
+export const characterLotCorrections = sqliteTable("character_lot_corrections", {
+  id: text("id").primaryKey(), lotId: text("lot_id").notNull().references(() => characterPurchasedLots.id, { onDelete: "restrict" }), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  correctionId: text("correction_id").notNull(), correctionRevision: integer("correction_revision").notNull(), kind: text("kind").notNull(), verificationPayloadHash: text("verification_payload_hash").notNull(),
+  reasonCode: text("reason_code").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [uniqueIndex("character_lot_corrections_identity_unique").on(t.lotId, t.correctionId), uniqueIndex("character_lot_corrections_revision_unique").on(t.lotId, t.correctionRevision)]);
+
 export const adminAuditLog = sqliteTable("admin_audit_log", { id: text("id").primaryKey(), actorId: text("actor_id").notNull(), targetUserId: text("target_user_id"), action: text("action").notNull(), detailsJson: text("details_json").notNull().default("{}"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull() }, (t) => [index("audit_created_idx").on(t.createdAt, t.id), index("audit_target_created_idx").on(t.targetUserId, t.createdAt, t.id)]);
