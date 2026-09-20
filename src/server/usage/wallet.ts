@@ -3,7 +3,7 @@ import { CHARACTER_MEASUREMENT_VERSION } from "./measurement";
 
 export const FREE_GRANT_AMOUNT = 3_000;
 export const INCLUDED_AMOUNTS = { plus: 25_000, pro: 100_000, max: 350_000 } as const;
-export const APPROVED_TOP_UP_FIXTURES = { pack_15000: 15_000, pack_45000: 45_000, pack_100000: 100_000 } as const;
+export const APPROVED_TOP_UP_FIXTURES = { topup_15k: 15_000, topup_45k: 45_000, topup_100k: 100_000 } as const;
 // Provider timeout is 30s. One main call + one repair + 30s for validation and
 // durable persistence is the longest valid execution path: 30 + 30 + 30 = 90s.
 export const EXECUTION_LEASE_MS = 90_000;
@@ -395,6 +395,49 @@ export async function acceptVerifiedPurchasedLot(fact: VerifiedFulfillment, now 
 }
 
 export type VerifiedCorrection = { ownerId: string; lotId: string; correctionId: string; revision: number; kind: "reversal" | "refund"; payloadHash: string; reasonCode: string };
+
+/**
+ * Fail closed when MKL explicitly says its correction history is incomplete.
+ * This is not a financial correction: it records no refund and destroys no
+ * settled usage. It only fences future spend and releases unsettled holds
+ * until a later complete authority envelope can be verified.
+ */
+export async function markPurchasedLotReconciliationRequired(ownerId: string, lotId: string, reasonCode: string, now = Date.now()): Promise<void> {
+  const lot = await runtime().DB.prepare("SELECT owner_id,reversal_state,state FROM character_purchased_lots WHERE id=?").bind(lotId)
+    .first<{ owner_id: string; reversal_state: string; state: string }>();
+  if (!lot || lot.owner_id !== ownerId) throw new WalletError("LOT_NOT_FOUND", "Purchased lot not found.", 404);
+  if (lot.reversal_state !== "none" || lot.state === "reversed") return;
+  const reason = `authority_incomplete:${reasonCode}`.slice(0, 120);
+  try {
+    await runBatch([
+      runtime().DB.prepare(`UPDATE character_reservations SET state='releasing',fencing_token=fencing_token+1,failure_reason=?,updated_at=?
+        WHERE state='reserved' AND id IN (SELECT reservation_id FROM character_allocations WHERE source_kind='purchased_lot' AND source_id=?)`).bind(reason, now, lotId),
+      runtime().DB.prepare(`UPDATE character_allocations SET released_amount=reserved_amount-settled_amount,updated_at=?
+        WHERE reservation_id IN (SELECT id FROM character_reservations WHERE state='releasing' AND failure_reason=?)
+          AND EXISTS (SELECT 1 FROM character_allocations hit WHERE hit.reservation_id=character_allocations.reservation_id
+            AND hit.source_kind='purchased_lot' AND hit.source_id=?)`).bind(now, reason, lotId),
+      runtime().DB.prepare(`UPDATE character_reservations SET state='released',released_at=?,updated_at=?
+        WHERE state='releasing' AND failure_reason=? AND id IN
+          (SELECT reservation_id FROM character_allocations WHERE source_kind='purchased_lot' AND source_id=?)`).bind(now, now, reason, lotId),
+      runtime().DB.prepare(`UPDATE character_purchased_lots SET state='reconciliation_required',reversal_state='reconciliation_required',updated_at=?
+        WHERE id=? AND owner_id=? AND reversal_state='none' AND state<>'reversed'`).bind(now, lotId, ownerId),
+      runtime().DB.prepare(`INSERT INTO character_wallet_events (id,owner_id,event_type,lot_id,causal_reference,metadata_json,created_at)
+        SELECT ?,?,'purchased_lot_reconciliation_required',?,?,?,?
+        WHERE NOT EXISTS (SELECT 1 FROM character_wallet_events WHERE lot_id=? AND event_type='purchased_lot_reconciliation_required' AND causal_reference=?)`)
+        .bind(crypto.randomUUID(), ownerId, lotId, reason, JSON.stringify({ reasonCode }), now, lotId, reason),
+    ]);
+  } catch { throw new WalletError("CORRECTION_RECONCILIATION_REQUIRED", "The purchased lot could not be fenced atomically.", 409); }
+}
+
+/** Restore only after B5 has verified a complete, consistent MKL envelope. */
+export async function restoreVerifiedPurchasedLot(ownerId: string, lotId: string, authorityHash: string, now = Date.now()): Promise<void> {
+  const result = await runtime().DB.prepare(`UPDATE character_purchased_lots SET state='frozen',reversal_state='none',updated_at=?
+    WHERE id=? AND owner_id=? AND state='reconciliation_required' AND reversal_state='reconciliation_required'`).bind(now, lotId, ownerId).run();
+  if ((result.meta.changes ?? 0) === 1) await runtime().DB.prepare(`INSERT INTO character_wallet_events
+    (id,owner_id,event_type,lot_id,causal_reference,metadata_json,created_at) VALUES (?,?,'purchased_lot_reconciled',?,?,?,?)`)
+    .bind(crypto.randomUUID(), ownerId, lotId, `authority:${authorityHash}`, JSON.stringify({ authorityHash }), now).run();
+}
+
 export async function applyVerifiedLotCorrection(fact: VerifiedCorrection, now = Date.now()): Promise<void> {
   if (!Number.isSafeInteger(fact.revision) || fact.revision < 0) throw new WalletError("CORRECTION_INVALID", "Correction revision is invalid.");
   const lot = await runtime().DB.prepare("SELECT owner_id,reversal_state FROM character_purchased_lots WHERE id=?").bind(fact.lotId).first<{ owner_id: string; reversal_state: string }>();

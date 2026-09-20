@@ -30,6 +30,19 @@ export const mklEntitlementProjections = sqliteTable("mkl_entitlement_projection
   invalidatedAt: integer("invalidated_at", { mode: "timestamp_ms" }), invalidationReason: text("invalidation_reason"), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 }, (t) => [uniqueIndex("mkl_projection_identity_unique").on(t.issuer, t.subject, t.organizationId), index("mkl_entitlement_projection_freshness_idx").on(t.freshUntil, t.userId)]);
 
+export const mklPurchaseIntents = sqliteTable("mkl_purchase_intents", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  identityLinkId: text("identity_link_id").notNull().references(() => externalIdentityLinks.id, { onDelete: "restrict" }), organizationId: text("organization_id").notNull(),
+  purchaseKind: text("purchase_kind").notNull(), planCode: text("plan_code").notNull(), planVersion: text("plan_version").notNull(), offerId: text("offer_id").notNull(),
+  offerContractJson: text("offer_contract_json").notNull(), offerContractHash: text("offer_contract_hash").notNull(), clientRequestKeyHash: text("client_request_key_hash").notNull(),
+  requestFingerprint: text("request_fingerprint").notNull(), mklIdempotencyKey: text("mkl_idempotency_key").notNull().unique(), buyerPhone: text("buyer_phone").notNull(), returnUri: text("return_uri").notNull(),
+  mklOrderId: text("mkl_order_id").unique(), mklOrderNumber: text("mkl_order_number"), checkoutUrl: text("checkout_url"), orderStatus: text("order_status"), status: text("status").notNull(),
+  fulfillmentId: text("fulfillment_id").unique(), lotId: text("lot_id"), purchaseRevision: integer("purchase_revision").notNull().default(0), purchasePayloadHash: text("purchase_payload_hash"),
+  authorizationAttempts: integer("authorization_attempts").notNull().default(0), recoveryAttempts: integer("recovery_attempts").notNull().default(0), lastErrorCode: text("last_error_code"), terminalReason: text("terminal_reason"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(), orderBoundAt: integer("order_bound_at", { mode: "timestamp_ms" }),
+  reconciledAt: integer("reconciled_at", { mode: "timestamp_ms" }), terminalAt: integer("terminal_at", { mode: "timestamp_ms" }),
+}, (t) => [uniqueIndex("mkl_purchase_owner_request_unique").on(t.ownerId, t.clientRequestKeyHash), index("mkl_purchase_owner_created_idx").on(t.ownerId, t.createdAt, t.id), index("mkl_purchase_recovery_idx").on(t.status, t.updatedAt, t.id)]);
+
 export const capabilityGrants = sqliteTable("capability_grants", {
   id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), authority: text("authority").notNull(),
   capabilitiesJson: text("capabilities_json").notNull(), reason: text("reason").notNull(), issuedBy: text("issued_by").notNull(),

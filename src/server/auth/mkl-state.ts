@@ -3,11 +3,12 @@ import type { MklConfig, MklIdentity } from "./mkl-oidc";
 export const MKL_STATE_TTL_MS = 10 * 60 * 1000;
 export const MKL_BROWSER_COOKIE_PROD = "__Host-tulis_mkl_browser";
 export const MKL_CONSENT_COOKIE_PROD = "__Host-tulis_mkl_consent";
+export const MKL_PURCHASE_COOKIE_PROD = "__Host-tulis_mkl_purchase";
 
-export type MklIntent = "sign_in" | "link";
+export type MklIntent = "sign_in" | "link" | "purchase";
 export type AuthorizationState = {
   version: 1; intent: MklIntent; codeVerifier: string; expectedNonce: string; issuer: string; clientId: string; redirectUri: string;
-  browserHash: string; userId: string | null; sessionId: string | null; returnTo: string; createdAt: number; correlationRef: string;
+  browserHash: string; userId: string | null; sessionId: string | null; purchaseId: string | null; returnTo: string; createdAt: number; correlationRef: string;
 };
 export type ConsentState = {
   version: 1; userId: string; issuer: string; subject: string; organizationId: string; email: string | null; name: string | null;
@@ -28,7 +29,8 @@ export const consentIdentifier = (receipt: string) => `mkl:consent:${receipt}`;
 
 export function mklCookieNames(config: MklConfig) {
   const secure = new URL(config.appOrigin).protocol === "https:";
-  return { browser: secure ? MKL_BROWSER_COOKIE_PROD : "tulis_mkl_browser", consent: secure ? MKL_CONSENT_COOKIE_PROD : "tulis_mkl_consent", secure };
+  return { browser: secure ? MKL_BROWSER_COOKIE_PROD : "tulis_mkl_browser", consent: secure ? MKL_CONSENT_COOKIE_PROD : "tulis_mkl_consent",
+    purchase: secure ? MKL_PURCHASE_COOKIE_PROD : "tulis_mkl_purchase", secure };
 }
 
 export function readCookie(headers: Headers, name: string): string | null {
@@ -46,11 +48,11 @@ export function serializeCookie(name: string, value: string, secure: boolean, ma
   return `${name}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
 }
 
-export async function createAuthorizationState(adapter: VerificationAdapter, config: MklConfig, input: { intent: MklIntent; browser: string; userId: string | null; sessionId: string | null; returnTo: string }) {
+export async function createAuthorizationState(adapter: VerificationAdapter, config: MklConfig, input: { intent: MklIntent; browser: string; userId: string | null; sessionId: string | null; purchaseId?: string | null; returnTo: string }) {
   const state = randomToken(); const nonce = randomToken(); const codeVerifier = randomToken(64); const now = Date.now();
   const value: AuthorizationState = {
     version: 1, intent: input.intent, codeVerifier, expectedNonce: nonce, issuer: config.issuer, clientId: config.clientId,
-    redirectUri: config.redirectUri, browserHash: await sha256(input.browser), userId: input.userId, sessionId: input.sessionId, returnTo: input.returnTo,
+    redirectUri: config.redirectUri, browserHash: await sha256(input.browser), userId: input.userId, sessionId: input.sessionId, purchaseId: input.purchaseId ?? null, returnTo: input.returnTo,
     createdAt: now, correlationRef: crypto.randomUUID(),
   };
   await adapter.createVerificationValue({ identifier: await stateIdentifier(state), value: JSON.stringify(value), expiresAt: new Date(now + MKL_STATE_TTL_MS) });
@@ -62,8 +64,9 @@ export async function consumeAuthorizationState(adapter: VerificationAdapter, st
   if (!consumed) return null;
   try {
     const value = JSON.parse(consumed.value) as AuthorizationState;
-    if (value.version !== 1 || (value.intent !== "sign_in" && value.intent !== "link") || typeof value.codeVerifier !== "string" || typeof value.expectedNonce !== "string" || typeof value.browserHash !== "string") return null;
-    if (value.intent === "link" && (typeof value.userId !== "string" || typeof value.sessionId !== "string")) return null;
+    if (value.version !== 1 || !["sign_in", "link", "purchase"].includes(value.intent) || typeof value.codeVerifier !== "string" || typeof value.expectedNonce !== "string" || typeof value.browserHash !== "string") return null;
+    if ((value.intent === "link" || value.intent === "purchase") && (typeof value.userId !== "string" || typeof value.sessionId !== "string")) return null;
+    if (value.intent === "purchase" && typeof value.purchaseId !== "string") return null;
     return value;
   } catch { return null; }
 }

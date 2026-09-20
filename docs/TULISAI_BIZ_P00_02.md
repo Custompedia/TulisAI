@@ -33,10 +33,10 @@ This addendum records implementation completed after the B0 audit without rewrit
 - **Current source status:** the identity bridge now exists in TulisAI `main`; it provides Continue with MKL and explicit account linking using issuer + subject as external identity authority.
 - **B3:** COMPLETE / MERGED — verified entitlement projection and capability authority landed in `main` at merge commit `59edeb36d5a1703dc9019d6932f964b537c300c6`.
 - **B4:** SOURCE-COMPLETE / MERGED WHEN THIS ADDENDUM IS PRESENT ON `main` — the character wallet, Unicode usage accounting, reservations/allocations, lease recovery, internal purchased-lot/correction contracts, and canonical wallet summary are contained in the B4 merge change. See `docs/b4-character-wallet.md`.
-- **B5:** NOT STARTED / REQUIRED — real MKL purchased-lot fulfillment and correction transport remains pending. Local B4 fixtures are not commerce integration.
+- **B5:** SOURCE IMPLEMENTED ON `codex/b5-mkl-commerce`; NOT DEPLOYED / NOT COMMISSIONED — durable intents, purchase OIDC, strict generic MKL offer/order/purchase recovery, B3 access reconciliation, and B4 fulfillment/correction transport are fixture-tested. See `docs/b5-mkl-commerce.md`. No live or Sandbox purchase has been made.
 - **B6–B9:** NOT STARTED.
 
-No B4 production migration has been applied. TulisAI has not been commissioned
+No B4/B5 production migration has been applied. TulisAI has not been commissioned
 in MKL and no client, secret, offer, checkout, payment, Midtrans, or production
 configuration was created or changed. The authenticated B3 live-integration
 follow-up remains pending. The old UTC-calendar character total is retained
@@ -317,7 +317,7 @@ Additional reconciliation:
 | B2 | COMPLETE / MERGED | TulisAI identity bridge | B0 approval + B1 stable contract; explicit linking/no email merge/admin isolation and recovery tests; merged through TulisAI PR #2 |
 | B3 | COMPLETE / MERGED | Entitlement/capability projection | Merged in TulisAI `main` at `59edeb36d5a1703dc9019d6932f964b537c300c6`; authenticated live-integration follow-up remains pending |
 | B4 | SOURCE-COMPLETE / MERGED ON `main` CONTAINING THIS ROW | Character wallets | Additive migration `0013`; B4 wallet and recovery behavior complete in source; real purchased-lot transport remains a B5 dependency |
-| B5 | NOT STARTED | Generic MKL app-commerce support | B0 approved commercial requirements + B1 application/customer binding; can progress alongside B2/B3/local B4 design |
+| B5 | SOURCE IMPLEMENTED; NOT DEPLOYED / NOT COMMISSIONED | Generic MKL app-commerce support | Migration `0014`; fixture-tested durable intents, purchase OIDC, order/purchase recovery, B3 access and B4 lot/correction integration; live/Sandbox follow-ups remain |
 | B6 | NOT STARTED | TulisAI commercial frontend | B2/B3/B4 usable interfaces + B5 approved commerce; truthful offers, pending states, refresh/recovery |
 | B7 | NOT STARTED | Joint QA | B1–B6 integrated; identity, entitlement, wallets, portability, replay/concurrency/failure and legacy acceptance evidence |
 | B8 | NOT STARTED | Sandbox | B0–B7 complete and approved for real Sandbox acceptance; obey L |
