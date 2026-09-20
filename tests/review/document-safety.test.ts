@@ -16,6 +16,7 @@ import { runtimeControls, defaults, INLINE_LIMIT } from '../../src/lib/writing/s
 import { PLAN_LIMITS } from '../../src/lib/plans';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
 import { createLock } from '../../src/server/documents/locks';
+import { ensureFreeGrant } from '../../src/server/usage/wallet';
 
 let db: DatabaseSync;
 let objects: Map<string, string>;
@@ -32,6 +33,7 @@ class Statement {
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   applyMigrations(db); objects = new Map(); objectReads = 0;
+  db.prepare("INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('owner-a','Owner','owner-a@example.test','owner-a','user','free',1,1)").run();
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => {
       db.exec('BEGIN');
@@ -120,24 +122,25 @@ describe('review: actual AI pipeline with mocked provider transport',()=>{
     const preview=await generatePreview('owner-a','key',input(doc));
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Sumber asli.');
     const reused=await generatePreview('owner-a','key',input(doc));expect(reused.id).toBe(preview.id);expect(transport).toHaveBeenCalledTimes(1);
+    await expect(generatePreview('owner-a','key',{...input(doc),runtime:runtimeControls({...defaults,strength:'strong'},'id')})).rejects.toMatchObject({code:'IDEMPOTENCY_CONFLICT'});
     await applyPreview('owner-a',preview.id,0);await applyPreview('owner-a',preview.id,0);
     expect(documentText((await getDocument('owner-a',doc.id)).content)).toBe('Tulisan awal.');expect((await listVersions('owner-a',doc.id)).items).toHaveLength(2);
     expect(db.prepare('SELECT input_tokens FROM usage_ledger').get()).toMatchObject({input_tokens:12});
   });
-  it('enforces the character allowance for users and lifts it for admins',async()=>{
+  it('enforces the fixed wallet allowance and does not let admin role mint commercial value',async()=>{
     // 'Sumber asli.' is 12 characters, so a quota of 12 pays for exactly one run.
-    enable();state.env.AI_FREE_CHARACTER_ALLOWANCE='12';const doc=await create();
+    enable();const doc=await create();await ensureFreeGrant('owner-a');db.prepare("UPDATE character_grants SET original_amount=12 WHERE owner_id='owner-a' AND kind='free'").run();
     const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
     await generatePreview('owner-a','first',input(doc));
     expect(held()).toBe(12);
     await expect(generatePreview('owner-a','second',input(doc))).rejects.toMatchObject({code:'QUOTA_EXCEEDED'});
-    db.prepare("INSERT INTO user (id,name,email,username,role,created_at,updated_at) VALUES ('owner-a','Admin','admin@example.test','admin','admin',1,1)").run();
-    const preview=await generatePreview('owner-a','third',input(doc));
-    expect(preview.id).toBeTruthy();expect(transport).toHaveBeenCalledTimes(2);
+    db.prepare("UPDATE user SET role='admin',email='admin@example.test',username='admin' WHERE id='owner-a'").run();
+    await expect(generatePreview('owner-a','third',input(doc))).rejects.toMatchObject({code:'QUOTA_EXCEEDED'});
+    expect(transport).toHaveBeenCalledTimes(1);
   });
   it('does not refill the free allowance when the month rolls over',async()=>{
     // The free trial is granted once per account, so a run recorded in an earlier period still counts against it.
-    enable();state.env.AI_FREE_CHARACTER_ALLOWANCE='12';const doc=await create();
+    enable();const doc=await create();await ensureFreeGrant('owner-a');db.prepare("UPDATE character_grants SET settled_amount=3000 WHERE owner_id='owner-a' AND kind='free'").run();
     db.prepare("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,source_characters,charge_characters,created_at) VALUES ('old','owner-a','old','generate','completed','2000-01','r',12,12,1)").run();
     const transport=vi.fn(async()=>response({transformed_text:'Tulisan awal.',change_categories:[],warnings:[],no_change_needed:false}));vi.stubGlobal('fetch',transport);
     await expect(generatePreview('owner-a','fresh',input(doc))).rejects.toMatchObject({code:'QUOTA_EXCEEDED'});

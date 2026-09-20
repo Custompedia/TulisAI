@@ -15,6 +15,7 @@ import { defaults, runtimeControls } from '../../src/lib/writing/settings';
 import { createLock } from '../../src/server/documents/locks';
 import { ApiError, errorText } from '../../src/lib/client/api';
 import { EditorDocumentSchema } from '../../src/lib/contracts';
+import { ensureFreeGrant } from '../../src/server/usage/wallet';
 
 let db: DatabaseSync;
 class Statement {
@@ -30,6 +31,7 @@ const objects = new Map<string, string>();
 beforeEach(() => {
   db = new DatabaseSync(':memory:');
   applyMigrations(db);
+  db.prepare("INSERT INTO user (id,name,email,username,role,tier,created_at,updated_at) VALUES ('owner-a','Owner','owner-a@example.test','owner-a','user','free',1,1)").run();
   objects.clear();
   state.env = {
     DB: { prepare: (sql: string) => new Statement(sql), batch: async (statements: Statement[]) => {
@@ -136,7 +138,8 @@ describe('review: a free-form instruction is paid, scoped and free', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  // AI Mode is charged MAX(source, output): the hold taken before the call is released down to what was really used.
+  // AI Mode is charged MAX(source, output), extending its wallet hold before a
+  // preview can become deliverable.
   const charge = () => Number((db.prepare("SELECT COALESCE(SUM(charge_characters),0) AS total FROM usage_ledger WHERE operation='generate'").get() as { total: number }).total);
 
   it('charges the generated output when it is longer than the source', async () => {
@@ -148,6 +151,26 @@ describe('review: a free-form instruction is paid, scoped and free', () => {
     await instruct('payer-i', doc.id, doc.revision, source, 'tambahkan lokasinya');
     expect(longer.length).toBeGreaterThan(source.length);
     expect(charge()).toBe(longer.length);
+  });
+
+  it('charges all 250 output code points for a 100-code-point source, never the historical 2x clamp', async () => {
+    paid('payer-exact'); const source = 'a'.repeat(100); const output = 'b'.repeat(250);
+    const doc = await createDocument('payer-exact', { title: 'F', language: 'id', content: content(source) });
+    always(transform(output)); await instruct('payer-exact', doc.id, doc.revision, source, 'kembangkan teks');
+    expect(charge()).toBe(250);
+    expect(db.prepare("SELECT settled_amount,current_hold,state FROM character_reservations WHERE owner_id='payer-exact'").get())
+      .toEqual({ settled_amount: 250, current_hold: 250, state: 'settled' });
+  });
+
+  it('rejects and releases a validated long output when the additional hold cannot be acquired', async () => {
+    paid('payer-tight'); await ensureFreeGrant('payer-tight');
+    db.prepare("UPDATE character_grants SET original_amount=200 WHERE owner_id='payer-tight' AND kind='free'").run();
+    const source = 'a'.repeat(100); const doc = await createDocument('payer-tight', { title: 'F', language: 'id', content: content(source) });
+    always(transform('b'.repeat(250)));
+    await expect(instruct('payer-tight', doc.id, doc.revision, source, 'kembangkan teks')).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
+    expect(db.prepare("SELECT state,settled_amount FROM character_reservations WHERE owner_id='payer-tight'").get()).toEqual({ state: 'released', settled_amount: 0 });
+    expect(db.prepare("SELECT reserved_amount,settled_amount FROM character_grants WHERE owner_id='payer-tight' AND kind='free'").get()).toEqual({ reserved_amount: 0, settled_amount: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM transformations WHERE owner_id='payer-tight'").get()).toEqual({ n: 0 });
   });
 
   it('charges the source when the output came back shorter', async () => {

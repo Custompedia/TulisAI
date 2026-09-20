@@ -6,6 +6,7 @@ import { asTier, characterLimit, monthlyLimit, freeCharacterAllowance, periodKey
 import { planLimits } from '@/lib/plans';
 import { writeAudit } from '../audit';
 import { assertMklAccountDeletable, getMklLinkByUserId } from '../identity/links';
+import { walletSummary } from '../usage/wallet';
 
 export const RoleSchema = z.enum(['user', 'admin']);
 export const TierSchema = z.enum(TIERS);
@@ -72,15 +73,15 @@ const USER_SELECT = `
   ) l ON l.owner_id=u.id
   LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents GROUP BY owner_id) d ON d.owner_id=u.id`;
 
-// A one-time allowance is spent against the account's whole ledger, not this period's, so those rows get their own
-// bounded sum: at most one page of owner ids, each served by the covering index's owner_id prefix.
-async function withAccountCharacters(users: AdminUser[]): Promise<AdminUser[]> {
-  const trial = users.filter((user) => user.characterScope === 'account');
-  if (!trial.length) return users;
-  const rows = await runtime().DB.prepare(`SELECT owner_id, COALESCE(SUM(charge_characters),0) AS characters FROM usage_ledger WHERE owner_id IN (${trial.map(() => '?').join(',')}) GROUP BY owner_id`)
-    .bind(...trial.map((user) => user.id)).all<{ owner_id: string; characters: number }>();
-  const spent = new Map((rows.results ?? []).map((row) => [row.owner_id, row.characters]));
-  for (const user of trial) user.charactersUsed = spent.get(user.id) ?? 0;
+async function withWalletCharacters(users: AdminUser[]): Promise<AdminUser[]> {
+  const wallets = await Promise.all(users.map((user) => walletSummary(user.id)));
+  users.forEach((user, index) => {
+    const wallet = wallets[index]!;
+    const used = wallet.mode === 'paid' ? (wallet.included?.settled ?? 0) + wallet.purchased.settled
+      : wallet.free ? wallet.free.original - wallet.free.remaining : 0;
+    user.charactersUsed = used; user.characterLimit = used + wallet.spendableTotal;
+    user.characterScope = wallet.mode === 'free' ? 'account' : 'period'; user.unlimited = false;
+  });
   return users;
 }
 
@@ -110,7 +111,7 @@ export async function listUsers(filter: UserFilter = {}, page = 1): Promise<{ su
   const total = count?.n ?? 0; const info = pageInfo(Math.min(page, Math.max(1, Math.ceil(total / PAGE_LIMIT))), total);
   const rows = await runtime().DB.prepare(`${USER_SELECT} ${USER_WHERE} ORDER BY ${ORDER[filter.sort ?? 'newest']} LIMIT ? OFFSET ?`)
     .bind(period, ...where, PAGE_LIMIT, (info.page - 1) * PAGE_LIMIT).all<Row>();
-  return { summary: await summary(period), items: await withAccountCharacters(rows.results.map(toUser)), pageInfo: info };
+  return { summary: await summary(period), items: await withWalletCharacters(rows.results.map(toUser)), pageInfo: info };
 }
 
 async function summary(period: string): Promise<AdminSummary> {
@@ -137,7 +138,7 @@ async function summary(period: string): Promise<AdminSummary> {
 export async function getUser(userId: string): Promise<AdminUser> {
   const row = await runtime().DB.prepare(`${USER_SELECT} WHERE u.id=?`).bind(periodKey(), userId).first<Row>();
   if (!row) throw new RequestError('NOT_FOUND', 'User not found.', 404);
-  return (await withAccountCharacters([toUser(row)]))[0]!;
+  return (await withWalletCharacters([toUser(row)]))[0]!;
 }
 
 export async function countAdmins(): Promise<number> {
@@ -162,6 +163,9 @@ export async function assertRemove(actorId: string, target: AdminUser): Promise<
 }
 
 export async function updateUser(userId: string, patch: UserPatch): Promise<AdminUser> {
+  if (patch.aiCharacterLimitOverride !== undefined && patch.aiCharacterLimitOverride !== null) {
+    throw new RequestError('LEGACY_CHARACTER_OVERRIDE_READ_ONLY', 'Legacy character overrides cannot create B4 wallet value. They may only be cleared.', 422);
+  }
   const sets: string[] = []; const values: unknown[] = [];
   if (patch.name !== undefined) { sets.push('name=?'); values.push(patch.name); }
   if (patch.emailVerified !== undefined) { sets.push('email_verified=?'); values.push(patch.emailVerified ? 1 : 0); }

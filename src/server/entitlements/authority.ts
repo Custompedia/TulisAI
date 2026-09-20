@@ -1,6 +1,7 @@
 import { runtime, type RuntimeEnv } from "../runtime";
 import type { ExternalIdentityLink } from "../identity/links";
 import type { Tier } from "@/lib/plans";
+import { issueIncludedGrantFromProjection } from "@/server/usage/wallet";
 
 export const ENTITLEMENT_FRESHNESS_MS = 15 * 60 * 1000;
 export const SUPPORTED_PLAN_VERSION = "pricing-v1";
@@ -192,6 +193,9 @@ export async function persistAuthority(userId: string, link: ExternalIdentityLin
     }
     throw new AuthorityError("stale_authority", "An older MKL authority revision was rejected.");
   }
+  // B4 issuance is idempotent on authoritative entitlement identity + exact
+  // period. A replay refreshes B3 freshness but cannot replenish the grant.
+  if (active) await issueIncludedGrantFromProjection(userId, verifiedAt);
   return sameScope && existing && authority.revision === existing.scope_revision ? "replay" : "forward";
 }
 

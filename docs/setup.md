@@ -96,7 +96,15 @@ Saat konfigurasi B3 lokal lengkap, callback yang baru memverifikasi ID token mem
 
 AI memakai `OPENROUTER_API_KEY` dan `OPENROUTER_MODEL`. Model wajib dipilih dan diuji berdasarkan structured output prompt final v1. Provider request hardcoded `provider.data_collection=deny`. `AI_PUBLIC_ENABLED` harus tetap `false` sampai retensi dan privacy setting provider diverifikasi secara nyata.
 
-`AI_FREE_CHARACTER_ALLOWANCE`, angka included-character per tier, ledger penggunaan saat ini, dan `AI_MONTHLY_REQUEST_LIMIT` tetap adapter akuntansi kompatibilitas dari implementasi sebelum B3. B3 tidak menerbitkan grant karakter, lot pembelian, atau wallet value; kontrak wallet baru dimulai di B4. `AI_MONTHLY_REQUEST_LIMIT` tetap pengaman request. Semua angka ini adalah batas operasional internal, bukan harga atau authority komersial. Timeout, response size, quota reservation kompatibilitas, idempotency, dan status provider error harus dipertahankan sebagai error; aplikasi tidak boleh mengganti kegagalan dengan output palsu.
+B4 mengganti authority karakter komersial dengan grants, purchased lots,
+reservations, dan allocations di D1. Free selalu 3.000 sekali per akun;
+`AI_FREE_CHARACTER_ALLOWANCE`, local tier, role admin, capability grant, dan
+`ai_character_limit_override` bukan sumber nilai wallet. `usage_ledger` tetap
+telemetry/analytics dan `AI_MONTHLY_REQUEST_LIMIT` tetap pengaman request
+kalender yang terpisah. Lihat `docs/b4-character-wallet.md` untuk cutover,
+lease 90 detik, recovery, dan batas internal B5. Timeout, response size,
+idempotency, dan status provider error tetap dipertahankan sebagai error;
+aplikasi tidak mengganti kegagalan dengan output palsu.
 
 ## Cloudflare sebelum deployment
 

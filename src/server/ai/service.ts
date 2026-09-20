@@ -9,15 +9,16 @@ import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejec
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
-import { FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
+import { type PlanLimits } from '@/lib/plans';
 import {collapseBlankLines} from '@/lib/editor/document';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
+import { countCodePoints, requestFingerprint, sha256 } from '../usage/measurement';
+import { releaseReservation, reserveCharacters, settleReservation, WalletError } from '../usage/wallet';
 
 const DAY = 86_400_000;
 // The three reservation guards, as SQL fragments so the INSERT and its diagnosis cannot drift apart.
 const BURST_LIMIT = 10;
-const GUARD_CHARACTERS = '(SELECT COALESCE(SUM(charge_characters),0) FROM usage_ledger WHERE {scope}) + ? <= ?';
 const GUARD_BURST = `(SELECT COUNT(1) FROM usage_ledger WHERE owner_id=? AND created_at>?) < ${BURST_LIMIT}`;
 const GUARD_REQUESTS = '(SELECT COUNT(1) FROM usage_ledger WHERE {countable}) < ?';
 const model = () => runtime().OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna';
@@ -28,27 +29,20 @@ const outputText = (output: AIResponse, selectedAlternative?: number): string =>
   }
   return String(output.transformed_text ?? output.corrected_text ?? '');
 };
-// The commercial cap is characters, held in charge_characters so one covering-index SUM sees both in-flight and settled usage.
-// billable=false still writes the row (observability, burst guard) but holds nothing: the user never pays for our own repair pass.
-// `hold` is what the reservation takes now; a free-form run holds more than its source and settles down once the output is known.
-async function reserve(ownerId: string, key: string, promptId: string, characters: number, rights: Entitlement, billable = true, hold = characters) {
-  // Admins bypass both caps by comparing against limits no ledger can reach; the 10-per-minute burst guard stays.
-  const limit = rights.unlimited ? Number.MAX_SAFE_INTEGER : rights.characterLimit;
+// usage_ledger is telemetry plus calendar abuse protection only. Character
+// authority lives exclusively in the B4 reservation/allocation tables.
+async function reserveTelemetry(ownerId: string, key: string, promptId: string, characters: number, rights: Entitlement, billable = true, requestId = crypto.randomUUID()) {
   // The plan's request cap is an abuse safeguard, not the commercial meter, so our own repair pass neither counts nor is blocked by it.
   const requestLimit = rights.unlimited ? Number.MAX_SAFE_INTEGER : rights.requestLimit;
-  const charge = billable ? Math.max(characters, hold) : 0;
   const existing = await runtime().DB.prepare('SELECT id FROM usage_ledger WHERE owner_id=? AND idempotency_key=?').bind(ownerId, key).first();
   if (existing) throw new RequestError('IDEMPOTENCY_PENDING', 'This request was already attempted. Check its result before retrying.', 409);
-  const id = crypto.randomUUID();
-  // Free's allowance is granted once per account, so its held total is summed across every period rather than this one.
-  const scope = rights.oneTime ? 'owner_id=?' : 'owner_id=? AND period_key=?';
-  const scopeValues = rights.oneTime ? [ownerId] : [ownerId, periodKey()];
+  const id = requestId;
   const countable = "owner_id=? AND period_key=? AND operation<>'repair'";
-  const guards = billable ? `${GUARD_CHARACTERS} AND ${GUARD_BURST} AND ${GUARD_REQUESTS}` : `${GUARD_CHARACTERS} AND ${GUARD_BURST}`;
+  const guards = billable ? `${GUARD_BURST} AND ${GUARD_REQUESTS}` : GUARD_BURST;
   try {
-    const result = await runtime().DB.prepare(`INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,prompt_id,source_characters,charge_characters) SELECT ?,?,?,?,'reserved',?,?,?,?,?,? WHERE ${guards.replace('{scope}', scope).replace('{countable}', countable)}`)
-      .bind(id, ownerId, key, promptId === 'P10_REPAIR' ? 'repair' : promptId === 'P09_QUALITY_EVALUATION' ? 'analyze' : 'generate', periodKey(), id, Date.now(), promptId, characters, charge,
-        ...scopeValues, charge, limit, ownerId, Date.now() - 60_000, ...(billable ? [ownerId, periodKey(), requestLimit] : [])).run();
+    const result = await runtime().DB.prepare(`INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,created_at,prompt_id,source_characters,charge_characters) SELECT ?,?,?,?,'reserved',?,?,?,?,?,? WHERE ${guards.replace('{countable}', countable)}`)
+      .bind(id, ownerId, key, promptId === 'P10_REPAIR' ? 'repair' : promptId === 'P09_QUALITY_EVALUATION' ? 'analyze' : 'generate', periodKey(), id, Date.now(), promptId, characters, 0,
+        ownerId, Date.now() - 60_000, ...(billable ? [ownerId, periodKey(), requestLimit] : [])).run();
     if (result.meta.changes !== 1) throw await refusedReservation(rights, countable, ownerId, billable, requestLimit);
     return id;
   } catch (error) {
@@ -58,19 +52,14 @@ async function reserve(ownerId: string, key: string, promptId: string, character
     throw new RequestError('USAGE_UNAVAILABLE', 'Usage reservation could not be created.', 503);
   }
 }
-// One INSERT checks all three guards at once, so the refusal is diagnosed afterwards: the user has to be told which
-// one stopped them — waiting a minute, upgrading the plan, or shortening the text are three different answers.
+// One INSERT checks both operational guards at once. Wallet exhaustion is
+// diagnosed by the wallet service, independently of these calendar controls.
 async function refusedReservation(rights: Entitlement, countable: string, ownerId: string, billable: boolean, requestLimit: number) {
   const row = await runtime().DB.prepare(`SELECT (SELECT COUNT(1) FROM usage_ledger WHERE owner_id=? AND created_at>?) AS burst, (SELECT COUNT(1) FROM usage_ledger WHERE ${countable}) AS requests`)
     .bind(ownerId, Date.now() - 60_000, ownerId, periodKey()).first<{ burst: number; requests: number }>().catch(() => null);
   if ((row?.burst ?? 0) >= BURST_LIMIT) return new RequestError('RATE_LIMITED', 'Too many AI requests in a short time. Wait a moment and try again.', 429);
   if (billable && (row?.requests ?? 0) >= requestLimit) return new RequestError('REQUEST_LIMIT_REACHED', 'This plan\'s AI request limit for the period is used up.', 429, { limit: requestLimit, tier: rights.tier });
-  return new RequestError('QUOTA_EXCEEDED', 'AI character allowance reached. Shorten the text or review your usage.', 429);
-}
-// A free-form run is charged MAX(source, output) once the output is known, releasing whatever the hold did not need.
-// Never above the hold that was already checked against the allowance, so a long output cannot push the account negative.
-async function settleUsage(id: string, charge: number) {
-  await runtime().DB.prepare("UPDATE usage_ledger SET charge_characters=MIN(charge_characters,?) WHERE id=? AND charge_characters>0").bind(Math.max(1, charge), id).run().catch(() => undefined);
+  return new RequestError('USAGE_UNAVAILABLE', 'Usage telemetry reservation could not be created.', 503);
 }
 // A failed provider call releases its hold in the same statement that marks it failed, so nothing is charged for it.
 async function completeUsage(id: string, result: ProviderResult, started: number) {
@@ -80,6 +69,9 @@ async function completeUsage(id: string, result: ProviderResult, started: number
 // The provider call succeeded but the result was refused, so the hold is released and the reason recorded.
 async function voidUsage(id: string, reason: string) {
   await runtime().DB.prepare('UPDATE usage_ledger SET charge_characters=0,error_code=? WHERE id=?').bind(reason.slice(0, 120), id).run().catch(() => undefined);
+}
+async function settleTelemetry(id: string, charge: number) {
+  await runtime().DB.prepare("UPDATE usage_ledger SET charge_characters=? WHERE id=? AND status='completed'").bind(charge, id).run().catch(() => undefined);
 }
 async function cleanExpired(ownerId: string) {
   await runtime().DB.prepare("UPDATE transformations SET source_text='',output_json='{}',runtime_json='{}',anchor_json=NULL,status='expired' WHERE id IN (SELECT id FROM transformations WHERE owner_id=? AND status IN ('preview','applied','discarded') AND expires_at<=? ORDER BY expires_at LIMIT 100)").bind(ownerId, Date.now()).run();
@@ -94,14 +86,33 @@ export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLi
   return Math.min(limits.runLimit, anchored ? limits.runLimit : AI_SCOPE_LIMIT);
 }
 
+const walletRequestError = (error: unknown): RequestError => error instanceof WalletError
+  ? new RequestError(error.code, error.message, error.status)
+  : new RequestError('WALLET_UNAVAILABLE', 'The character wallet is temporarily unavailable.', 503);
+
+async function generationFingerprint(ownerId: string, input: GenerateInput, controls: Record<string, unknown>, instruction: string | null, sourceCharacters: number) {
+  return requestFingerprint({
+    ownerId, operation: input.promptId, documentId: input.documentId, documentRevision: input.expectedRevision,
+    scope: input.source.anchor ? { from: input.source.anchor.from, to: input.source.anchor.to } : { document: true },
+    sourceCharacters, sourceHash: await sha256(input.source.text), instructionHash: instruction ? await sha256(instruction) : null,
+    runtimeHash: await requestFingerprint(controls), suggestTitle: input.suggestTitle === true, measurementVersion: 'unicode_code_points_v1',
+  });
+}
+
 export async function generatePreview(ownerId: string, key: string, input: GenerateInput) {
   if (runtime().AI_PUBLIC_ENABLED !== 'true') throw new ConfigurationError('AI is unavailable until provider privacy configuration is verified.');
   const apiKey = requiredSetting(runtime().OPENROUTER_API_KEY, 'OPENROUTER_API_KEY');
   await cleanExpired(ownerId);
-  const existing = await runtime().DB.prepare('SELECT id,document_id,prompt_id,source_revision,source_text,output_json,status,expires_at FROM transformations WHERE owner_id=? AND idempotency_key=?').bind(ownerId, key)
-    .first<{id:string;document_id:string;prompt_id:string;source_revision:number;source_text:string;output_json:string;status:string;expires_at:number}>();
+  const instruction = sanitizeInstruction(input.instruction);
+  const sourceCharacters = countCodePoints(input.source.text);
+  const fingerprint = await generationFingerprint(ownerId, input, input.runtime, instruction ?? null, sourceCharacters);
+  const existing = await runtime().DB.prepare(`SELECT t.id,t.document_id,t.prompt_id,t.source_revision,t.source_text,t.output_json,t.status,t.expires_at,
+      r.request_fingerprint FROM transformations t LEFT JOIN character_reservations r ON r.owner_id=t.owner_id AND r.idempotency_key=t.idempotency_key
+      WHERE t.owner_id=? AND t.idempotency_key=?`).bind(ownerId, key)
+    .first<{id:string;document_id:string;prompt_id:string;source_revision:number;source_text:string;output_json:string;status:string;expires_at:number;request_fingerprint:string|null}>();
   if (existing) {
-    if (existing.document_id !== input.documentId || existing.prompt_id !== input.promptId || existing.source_revision !== input.expectedRevision || existing.source_text !== input.source.text) throw new RequestError('IDEMPOTENCY_CONFLICT', 'This request key belongs to another transformation.', 409);
+    if (existing.document_id !== input.documentId || existing.prompt_id !== input.promptId || existing.source_revision !== input.expectedRevision || existing.source_text !== input.source.text ||
+        (existing.request_fingerprint !== null && existing.request_fingerprint !== fingerprint)) throw new RequestError('IDEMPOTENCY_CONFLICT', 'This request key belongs to another transformation.', 409);
     if (existing.status === 'preview' && existing.expires_at > Date.now()) return {id:existing.id, output:JSON.parse(existing.output_json), expiresAt:new Date(existing.expires_at).toISOString(), reused:true};
     throw new RequestError('PREVIEW_EXPIRED', 'This request has already finished or expired.', 410);
   }
@@ -109,13 +120,12 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   // A free-form instruction is a paid, paragraph-scoped action: it needs an anchor, runs as a custom transform,
   // and never bypasses a guard. Everything below applies to it unchanged.
   if (input.promptId === 'P08_CUSTOM_TRANSFORM') assertFeature(rights, 'freeform_prompt');
-  const instruction = sanitizeInstruction(input.instruction);
   if (instruction) {
     if (!input.source.anchor) throw new RequestError('INVALID_REQUEST', 'A free-form instruction needs a selected passage.');
     if (input.promptId !== 'P08_CUSTOM_TRANSFORM') throw new RequestError('INVALID_REQUEST', 'A free-form instruction runs as a custom transform.');
   } else if (input.promptId === 'P08_CUSTOM_TRANSFORM') throw new RequestError('INVALID_REQUEST', 'A custom transform needs an instruction.');
   const limit = scopeLimit(input.promptId, Boolean(input.source.anchor), rights.limits);
-  if (input.source.text.length > limit) throw new RequestError('SCOPE_TOO_LARGE', `Select at most ${limit} characters for this AI action.`, 422, {limit, length: input.source.text.length});
+  if (sourceCharacters > limit) throw new RequestError('SCOPE_TOO_LARGE', `Select at most ${limit} characters for this AI action.`, 422, {limit, length: sourceCharacters});
   const source = await currentText(ownerId, input.documentId);
   if (source.document.revision !== input.expectedRevision) throw new RequestError('REVISION_CONFLICT', 'The document changed before generation.', 409);
   const anchor = input.source.anchor;
@@ -135,18 +145,32 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   try { controls = runtimeForAccess(rights, normalizeRuntime(input.promptId, trusted)) as RuntimeInput; } catch { throw new RequestError('INVALID_REQUEST', 'The selected AI controls are invalid.'); }
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
   let mainUsageId = '';
+  let mainProviderRequestId: string | null = null;
   const call = async (promptId: PromptId, callKey: string, runtimeControls: RuntimeInput, repair=false, requiredTerms=trusted.protectedTerms) => {
-    const usageId = await reserve(ownerId, callKey, promptId, input.source.text.length, rights, !repair, !repair && freeform ? input.source.text.length * FREEFORM_RESERVE_FACTOR : input.source.text.length);
-    if (!repair && !mainUsageId) mainUsageId = usageId;
+    let usageId: string;
+    if (repair) usageId = await reserveTelemetry(ownerId, callKey, promptId, sourceCharacters, rights, false);
+    else {
+      let wallet;
+      try { wallet = await reserveCharacters({ ownerId, idempotencyKey: callKey, fingerprint, operation: promptId, sourceCharacters }); }
+      catch (error) { throw walletRequestError(error); }
+      if (!wallet.created) throw new RequestError(wallet.reservation.state === 'reserved' ? 'IDEMPOTENCY_PENDING' : 'IDEMPOTENCY_COMPLETE', 'This customer operation was already attempted.', 409);
+      usageId = wallet.reservation.id; mainUsageId = usageId;
+      try { await reserveTelemetry(ownerId, callKey, promptId, sourceCharacters, rights, true, usageId); }
+      catch (error) { await releaseReservation(usageId, 'telemetry_reservation_failed'); throw error; }
+    }
     const started = Date.now();
     const result = await provider.generate({promptId,runtime:runtimeControls,sourceText:input.source.text,requestId:usageId,protectedTerms:requiredTerms,protectedCitations:trusted.protectedCitations,...(repair?{repairAttempt:1}:{})});
     await completeUsage(usageId,result,started);
-    if (!result.ok) throw new RequestError('AI_UNAVAILABLE', 'AI generation could not be completed safely. Your source is unchanged.', 502);
+    if (!result.ok) {
+      if (!repair) await releaseReservation(usageId, `provider:${result.error}`);
+      throw new RequestError('AI_UNAVAILABLE', 'AI generation could not be completed safely. Your source is unchanged.', 502);
+    }
+    if (!repair) mainProviderRequestId = result.usage?.providerRequestId ?? null;
     return result.response;
   };
   // Set once the main hold has been released, so the catch-all below does not overwrite a specific reason.
   let released = false;
-  const release = async (reason: string) => { if (mainUsageId && !released) { released = true; await voidUsage(mainUsageId, `rejected:${reason}`); } };
+  const release = async (reason: string) => { if (mainUsageId && !released) { released = true; await releaseReservation(mainUsageId, `rejected:${reason}`); await voidUsage(mainUsageId, `rejected:${reason}`); } };
   const rejected = async (reason: string, error: RequestError) => { await release(reason); return error; };
   // Names the cause so the user is told what actually blocked the result instead of one message for every case.
   const REJECTION_CODES: Record<string, string> = { term: 'AI_LOCKED_TERM_REJECTED', number: 'AI_NUMBER_REJECTED', citation: 'AI_CITATION_REJECTED', placeholder: 'AI_PLACEHOLDER_REJECTED', style: 'STYLE_SAMPLE_COPIED', structure: 'AI_STRUCTURE_REJECTED' };
@@ -201,11 +225,16 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
-  // AI Mode can return more than it was given, so its charge settles to MAX(source, output) inside the hold taken above.
-  if (freeform && mainUsageId) await settleUsage(mainUsageId, Math.max(input.source.text.length, outputText(output).length));
+  // OD-11/AI Mode: ordinary operations charge exact source code points; AI
+  // Mode charges MAX(source, validated final output), extending the hold before
+  // the preview and settlement commit atomically.
+  const exactCharge = freeform ? Math.max(sourceCharacters, countCodePoints(outputText(output))) : sourceCharacters;
   const id=crypto.randomUUID();const expiry=Date.now()+DAY;
-  await runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(id,input.documentId,ownerId,input.promptId,PROMPT_VERSION,model(),input.expectedRevision,input.source.text,anchor?JSON.stringify(anchor):null,JSON.stringify({...controls,style_reference:undefined,style_reference_used:typeof controls.style_reference==='string'&&controls.style_reference.length>0,prompt_version:PROMPT_VERSION,reasoning_effort:REASONING_EFFORT[input.promptId]}),JSON.stringify(output),'preview',key,expiry,Date.now()).run();
+  const previewInsert = runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+    .bind(id,input.documentId,ownerId,input.promptId,PROMPT_VERSION,model(),input.expectedRevision,input.source.text,anchor?JSON.stringify(anchor):null,JSON.stringify({...controls,style_reference:undefined,style_reference_used:typeof controls.style_reference==='string'&&controls.style_reference.length>0,prompt_version:PROMPT_VERSION,reasoning_effort:REASONING_EFFORT[input.promptId]}),JSON.stringify(output),'preview',key,expiry,Date.now());
+  try { await settleReservation(mainUsageId, exactCharge, id, mainProviderRequestId, Date.now(), [previewInsert]); }
+  catch (error) { await release(error instanceof Error ? error.message : 'settlement failed'); throw walletRequestError(error); }
+  await settleTelemetry(mainUsageId, exactCharge);
   return {id,output,expiresAt:new Date(expiry).toISOString(),reused:false};
   } catch (error) {
     // Anything that fails past the provider call — a failed repair, a schema surprise, a storage error — leaves the user with no usable output.
@@ -258,13 +287,27 @@ export async function analyzeQuality(ownerId: string, key: string, input: Analyz
   if (anchor && (anchor.from >= anchor.to || anchor.to > source.text.length)) throw new RequestError('SOURCE_MISMATCH', 'The selected source is invalid.', 409);
   if ((anchor ? source.text.slice(anchor.from, anchor.to) : source.text) !== input.source.text || !input.source.text.trim()) throw new RequestError('SOURCE_MISMATCH', 'The selected source no longer matches the saved document.', 409);
   const rights = await entitlement(ownerId);
-  const usageId = await reserve(ownerId, key, 'P09_QUALITY_EVALUATION', input.source.text.length, rights);
+  const sourceCharacters = countCodePoints(input.source.text);
+  const fingerprint = await requestFingerprint({ ownerId, operation: 'P09_QUALITY_EVALUATION', documentId: input.documentId,
+    documentRevision: input.expectedRevision, scope: anchor ? { from: anchor.from, to: anchor.to } : { document: true },
+    sourceCharacters, sourceHash: await sha256(input.source.text), language: input.language, context: input.context,
+    measurementVersion: 'unicode_code_points_v1' });
+  let wallet;
+  try { wallet = await reserveCharacters({ ownerId, idempotencyKey: key, fingerprint, operation: 'P09_QUALITY_EVALUATION', sourceCharacters }); }
+  catch (error) { throw walletRequestError(error); }
+  if (!wallet.created) throw new RequestError(wallet.reservation.state === 'reserved' ? 'IDEMPOTENCY_PENDING' : 'IDEMPOTENCY_COMPLETE', 'This analysis was already attempted.', 409);
+  const usageId = wallet.reservation.id;
+  try { await reserveTelemetry(ownerId, key, 'P09_QUALITY_EVALUATION', sourceCharacters, rights, true, usageId); }
+  catch (error) { await releaseReservation(usageId, 'telemetry_reservation_failed'); throw error; }
   const started = Date.now();
   const provider = createOpenRouterProvider({ apiKey, model: model(), privacyMode: 'deny' });
   const result = await provider.generate({ promptId: 'P09_QUALITY_EVALUATION', runtime: { language: input.language, mode: input.context }, sourceText: input.source.text, requestId: usageId });
   await completeUsage(usageId, result, started);
-  if (!result.ok) throw new RequestError('AI_UNAVAILABLE', 'Writing analysis could not be completed. Your text is unchanged.', 502);
+  if (!result.ok) { await releaseReservation(usageId, `provider:${result.error}`); throw new RequestError('AI_UNAVAILABLE', 'Writing analysis could not be completed. Your text is unchanged.', 502); }
   const dimensions = result.response as QualityResult['dimensions'];
   if (input.context !== 'academic') dimensions.academic_fit = { value: 'tidak_berlaku', reason: '' };
+  try { await settleReservation(usageId, sourceCharacters, `quality:${input.documentId}:${input.expectedRevision}:${key}`, result.usage?.providerRequestId ?? null); }
+  catch (error) { await releaseReservation(usageId, error instanceof Error ? error.message : 'settlement failed'); throw walletRequestError(error); }
+  await settleTelemetry(usageId, sourceCharacters);
   return { dimensions, warnings: [], analyzedRevision: input.expectedRevision };
 }

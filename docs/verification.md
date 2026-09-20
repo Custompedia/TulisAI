@@ -4,6 +4,17 @@ Tanggal: 12 September 2026. Pelaksana awal Luna/Terra; Astra melakukan review, p
 
 ## Batas bukti
 
+### Addendum B4 — 21 September 2026
+
+B3 telah merged pada `59edeb36d5a1703dc9019d6932f964b537c300c6`.
+B4 wallet karakter diimplementasikan hanya di source lokal; hasil gate terbaru
+dan desain detail ada di `docs/b4-character-wallet.md`. Migrasi production
+belum diterapkan, TulisAI belum di-commission di MKL, dan integrasi fulfillment
+lot nyata tetap menunggu B5. Tabel wallet B4 adalah authority komersial;
+`usage_ledger` dan `period_key` hanya telemetry/analytics serta pengaman request.
+Follow-up integrasi terautentikasi B3 juga masih pending. Status historis dan
+angka tes di bawah dipertahankan sebagai bukti baseline, bukan hasil gate B4.
+
 Implementasi core MVP tersedia di workspace lokal. Tidak ada kredensial Google OAuth/OpenRouter atau resource Cloudflare remote; tidak ada login Google nyata, panggilan model berbayar, push, deployment, maupun verifikasi browser. HTTP smoke hanya membuktikan shell SSR dan respons konfigurasi, bukan interaksi pengguna terautentikasi. Build dan tes tidak membuktikan kualitas visual di perangkat atau kualitas semantik model live.
 
 ## Gate lokal
