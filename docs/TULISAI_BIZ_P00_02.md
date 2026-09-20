@@ -22,6 +22,20 @@
 
 This contract incorporates the owner's explicit B0 approval and all thirteen locked decisions. B0 is complete as a contract/reconciliation gate only. B1–B9 remain later work: this approval does not certify Sandbox or Production readiness or claim payment integration. MKL and Mari Rekap source were not modified or audited here. No approved MKL wire contract was supplied: all cross-repository requirements below are semantic requirements, not endpoint names, issuer values, token schemas, JWT claims, or OAuth routes.
 
+## Implementation status addendum — 20 September 2026
+
+This addendum records implementation completed after the B0 audit without rewriting that audit's historical evidence or approved contract. The original `CURRENT`, `MATCH`, `PARTIAL`, `MISSING`, and `CONFLICT` labels below remain observations of the source at the audited B0 baseline. They are intentionally preserved and must not be read as a fresh audit of the current `main` branch.
+
+- **B0:** COMPLETE — approved contract/reconciliation gate; OD-1 through OD-13 remain unchanged and locked.
+- **B1:** COMPLETE / MERGED — generic MKL application identity and OIDC/SSO contract merged in MKL.
+- **B2:** COMPLETE / MERGED — TulisAI identity bridge merged through PR #2, `feat(auth): add MKL identity bridge`.
+- **B2 merge commit:** `5f835c5a87faa96183c1904dad8b11a40c8e51e8`.
+- **Current source status:** the identity bridge now exists in TulisAI `main`; it provides Continue with MKL and explicit account linking using issuer + subject as external identity authority.
+- **B3:** NEXT — entitlement projection and capability resolution.
+- **B4–B9:** NOT STARTED.
+
+B2 did **not** project entitlements, change commercial tier authority, implement character wallets, implement checkout or commerce, commission TulisAI, apply a remote migration, or deploy anything. B2 source completeness is not production commissioning readiness.
+
 ## Reading this contract
 
 | Label | Meaning |
@@ -288,18 +302,18 @@ Additional reconciliation:
 
 ## K. Implementation dependency graph
 
-| Track | Scope | Prerequisites / exit evidence |
-| --- | --- | --- |
-| B0 | PRD / contract reconciliation | COMPLETE as contract gate only: explicit owner approval and OD-1–OD-13 incorporated on 2026-09-19 |
-| B1 | Generic MKL application identity/contract support | Approved B0 requirements; approved identity/trust/customer/application semantics usable by multiple apps |
-| B2 | TulisAI identity bridge | B0 approval + B1 stable contract; explicit linking/no email merge/admin isolation and recovery tests |
-| B3 | Entitlement/capability projection | B0 approval + B1 verified fact contract + B2 identity binding; consume B5 authoritative issuance for commercial end-to-end validation |
-| B4 | Character wallets | B0 approval + B3 period/capability semantics; B5 fulfillment/correction contract for actual purchased lots |
-| B5 | Generic MKL app-commerce support | B0 approved commercial requirements + B1 application/customer binding; can progress alongside B2/B3/local B4 design |
-| B6 | TulisAI commercial frontend | B2/B3/B4 usable interfaces + B5 approved commerce; truthful offers, pending states, refresh/recovery |
-| B7 | Joint QA | B1–B6 integrated; identity, entitlement, wallets, portability, replay/concurrency/failure and legacy acceptance evidence |
-| B8 | Sandbox | B0–B7 complete and approved for real Sandbox acceptance; obey L |
-| B9 | Production | Successful B8, production readiness/release approvals and operational recovery evidence |
+| Track | Status | Scope | Prerequisites / exit evidence |
+| --- | --- | --- | --- |
+| B0 | COMPLETE | PRD / contract reconciliation | Contract gate complete: explicit owner approval and OD-1–OD-13 incorporated on 2026-09-19 |
+| B1 | COMPLETE / MERGED | Generic MKL application identity/contract support | Approved B0 requirements; approved identity/trust/customer/application semantics usable by multiple apps |
+| B2 | COMPLETE / MERGED | TulisAI identity bridge | B0 approval + B1 stable contract; explicit linking/no email merge/admin isolation and recovery tests; merged through TulisAI PR #2 |
+| B3 | NEXT | Entitlement/capability projection | B0 approval + B1 verified fact contract + B2 identity binding; consume B5 authoritative issuance for commercial end-to-end validation |
+| B4 | NOT STARTED | Character wallets | B0 approval + B3 period/capability semantics; B5 fulfillment/correction contract for actual purchased lots |
+| B5 | NOT STARTED | Generic MKL app-commerce support | B0 approved commercial requirements + B1 application/customer binding; can progress alongside B2/B3/local B4 design |
+| B6 | NOT STARTED | TulisAI commercial frontend | B2/B3/B4 usable interfaces + B5 approved commerce; truthful offers, pending states, refresh/recovery |
+| B7 | NOT STARTED | Joint QA | B1–B6 integrated; identity, entitlement, wallets, portability, replay/concurrency/failure and legacy acceptance evidence |
+| B8 | NOT STARTED | Sandbox | B0–B7 complete and approved for real Sandbox acceptance; obey L |
+| B9 | NOT STARTED | Production | Successful B8, production readiness/release approvals and operational recovery evidence |
 
 Dependency shape: B0 → B1 → B2 → B3 → B4; B1 → B5; B3/B4/B5 → B6; all integration paths → B7 → B8 → B9. B3/B4 implementation can be developed against approved contracts with local fixtures while B5 progresses, but no purchased-wallet completion is claimed before verified B5 fulfillment is integrated.
 

@@ -233,3 +233,75 @@ Pembayaran, checkout, pembelian top-up, pencairan saldo top-up, siklus perpanjan
 - "/ periode" diganti "/ bulan": backend me-reset kuota per bulan kalender UTC (`period_key` = `YYYY-MM`) karena belum ada periode langganan; footer menyatakan ini apa adanya.
 - Klaim tanpa dasar dihapus: "sudah termasuk pajak", "pembaruan fitur tanpa biaya tambahan", "Hubungi kami" (tidak ada kanal kontak), dan badge "Populer" (belum ada data) diganti "Rekomendasi".
 - Blok top-up disusun ulang selebar kartu: tiga paket dengan harga per 1.000 karakter, tag "Paling hemat" dihitung dari katalog, dan tiga aturan top-up sebagai daftar ringkas.
+
+
+## B2 — MKL Identity Bridge — 20 September 2026
+
+**Status:** COMPLETE / MERGED
+
+**Repository:** `Custompedia/TulisAI`
+
+**PR:** #2 — `feat(auth): add MKL identity bridge`
+
+**Base:** `77fc74affd735c6a394c10bad5b91358e07a82b6`
+
+**Reviewed head:** `61e5ebf5bce7f8e3193f859ac039e41da1b95d98`
+
+**Merge commit:** `5f835c5a87faa96183c1904dad8b11a40c8e51e8`
+
+### B2 capability delivered
+
+- Continue with MKL as the primary path for new customer accounts.
+- Explicit MKL linking for existing locally authenticated users.
+- Issuer + subject as the persistent external identity authority; email is never the identity key.
+- Custom MKL OIDC adapter using Authorization Code flow and PKCE S256.
+- Independent nonce and state with browser-bound, single-use authorization state.
+- Post-callback user confirmation before an explicit identity link is written.
+- Better Auth implicit provider/email linking disabled.
+- Existing local credential and Google authentication retained.
+- Local-admin and MKL-customer identity authority kept separate.
+- Linked-account admin-promotion and deletion protection in application and database layers.
+- No unlink flow in B2.
+
+### Migration and persistent constraints
+
+Migration: `migrations/0011_mkl_identity_bridge.sql`
+
+Persistent constraints:
+
+```text
+UNIQUE(issuer, subject)
+UNIQUE(provider, user_id)
+```
+
+The identity-link table contains no entitlement, commercial tier, wallet, or payment authority.
+
+### Security corrections from adversarial review
+
+- Made the ID-token `exp` claim mandatory.
+- Renewed the validated browser-binding cookie when the confirmation window begins.
+- Cleared the consent cookie on success, failure, replay, and expiry.
+- Hid the MKL link action from local admins to match server and database enforcement.
+- Documented the intentional refusal of Google same-email implicit account adoption.
+
+### Validation evidence
+
+- Focused affected suites: 56/56 PASS.
+- Local full suite: 623/624.
+- The sole local failure was reproduced at the exact base as a Windows CRLF-only baseline issue in `tests/ai/core.test.ts`; it is unrelated to B2.
+- GitHub Linux `pnpm test`: PASS.
+- TypeScript: PASS.
+- ESLint: PASS.
+- Vinext compatibility: 100%.
+- Production build: PASS.
+- Wrangler deployment dry-run: PASS; no deployment occurred.
+- `git diff --check`: PASS.
+- Post-merge GitHub Quality run #35490831773: PASS on merge commit `5f835c5a87faa96183c1904dad8b11a40c8e51e8`.
+
+### Boundary and next stage
+
+B2 performed no deployment, remote D1 migration, production client registration, secret generation or provisioning, SSO activation, DNS/domain binding, Midtrans work, B3 entitlement projection, B4 wallet implementation, or B5 commerce implementation.
+
+**Next:** B3 — entitlement projection and capability resolver.
+
+**B2 source completeness is not production commissioning readiness.**
