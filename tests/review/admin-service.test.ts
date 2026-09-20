@@ -101,9 +101,9 @@ describe('admin service: updates and guards', () => {
     await expect(assertBan('admin-1', admin)).rejects.toMatchObject({ code: 'SELF_BAN' });
     await expect(assertBan('user-1', admin)).rejects.toMatchObject({ code: 'LAST_ADMIN' });
     await expect(assertBan('admin-1', user)).resolves.toBeUndefined();
-    expect(() => assertRemove('admin-1', admin)).toThrow(expect.objectContaining({ code: 'SELF_DELETE' }));
-    expect(() => assertRemove('user-1', admin)).toThrow(expect.objectContaining({ code: 'ADMIN_DELETE' }));
-    expect(() => assertRemove('admin-1', user)).not.toThrow();
+    await expect(assertRemove('admin-1', admin)).rejects.toMatchObject({ code: 'SELF_DELETE' });
+    await expect(assertRemove('user-1', admin)).rejects.toMatchObject({ code: 'ADMIN_DELETE' });
+    await expect(assertRemove('admin-1', user)).resolves.toBeUndefined();
     addUser('admin-2', 'Second admin', { role: 'admin' });
     await expect(assertRoleChange('admin-2', admin, 'user')).resolves.toBeUndefined();
   });

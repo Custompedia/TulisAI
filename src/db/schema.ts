@@ -5,10 +5,17 @@ export const sessions = sqliteTable("session", { id: text("id").primaryKey(), ex
 export const accounts = sqliteTable("account", { id: text("id").primaryKey(), accountId: text("account_id").notNull(), providerId: text("provider_id").notNull(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), accessToken: text("access_token"), refreshToken: text("refresh_token"), idToken: text("id_token"), accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp_ms" }), refreshTokenExpiresAt: integer("refresh_token_expires_at", { mode: "timestamp_ms" }), scope: text("scope"), password: text("password"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull() }, (t) => [index("account_user_idx").on(t.userId)]);
 export const verifications = sqliteTable("verification", { id: text("id").primaryKey(), identifier: text("identifier").notNull(), value: text("value").notNull(), expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }), updatedAt: integer("updated_at", { mode: "timestamp_ms" }) }, (t) => [index("verification_identifier_idx").on(t.identifier)]);
 export const rateLimit = sqliteTable("rate_limit", { id: text("id").primaryKey(), key: text("key").notNull().unique(), count: integer("count").notNull(), lastRequest: integer("last_request").notNull() }, (t) => [index("rate_limit_last_request_idx").on(t.lastRequest)]);
+export const externalIdentityLinks = sqliteTable("external_identity_link", {
+  id: text("id").primaryKey(), provider: text("provider").notNull(), issuer: text("issuer").notNull(), subject: text("subject").notNull(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), profileEmail: text("profile_email"), profileName: text("profile_name"),
+  linkMethod: text("link_method").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  lastAuthenticatedAt: integer("last_authenticated_at", { mode: "timestamp_ms" }),
+}, (t) => [uniqueIndex("external_identity_link_issuer_subject_unique").on(t.issuer, t.subject), uniqueIndex("external_identity_link_provider_user_unique").on(t.provider, t.userId), index("external_identity_link_user_idx").on(t.userId)]);
 export const user = users;
 export const session = sessions;
 export const account = accounts;
 export const verification = verifications;
+export const externalIdentityLink = externalIdentityLinks;
 
 export const documents = sqliteTable("documents", {
   id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), title: text("title").notNull(), language: text("language").notNull(), preferencesJson: text("preferences_json").notNull().default("{}"), revision: integer("revision").notNull().default(0), bodyJson: text("body_json"), bodyR2Key: text("body_r2_key"), storageMode: text("storage_mode").notNull().default("d1"), originalVersionId: text("original_version_id"), color: text("color"), icon: text("icon"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()

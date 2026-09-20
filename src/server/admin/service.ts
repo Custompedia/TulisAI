@@ -4,6 +4,8 @@ import { runtime } from '../runtime';
 import { isAdminRole } from '../auth/auth';
 import { asTier, characterLimit, monthlyLimit, freeCharacterAllowance, periodKey, tierLimit, TIERS, type Tier } from '../usage/quota';
 import { planLimits } from '@/lib/plans';
+import { writeAudit } from '../audit';
+import { assertMklAccountDeletable, getMklLinkByUserId } from '../identity/links';
 
 export const RoleSchema = z.enum(['user', 'admin']);
 export const TierSchema = z.enum(TIERS);
@@ -147,14 +149,16 @@ export async function countAdmins(): Promise<number> {
 export async function assertRoleChange(actorId: string, target: AdminUser, role: Role): Promise<void> {
   if (actorId === target.id && role !== 'admin') throw new RequestError('SELF_DEMOTION', 'You cannot remove your own admin role.', 422);
   if (target.role === 'admin' && role !== 'admin' && !target.banned && (await countAdmins()) <= 1) throw new RequestError('LAST_ADMIN', 'At least one active admin must remain.', 422);
+  if (role === 'admin' && target.role !== 'admin' && await getMklLinkByUserId(target.id)) throw new RequestError('MKL_LINKED_ADMIN_FORBIDDEN', 'An MKL-linked customer cannot be promoted to local admin.', 409);
 }
 export async function assertBan(actorId: string, target: AdminUser): Promise<void> {
   if (actorId === target.id) throw new RequestError('SELF_BAN', 'You cannot disable your own account.', 422);
   if (target.role === 'admin' && !target.banned && (await countAdmins()) <= 1) throw new RequestError('LAST_ADMIN', 'At least one active admin must remain.', 422);
 }
-export function assertRemove(actorId: string, target: AdminUser): void {
+export async function assertRemove(actorId: string, target: AdminUser): Promise<void> {
   if (actorId === target.id) throw new RequestError('SELF_DELETE', 'You cannot delete your own account from the admin panel.', 422);
   if (target.role === 'admin') throw new RequestError('ADMIN_DELETE', 'Remove the admin role before deleting this account.', 422);
+  await assertMklAccountDeletable(target.id);
 }
 
 export async function updateUser(userId: string, patch: UserPatch): Promise<AdminUser> {
@@ -175,9 +179,7 @@ export async function setTier(userId: string, tier: Tier): Promise<void> {
   await runtime().DB.prepare('UPDATE user SET tier=?, updated_at=? WHERE id=?').bind(tier, Date.now(), userId).run();
 }
 
-export async function audit(actorId: string, targetUserId: string | null, action: string, details: Record<string, unknown> = {}): Promise<void> {
-  await runtime().DB.prepare('INSERT INTO admin_audit_log (id,actor_id,target_user_id,action,details_json,created_at) VALUES (?,?,?,?,?,?)').bind(crypto.randomUUID(), actorId, targetUserId, action, JSON.stringify(details), Date.now()).run();
-}
+export const audit = writeAudit;
 
 const AUDIT_LIMIT = 50;
 export type AuditFilter = { targetUserId?: string | null; action?: string | null; q?: string };

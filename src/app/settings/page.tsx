@@ -158,7 +158,7 @@ function SettingsView() {
         <div className="min-w-0 flex-1">
           {tab === 'profil' && (
             <Card title={t('Profil', 'Profile')}>
-              {account ? <ProfileCard account={account} onUpdated={onUpdated} notify={setNotice} />
+              {account ? <ProfileCard account={account} role={user.role} onUpdated={onUpdated} notify={setNotice} />
                 : loadError && !loading ? <ProfileError message={errorText(loadError, en)} retrying={loading} onRetry={() => void loadAccount()} />
                   : <div role="status" aria-label={t('Memuat detail akun…', 'Loading account details…')}><ProfileSkeleton /></div>}
             </Card>
@@ -211,8 +211,8 @@ function SettingsView() {
                 </ul>
                 <Link href="/notebooks" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-brand-800 hover:text-ink-900">{t('Kelola & hapus notebook', 'Manage & delete notebooks')}<ArrowUpRight size={15} /></Link>
               </Card>
-              <Card tone="danger" title={t('Hapus akun', 'Delete account')} description={t('Menghapus akun, semua dokumen, versi, dan salinan lokal secara permanen.', 'Permanently deletes your account, documents, versions, and local copies.')}>
-                <Button variant="danger" icon={Trash2} onClick={() => { setConfirmText(''); setConfirmDelete(true); }}>{t('Hapus akun saya', 'Delete my account')}</Button>
+              <Card tone="danger" title={t('Hapus akun', 'Delete account')} description={account?.mkl.linked ? t('Akun yang terhubung ke MKL tidak dapat dihapus sampai alur pemulihan dan unlink aman tersedia.', 'An MKL-linked account cannot be deleted until the safe recovery and unlink flow is available.') : t('Menghapus akun, semua dokumen, versi, dan salinan lokal secara permanen.', 'Permanently deletes your account, documents, versions, and local copies.')}>
+                {!account?.mkl.linked && <Button variant="danger" icon={Trash2} onClick={() => { setConfirmText(''); setConfirmDelete(true); }}>{t('Hapus akun saya', 'Delete my account')}</Button>}
               </Card>
             </div>
           )}
