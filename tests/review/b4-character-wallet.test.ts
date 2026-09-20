@@ -154,6 +154,15 @@ describe("B4 purchased lots, ordering and freeze", () => {
     paid("plus", { revision: 2 }); expect((await walletSummary("u", NOW + 1)).purchased.available).toBe(100);
     expect((await walletSummary("u", NOW + 1_001)).purchased.expired).toBe(100);
   });
+
+  it("does not expose or select a purchased lot before its authoritative fulfillment instant", async () => {
+    user(); paid(); await issueIncludedGrantFromProjection("u", NOW);
+    db.prepare("UPDATE character_grants SET settled_amount=25000 WHERE owner_id='u' AND kind='included'").run();
+    await acceptVerifiedPurchasedLot(fulfillment("future", 100, NOW + 100_000, NOW + 1_000), NOW);
+    expect((await walletSummary("u", NOW)).purchased).toMatchObject({ available: 0, frozen: 100 });
+    await expect(reserve("too-early", 1, NOW)).rejects.toMatchObject({ code: "QUOTA_EXCEEDED" });
+    expect((await walletSummary("u", NOW + 1_000)).purchased).toMatchObject({ available: 100, frozen: 0 });
+  });
 });
 
 describe("B4 atomic reservation, settlement, lease and reversal", () => {
@@ -169,7 +178,9 @@ describe("B4 atomic reservation, settlement, lease and reversal", () => {
   it("settles exact charge, releasing excess from the last allocations first", async () => {
     user(); paid(); await issueIncludedGrantFromProjection("u", NOW); db.prepare("UPDATE character_grants SET settled_amount=24990 WHERE kind='included'").run();
     await acceptVerifiedPurchasedLot(fulfillment("lot", 100, NOW + 10_000), NOW);
-    const held = await reserve("settle", 50); await settleReservation(held.reservation.id, 15, "preview", "provider", NOW + 1);
+    const held = await reserveCharacters({ ownerId: "u", idempotencyKey: "settle", fingerprint: "fp-settle", operation: "generate", sourceCharacters: 15, hold: 50, now: NOW });
+    await expect(settleReservation(held.reservation.id, 14, "undercharge", "provider", NOW + 1)).rejects.toMatchObject({ code: "WALLET_FACT_INVALID" });
+    await settleReservation(held.reservation.id, 15, "preview", "provider", NOW + 1);
     expect(db.prepare("SELECT settled_amount,released_amount FROM character_allocations WHERE reservation_id=? ORDER BY ordinal").all(held.reservation.id)).toEqual([
       { settled_amount: 10, released_amount: 0 }, { settled_amount: 5, released_amount: 35 },
     ]);
@@ -181,6 +192,17 @@ describe("B4 atomic reservation, settlement, lease and reversal", () => {
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
     expect(db.prepare("SELECT current_hold,state FROM character_reservations WHERE id=?").get(held.reservation.id)).toEqual({ current_hold: 250, state: "reserved" });
     expect(db.prepare("SELECT SUM(reserved_amount) AS held FROM character_allocations WHERE reservation_id=?").get(held.reservation.id)).toEqual({ held: 250 });
+  });
+
+  it("extends across every source captured as eligible when the reservation began", async () => {
+    user(); paid(); await issueIncludedGrantFromProjection("u", NOW);
+    db.prepare("UPDATE character_grants SET settled_amount=24900 WHERE owner_id='u' AND kind='included'").run();
+    await acceptVerifiedPurchasedLot(fulfillment("extension-lot", 200, NOW + 100_000), NOW);
+    const held = await reserve("extend-across-sources", 50);
+    await settleReservation(held.reservation.id, 200, "expanded-across-sources", null, NOW + 1);
+    expect(db.prepare("SELECT source_kind,settled_amount FROM character_allocations WHERE reservation_id=? ORDER BY ordinal").all(held.reservation.id)).toEqual([
+      { source_kind: "included_grant", settled_amount: 100 }, { source_kind: "purchased_lot", settled_amount: 100 },
+    ]);
   });
 
   it("allows pre-expiry settlement inside the 90s lease, then fences stale workers after reaping", async () => {

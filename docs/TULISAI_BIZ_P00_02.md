@@ -32,8 +32,8 @@ This addendum records implementation completed after the B0 audit without rewrit
 - **B2 merge commit:** `5f835c5a87faa96183c1904dad8b11a40c8e51e8`.
 - **Current source status:** the identity bridge now exists in TulisAI `main`; it provides Continue with MKL and explicit account linking using issuer + subject as external identity authority.
 - **B3:** COMPLETE / MERGED — verified entitlement projection and capability authority landed in `main` at merge commit `59edeb36d5a1703dc9019d6932f964b537c300c6`.
-- **B4:** IMPLEMENTED LOCALLY ONLY — the character wallet, Unicode usage accounting, reservations/allocations, lease recovery, internal purchased-lot/correction contracts, and canonical wallet summary are implemented on `codex/b4-character-wallet`. See `docs/b4-character-wallet.md`.
-- **B5:** REQUIRED — real MKL purchased-lot fulfillment and correction transport remains pending. Local B4 fixtures are not commerce integration.
+- **B4:** SOURCE-COMPLETE / MERGED WHEN THIS ADDENDUM IS PRESENT ON `main` — the character wallet, Unicode usage accounting, reservations/allocations, lease recovery, internal purchased-lot/correction contracts, and canonical wallet summary are contained in the B4 merge change. See `docs/b4-character-wallet.md`.
+- **B5:** NOT STARTED / REQUIRED — real MKL purchased-lot fulfillment and correction transport remains pending. Local B4 fixtures are not commerce integration.
 - **B6–B9:** NOT STARTED.
 
 No B4 production migration has been applied. TulisAI has not been commissioned
@@ -315,8 +315,8 @@ Additional reconciliation:
 | B0 | COMPLETE | PRD / contract reconciliation | Contract gate complete: explicit owner approval and OD-1–OD-13 incorporated on 2026-09-19 |
 | B1 | COMPLETE / MERGED | Generic MKL application identity/contract support | Approved B0 requirements; approved identity/trust/customer/application semantics usable by multiple apps |
 | B2 | COMPLETE / MERGED | TulisAI identity bridge | B0 approval + B1 stable contract; explicit linking/no email merge/admin isolation and recovery tests; merged through TulisAI PR #2 |
-| B3 | NEXT | Entitlement/capability projection | B0 approval + B1 verified fact contract + B2 identity binding; consume B5 authoritative issuance for commercial end-to-end validation |
-| B4 | NOT STARTED | Character wallets | B0 approval + B3 period/capability semantics; B5 fulfillment/correction contract for actual purchased lots |
+| B3 | COMPLETE / MERGED | Entitlement/capability projection | Merged in TulisAI `main` at `59edeb36d5a1703dc9019d6932f964b537c300c6`; authenticated live-integration follow-up remains pending |
+| B4 | SOURCE-COMPLETE / MERGED ON `main` CONTAINING THIS ROW | Character wallets | Additive migration `0013`; B4 wallet and recovery behavior complete in source; real purchased-lot transport remains a B5 dependency |
 | B5 | NOT STARTED | Generic MKL app-commerce support | B0 approved commercial requirements + B1 application/customer binding; can progress alongside B2/B3/local B4 design |
 | B6 | NOT STARTED | TulisAI commercial frontend | B2/B3/B4 usable interfaces + B5 approved commerce; truthful offers, pending states, refresh/recovery |
 | B7 | NOT STARTED | Joint QA | B1–B6 integrated; identity, entitlement, wallets, portability, replay/concurrency/failure and legacy acceptance evidence |

@@ -119,8 +119,10 @@ async function refreshLotStates(ownerId: string, paid: boolean, now: number): Pr
   await runBatch([
     runtime().DB.prepare(`UPDATE character_purchased_lots SET state='expired',updated_at=? WHERE owner_id=?
       AND state IN ('active','frozen') AND expires_at_ms<=?`).bind(now, ownerId, now),
-    runtime().DB.prepare(`UPDATE character_purchased_lots SET state=?,updated_at=? WHERE owner_id=? AND state IN ('active','frozen')
-      AND expires_at_ms>? AND reversal_state='none'`).bind(paid ? "active" : "frozen", now, ownerId, now),
+    runtime().DB.prepare(`UPDATE character_purchased_lots
+      SET state=CASE WHEN ?=1 AND fulfilled_at_ms<=? THEN 'active' ELSE 'frozen' END,updated_at=?
+      WHERE owner_id=? AND state IN ('active','frozen') AND expires_at_ms>? AND reversal_state='none'`)
+      .bind(paid ? 1 : 0, now, now, ownerId, now),
     runtime().DB.prepare(`UPDATE character_grants SET state='expired',updated_at=? WHERE owner_id=? AND kind='included'
       AND state='active' AND period_end_ms<=?`).bind(now, ownerId, now),
   ]);
@@ -145,11 +147,11 @@ async function candidates(ownerId: string, mode: WalletMode, projection: Project
         SELECT 'purchased_lot',l.id,l.original_amount-l.reserved_amount-l.settled_amount,
           1,l.expires_at_ms,l.fulfilled_at_ms
         FROM character_purchased_lots l WHERE l.owner_id=? AND l.application_app_key=? AND l.state='active'
-          AND l.reversal_state='none' AND l.expires_at_ms>? AND l.measurement_version=?
+          AND l.reversal_state='none' AND l.fulfilled_at_ms<=? AND l.expires_at_ms>? AND l.measurement_version=?
           AND l.original_amount>l.reserved_amount+l.settled_amount
       ) ORDER BY source_order,expiry,purchased,id`)
     .bind(ownerId, projection.entitlement_id, projection.application_app_key, projection.period_start, projection.period_end,
-      CHARACTER_MEASUREMENT_VERSION, ownerId, projection.application_app_key, now, CHARACTER_MEASUREMENT_VERSION).all<Candidate>();
+      CHARACTER_MEASUREMENT_VERSION, ownerId, projection.application_app_key, now, now, CHARACTER_MEASUREMENT_VERSION).all<Candidate>();
   return result.results ?? [];
 }
 
@@ -185,7 +187,8 @@ export async function reserveCharacters(input: ReserveInput): Promise<{ reservat
   if (projection) await issueIncludedGrantFromProjection(input.ownerId, now);
   const mode: WalletMode = projection ? "paid" : "free";
   await refreshLotStates(input.ownerId, mode === "paid", now);
-  const plan = allocate(await candidates(input.ownerId, mode, projection, now), hold);
+  const eligible = await candidates(input.ownerId, mode, projection, now);
+  const plan = allocate(eligible, hold);
   const id = crypto.randomUUID(); const lease = now + EXECUTION_LEASE_MS; const statements: D1PreparedStatement[] = [];
   const authorityGuard = mode === "paid" ? `EXISTS (SELECT 1 FROM mkl_entitlement_projection p JOIN external_identity_link l
     ON l.id=p.identity_link_id AND l.user_id=p.user_id AND l.issuer=p.issuer AND l.subject=p.subject AND l.organization_id=p.organization_id
@@ -204,7 +207,10 @@ export async function reserveCharacters(input: ReserveInput): Promise<{ reservat
     .bind(id, input.ownerId, input.idempotencyKey, input.fingerprint, input.operation, input.sourceCharacters,
       CHARACTER_MEASUREMENT_VERSION, hold, lease, mode, projection?.entitlement_id ?? null, projection?.application_app_key ?? null,
       projection?.period_start ?? null, projection?.period_end ?? null, projection?.scope_revision ?? null,
-      JSON.stringify(plan.map(({ kind, id }) => ({ kind, id }))), now, now, ...guardValues, input.ownerId, input.idempotencyKey));
+      // Capture every source eligible at creation, not only the sources needed
+      // by the initial hold. An exact-output extension may use this fixed set,
+      // but can never migrate into a later fulfillment or entitlement period.
+      JSON.stringify(eligible.map(({ kind, id }) => ({ kind, id }))), now, now, ...guardValues, input.ownerId, input.idempotencyKey));
   for (const item of plan) statements.push(runtime().DB.prepare(`INSERT INTO character_allocations (id,reservation_id,owner_id,source_kind,
     source_id,ordinal,reserved_amount,settled_amount,released_amount,measurement_version,created_at,updated_at)
     VALUES (?,?,?,?,?,?,?,0,0,?,?,?)`).bind(crypto.randomUUID(), id, input.ownerId, item.kind, item.id, item.ordinal, item.quantity, CHARACTER_MEASUREMENT_VERSION, now, now));
@@ -212,7 +218,7 @@ export async function reserveCharacters(input: ReserveInput): Promise<{ reservat
   statements.push(runtime().DB.prepare(`INSERT INTO character_wallet_events (id,owner_id,event_type,reservation_id,quantity,causal_reference,metadata_json,created_at)
     VALUES (?,?,'reservation_created',?,?,?,'{}',?)`).bind(crypto.randomUUID(), input.ownerId, id, hold, input.idempotencyKey, now));
   try { await runBatch(statements); }
-  catch (error) {
+  catch {
     const raced = await reservationByKey(input.ownerId, input.idempotencyKey);
     if (raced) {
       if (raced.request_fingerprint !== input.fingerprint) throw new WalletError("IDEMPOTENCY_CONFLICT", "This request key belongs to a different customer operation.");
@@ -296,6 +302,7 @@ export async function settleReservation(id: string, exactCharge: number, resultR
   positiveInteger(exactCharge, "exactCharge");
   const reservation = await runtime().DB.prepare("SELECT * FROM character_reservations WHERE id=?").bind(id).first<ReservationRow>();
   if (!reservation) throw new WalletError("RESERVATION_NOT_FOUND", "Character reservation not found.", 404);
+  if (exactCharge < reservation.source_characters) throw new WalletError("WALLET_FACT_INVALID", "The exact charge cannot be below the measured source characters.");
   if (reservation.state === "settled") {
     if (reservation.settled_amount === exactCharge && reservation.result_reference === resultReference) return;
     throw new WalletError("SETTLEMENT_CONFLICT", "The reservation already has another terminal result.");

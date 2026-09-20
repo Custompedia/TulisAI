@@ -1,7 +1,7 @@
-# B4 character wallet — local source implementation
+# B4 character wallet — source-complete implementation
 
-Status: implemented locally on `codex/b4-character-wallet` from merged B3 main
-`59edeb36d5a1703dc9019d6932f964b537c300c6`. No remote migration, deployment,
+Status: source-complete; when this document is present on `main`, B4 is merged
+from B3 main `59edeb36d5a1703dc9019d6932f964b537c300c6`. No remote migration, deployment,
 MKL commissioning, offer, client, secret, checkout, payment, webhook, or
 purchased-fulfillment transport is part of this change.
 
