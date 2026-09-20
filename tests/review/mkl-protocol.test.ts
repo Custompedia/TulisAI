@@ -31,13 +31,14 @@ describe("MKL OIDC protocol", () => {
     const first = await generateKeyPair("RS256"); const second = await generateKeyPair("RS256");
     const firstJwk = { ...await exportJWK(first.publicKey), kid: "old", alg: "RS256", use: "sig" };
     const secondJwk = { ...await exportJWK(second.publicKey), kid: "new", alg: "RS256", use: "sig" };
-    const sign = (overrides: Record<string, unknown> = {}, key = second.privateKey, kid = "new", alg = "RS256") => new SignJWT({ email: "ADA@EXAMPLE.TEST", email_verified: true, name: "Ada", nonce: "expected", ...overrides }).setProtectedHeader({ alg, kid }).setIssuer(config.issuer).setSubject("subject-1").setAudience(config.clientId).setIssuedAt().setExpirationTime("5m").sign(key);
+    const sign = (overrides: Record<string, unknown> = {}, key = second.privateKey, kid = "new", alg = "RS256") => new SignJWT({ email: "ADA@EXAMPLE.TEST", email_verified: true, name: "Ada", nonce: "expected", mkl_organization_id: "org-1", ...overrides }).setProtectedHeader({ alg, kid }).setIssuer(config.issuer).setSubject("subject-1").setAudience(config.clientId).setIssuedAt().setExpirationTime("5m").sign(key);
     let jwksReads = 0;
     const rotatingFetch: typeof fetch = async () => { jwksReads += 1; return Response.json({ keys: jwksReads === 1 ? [firstJwk] : [secondJwk, firstJwk] }); };
-    await expect(verifyMklIdToken(await sign(), discovery, config, "expected", rotatingFetch)).resolves.toMatchObject({ issuer: config.issuer, subject: "subject-1", email: "ada@example.test", emailVerified: true, name: "Ada" });
+    await expect(verifyMklIdToken(await sign(), discovery, config, "expected", rotatingFetch)).resolves.toMatchObject({ issuer: config.issuer, subject: "subject-1", organizationId: "org-1", email: "ada@example.test", emailVerified: true, name: "Ada" });
     expect(jwksReads).toBe(2);
     const onlySecond: typeof fetch = async () => Response.json({ keys: [secondJwk] });
     await expect(verifyMklIdToken(await sign({ nonce: "wrong" }), discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
+    await expect(verifyMklIdToken(await sign({ mkl_organization_id: "" }), discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
     const multipleAudience = new SignJWT({ nonce: "expected" }).setProtectedHeader({ alg: "RS256", kid: "new" }).setIssuer(config.issuer).setSubject("s").setAudience([config.clientId, "other"]).setExpirationTime("5m").sign(second.privateKey);
     await expect(verifyMklIdToken(await multipleAudience, discovery, config, "expected", onlySecond)).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
     const expired = new SignJWT({ nonce: "expected" }).setProtectedHeader({ alg: "RS256", kid: "new" }).setIssuer(config.issuer).setSubject("s").setAudience(config.clientId).setExpirationTime(Math.floor(Date.now() / 1000) - 10).sign(second.privateKey);

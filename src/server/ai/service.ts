@@ -1,6 +1,7 @@
 import { runtime, requiredSetting, ConfigurationError } from '../runtime';
 import { entitlement, periodKey, type Entitlement } from '../usage/quota';
 import { assertFeature } from '../usage/features';
+import { runtimeForAccess } from '../usage/premium';
 import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
@@ -107,9 +108,9 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const rights = await entitlement(ownerId);
   // A free-form instruction is a paid, paragraph-scoped action: it needs an anchor, runs as a custom transform,
   // and never bypasses a guard. Everything below applies to it unchanged.
+  if (input.promptId === 'P08_CUSTOM_TRANSFORM') assertFeature(rights, 'freeform_prompt');
   const instruction = sanitizeInstruction(input.instruction);
   if (instruction) {
-    assertFeature(rights, 'freeform_prompt');
     if (!input.source.anchor) throw new RequestError('INVALID_REQUEST', 'A free-form instruction needs a selected passage.');
     if (input.promptId !== 'P08_CUSTOM_TRANSFORM') throw new RequestError('INVALID_REQUEST', 'A free-form instruction runs as a custom transform.');
   } else if (input.promptId === 'P08_CUSTOM_TRANSFORM') throw new RequestError('INVALID_REQUEST', 'A custom transform needs an instruction.');
@@ -131,7 +132,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const wantsTitle = input.suggestTitle === true && !anchor && input.promptId !== 'P07_INLINE_ALTERNATIVES';
   const trusted: RuntimeInput = {...input.runtime, userInstruction:instruction, user_instruction:undefined, suggestTitle:wantsTitle || undefined, suggest_title:undefined, sourceText:input.source.text, selectedText:input.source.text, contextBefore:anchor ? source.text.slice(Math.max(0,anchor.from-300),anchor.from) : null, contextAfter:anchor ? source.text.slice(anchor.to,anchor.to+300) : null, protectedTerms:locks.map(lock=>lock.term).filter(term=>input.source.text.includes(term)), protectedCitations:freeform ? [] : [...new Set(citations)], language:input.runtime.language};
   let controls: RuntimeInput;
-  try { controls = normalizeRuntime(input.promptId, trusted) as RuntimeInput; } catch { throw new RequestError('INVALID_REQUEST', 'The selected AI controls are invalid.'); }
+  try { controls = runtimeForAccess(rights, normalizeRuntime(input.promptId, trusted)) as RuntimeInput; } catch { throw new RequestError('INVALID_REQUEST', 'The selected AI controls are invalid.'); }
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
   let mainUsageId = '';
   const call = async (promptId: PromptId, callKey: string, runtimeControls: RuntimeInput, repair=false, requiredTerms=trusted.protectedTerms) => {

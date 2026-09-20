@@ -7,7 +7,7 @@ import { runtime } from "../runtime";
 export const MKL_PROVIDER = "mkl";
 
 export type ExternalIdentityLink = {
-  id: string; provider: string; issuer: string; subject: string; userId: string; profileEmail: string | null; profileName: string | null;
+  id: string; provider: string; issuer: string; subject: string; organizationId: string | null; userId: string; profileEmail: string | null; profileName: string | null;
   linkMethod: string; createdAt: number; updatedAt: number; lastAuthenticatedAt: number | null;
 };
 
@@ -16,11 +16,11 @@ export type IdentityOwner = {
   user: { id: string; name: string; email: string; emailVerified: boolean; image: string | null; username: string | null; role: string; tier: string; banned: boolean; banExpires: number | null; createdAt: Date; updatedAt: Date };
 };
 
-type LinkRow = { id: string; provider: string; issuer: string; subject: string; user_id: string; profile_email: string | null; profile_name: string | null; link_method: string; created_at: number; updated_at: number; last_authenticated_at: number | null };
+type LinkRow = { id: string; provider: string; issuer: string; subject: string; organization_id: string | null; user_id: string; profile_email: string | null; profile_name: string | null; link_method: string; created_at: number; updated_at: number; last_authenticated_at: number | null };
 type OwnerRow = LinkRow & { user_name: string; user_email: string; email_verified: number; image: string | null; username: string | null; role: string; tier: string; banned: number; ban_expires: number | null; user_created_at: number; user_updated_at: number };
 type VerificationRow = { id: string; identifier: string; value: string; expires_at: number };
 
-const toLink = (row: LinkRow): ExternalIdentityLink => ({ id: row.id, provider: row.provider, issuer: row.issuer, subject: row.subject, userId: row.user_id, profileEmail: row.profile_email, profileName: row.profile_name, linkMethod: row.link_method, createdAt: row.created_at, updatedAt: row.updated_at, lastAuthenticatedAt: row.last_authenticated_at });
+const toLink = (row: LinkRow): ExternalIdentityLink => ({ id: row.id, provider: row.provider, issuer: row.issuer, subject: row.subject, organizationId: row.organization_id, userId: row.user_id, profileEmail: row.profile_email, profileName: row.profile_name, linkMethod: row.link_method, createdAt: row.created_at, updatedAt: row.updated_at, lastAuthenticatedAt: row.last_authenticated_at });
 
 export async function getMklLinkByUserId(userId: string): Promise<ExternalIdentityLink | null> {
   const row = await runtime().DB.prepare("SELECT * FROM external_identity_link WHERE provider=? AND user_id=? LIMIT 1").bind(MKL_PROVIDER, userId).first<LinkRow>();
@@ -42,8 +42,8 @@ export function activeBan(user: { banned: boolean; banExpires: number | null }):
 
 export async function updateAuthenticatedLink(linkId: string, identity: MklIdentity): Promise<void> {
   const now = Date.now();
-  await runtime().DB.prepare("UPDATE external_identity_link SET profile_email=?, profile_name=?, updated_at=?, last_authenticated_at=? WHERE id=?")
-    .bind(identity.email, identity.name, now, now, linkId).run();
+  await runtime().DB.prepare("UPDATE external_identity_link SET organization_id=?,profile_email=?, profile_name=?, updated_at=?, last_authenticated_at=? WHERE id=?")
+    .bind(identity.organizationId, identity.email, identity.name, now, now, linkId).run();
 }
 
 export async function provisionMklUser(identity: MklIdentity, name: string, correlationRef: string) {
@@ -52,8 +52,8 @@ export async function provisionMklUser(identity: MklIdentity, name: string, corr
   const details = { linkId, issuer: identity.issuer, subject: identity.subject, method: "mkl-sign-in", correlationRef };
   await db.batch([
     db.prepare("INSERT INTO user (id,name,email,email_verified,image,username,role,banned,tier,created_at,updated_at) VALUES (?,?,?,?,NULL,NULL,'user',0,'free',?,?)").bind(userId, name, identity.email, 1, now, now),
-    db.prepare("INSERT INTO external_identity_link (id,provider,issuer,subject,user_id,profile_email,profile_name,link_method,created_at,updated_at,last_authenticated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(linkId, MKL_PROVIDER, identity.issuer, identity.subject, userId, identity.email, identity.name, "mkl-sign-in", now, now, now),
+    db.prepare("INSERT INTO external_identity_link (id,provider,issuer,subject,organization_id,user_id,profile_email,profile_name,link_method,created_at,updated_at,last_authenticated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(linkId, MKL_PROVIDER, identity.issuer, identity.subject, identity.organizationId, userId, identity.email, identity.name, "mkl-sign-in", now, now, now),
     auditStatement(db, { actorId: userId, targetUserId: userId, action: "identity.mkl.account-created", details, createdAt: now }),
   ]);
   return { id: userId, name, email: identity.email, emailVerified: true, image: null, username: null, role: "user", tier: "free", banned: false, createdAt: new Date(now), updatedAt: new Date(now) };
@@ -72,14 +72,14 @@ export async function confirmMklLink(receipt: string, pending: { row: Verificati
   const { row, value } = pending; const identifier = consentIdentifier(receipt);
   const details = JSON.stringify({ linkId, issuer: value.issuer, subject: value.subject, method: "explicit-link", correlationRef: value.correlationRef });
   const results = await db.batch([
-    db.prepare(`INSERT INTO external_identity_link (id,provider,issuer,subject,user_id,profile_email,profile_name,link_method,created_at,updated_at,last_authenticated_at)
-      SELECT ?,?,?,?,?,?,?,?, ?,?,NULL FROM verification v JOIN user u ON u.id=?
+    db.prepare(`INSERT INTO external_identity_link (id,provider,issuer,subject,organization_id,user_id,profile_email,profile_name,link_method,created_at,updated_at,last_authenticated_at)
+      SELECT ?,?,?,?,?,?,?,?,?, ?,?,NULL FROM verification v JOIN user u ON u.id=?
       WHERE v.id=? AND v.identifier=? AND v.value=? AND v.expires_at>?
         AND (','||COALESCE(u.role,'')||',') NOT LIKE '%,admin,%'
         AND NOT (u.banned=1 AND (u.ban_expires IS NULL OR u.ban_expires>?))
         AND NOT EXISTS (SELECT 1 FROM external_identity_link x WHERE x.issuer=? AND x.subject=?)
         AND NOT EXISTS (SELECT 1 FROM external_identity_link x WHERE x.provider=? AND x.user_id=?)`)
-      .bind(linkId, MKL_PROVIDER, value.issuer, value.subject, value.userId, value.email, value.name, "explicit-link", now, now, value.userId, row.id, identifier, row.value, now, now, value.issuer, value.subject, MKL_PROVIDER, value.userId),
+      .bind(linkId, MKL_PROVIDER, value.issuer, value.subject, value.organizationId, value.userId, value.email, value.name, "explicit-link", now, now, value.userId, row.id, identifier, row.value, now, now, value.issuer, value.subject, MKL_PROVIDER, value.userId),
     db.prepare(`INSERT INTO admin_audit_log (id,actor_id,target_user_id,action,details_json,created_at)
       SELECT ?,?,?,?, ?,? FROM verification v JOIN external_identity_link l ON l.id=?
       WHERE v.id=? AND v.identifier=? AND v.value=? AND v.expires_at>?`)

@@ -7,6 +7,7 @@ export const verifications = sqliteTable("verification", { id: text("id").primar
 export const rateLimit = sqliteTable("rate_limit", { id: text("id").primaryKey(), key: text("key").notNull().unique(), count: integer("count").notNull(), lastRequest: integer("last_request").notNull() }, (t) => [index("rate_limit_last_request_idx").on(t.lastRequest)]);
 export const externalIdentityLinks = sqliteTable("external_identity_link", {
   id: text("id").primaryKey(), provider: text("provider").notNull(), issuer: text("issuer").notNull(), subject: text("subject").notNull(),
+  organizationId: text("organization_id"),
   userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), profileEmail: text("profile_email"), profileName: text("profile_name"),
   linkMethod: text("link_method").notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   lastAuthenticatedAt: integer("last_authenticated_at", { mode: "timestamp_ms" }),
@@ -17,9 +18,37 @@ export const account = accounts;
 export const verification = verifications;
 export const externalIdentityLink = externalIdentityLinks;
 
+export const mklEntitlementProjections = sqliteTable("mkl_entitlement_projection", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  identityLinkId: text("identity_link_id").notNull().unique().references(() => externalIdentityLinks.id, { onDelete: "cascade" }),
+  issuer: text("issuer").notNull(), subject: text("subject").notNull(), organizationId: text("organization_id").notNull(),
+  applicationClientId: text("application_client_id").notNull(), applicationAppKey: text("application_app_key").notNull(), catalogItemId: text("catalog_item_id").notNull(),
+  scopeRevision: integer("scope_revision").notNull(), authorityPayloadHash: text("authority_payload_hash").notNull(),
+  entitlementId: text("entitlement_id"), status: text("status"), planCode: text("plan_code"), planVersion: text("plan_version"),
+  periodStart: text("period_start"), periodEnd: text("period_end"), accessDeadline: text("access_deadline"), commercialKind: text("commercial_kind"), entitlementCreatedAt: text("entitlement_created_at"),
+  serverTime: text("server_time").notNull(), verifiedAt: integer("verified_at", { mode: "timestamp_ms" }).notNull(), freshUntil: integer("fresh_until", { mode: "timestamp_ms" }).notNull(),
+  invalidatedAt: integer("invalidated_at", { mode: "timestamp_ms" }), invalidationReason: text("invalidation_reason"), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [uniqueIndex("mkl_projection_identity_unique").on(t.issuer, t.subject, t.organizationId), index("mkl_entitlement_projection_freshness_idx").on(t.freshUntil, t.userId)]);
+
+export const capabilityGrants = sqliteTable("capability_grants", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), authority: text("authority").notNull(),
+  capabilitiesJson: text("capabilities_json").notNull(), reason: text("reason").notNull(), issuedBy: text("issued_by").notNull(),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(), revokedAt: integer("revoked_at", { mode: "timestamp_ms" }), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [index("capability_grants_user_active_idx").on(t.userId, t.expiresAt, t.revokedAt)]);
+
 export const documents = sqliteTable("documents", {
   id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), title: text("title").notNull(), language: text("language").notNull(), preferencesJson: text("preferences_json").notNull().default("{}"), revision: integer("revision").notNull().default(0), bodyJson: text("body_json"), bodyR2Key: text("body_r2_key"), storageMode: text("storage_mode").notNull().default("d1"), originalVersionId: text("original_version_id"), color: text("color"), icon: text("icon"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
 }, (t) => [index("documents_owner_updated_idx").on(t.ownerId, t.updatedAt, t.id)]);
+
+export const documentPortabilityEvidence = sqliteTable("document_portability_evidence", {
+  documentId: text("document_id").primaryKey().references(() => documents.id, { onDelete: "cascade" }), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), authority: text("authority").notNull(), projectionRevision: integer("projection_revision"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [index("document_portability_owner_idx").on(t.ownerId, t.documentId)]);
+
+export const pendingDocxImportEvidence = sqliteTable("pending_docx_import_evidence", {
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull().references(() => users.id, { onDelete: "cascade" }), contentHash: text("content_hash").notNull(),
+  authority: text("authority").notNull(), projectionRevision: integer("projection_revision"), expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [index("pending_docx_import_owner_idx").on(t.ownerId, t.expiresAt)]);
 
 export const writingStyles = sqliteTable("writing_styles", { id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), name: text("name").notNull(), color: text("color"), icon: text("icon"), settingsJson: text("settings_json").notNull().default("{}"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull() }, (t) => [uniqueIndex("styles_owner_name_unique").on(t.ownerId, t.name), index("styles_owner_created_idx").on(t.ownerId, t.createdAt, t.id)]);
 

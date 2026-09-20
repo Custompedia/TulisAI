@@ -10,7 +10,7 @@ export type AuthorizationState = {
   browserHash: string; userId: string | null; sessionId: string | null; returnTo: string; createdAt: number; correlationRef: string;
 };
 export type ConsentState = {
-  version: 1; userId: string; issuer: string; subject: string; email: string | null; name: string | null;
+  version: 1; userId: string; issuer: string; subject: string; organizationId: string; email: string | null; name: string | null;
   browserHash: string; createdAt: number; correlationRef: string;
 };
 
@@ -70,7 +70,7 @@ export async function consumeAuthorizationState(adapter: VerificationAdapter, st
 
 export async function createConsentState(adapter: VerificationAdapter, input: { userId: string; browserHash: string; identity: MklIdentity; correlationRef: string }) {
   const receipt = randomToken(); const now = Date.now();
-  const value: ConsentState = { version: 1, userId: input.userId, issuer: input.identity.issuer, subject: input.identity.subject, email: input.identity.email, name: input.identity.name, browserHash: input.browserHash, createdAt: now, correlationRef: input.correlationRef };
+  const value: ConsentState = { version: 1, userId: input.userId, issuer: input.identity.issuer, subject: input.identity.subject, organizationId: input.identity.organizationId, email: input.identity.email, name: input.identity.name, browserHash: input.browserHash, createdAt: now, correlationRef: input.correlationRef };
   await adapter.createVerificationValue({ identifier: consentIdentifier(receipt), value: JSON.stringify(value), expiresAt: new Date(now + MKL_STATE_TTL_MS) });
   return receipt;
 }
@@ -78,7 +78,7 @@ export async function createConsentState(adapter: VerificationAdapter, input: { 
 export function parseConsentState(raw: string): ConsentState | null {
   try {
     const value = JSON.parse(raw) as ConsentState;
-    if (value.version !== 1 || typeof value.userId !== "string" || typeof value.issuer !== "string" || typeof value.subject !== "string" || typeof value.browserHash !== "string") return null;
+    if (value.version !== 1 || typeof value.userId !== "string" || typeof value.issuer !== "string" || typeof value.subject !== "string" || typeof value.organizationId !== "string" || !value.organizationId || typeof value.browserHash !== "string") return null;
     return value;
   } catch { return null; }
 }

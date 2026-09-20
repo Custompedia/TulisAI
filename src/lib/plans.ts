@@ -7,7 +7,7 @@ export type Tier = (typeof TIERS)[number];
 // 'team' was sold before the plan ladder was locked; rows still carrying it keep Pro's rights instead of dropping to free.
 const LEGACY_TIERS: Record<string, Tier> = { team: 'pro' };
 
-export const FEATURES = ['saved_styles', 'purchase_topup', 'advanced_notebook', 'docx_import', 'docx_export', 'freeform_prompt'] as const;
+export const FEATURES = ['saved_styles', 'purchase_topup', 'advanced_notebook', 'docx_import', 'docx_export', 'freeform_prompt', 'persistent_personalization', 'style_reference'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 export type PlanLimits = {
@@ -23,7 +23,7 @@ export type PlanLimits = {
 
 const PLUS_FEATURES: readonly Feature[] = ['saved_styles', 'purchase_topup'];
 const PRO_FEATURES: readonly Feature[] = [...PLUS_FEATURES, 'advanced_notebook', 'docx_import', 'docx_export'];
-const MAX_FEATURES: readonly Feature[] = [...PRO_FEATURES, 'freeform_prompt'];
+const MAX_FEATURES: readonly Feature[] = [...PRO_FEATURES, 'freeform_prompt', 'persistent_personalization', 'style_reference'];
 
 export const PLAN_LIMITS: Record<Tier, PlanLimits> = {
   free: { runLimit: 1_000, includedCharacters: 3_000, oneTime: true, priceIdr: 0, features: [] },

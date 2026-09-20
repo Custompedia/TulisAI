@@ -19,7 +19,7 @@ cp .env.example .dev.vars
 
 ## Database dan development
 
-Migrasi `0000`–`0011` diterapkan berurutan. `0011_mkl_identity_bridge.sql` menambah otoritas link identitas eksternal `(issuer, subject)` serta guard database yang menolak link admin, promosi linked customer menjadi admin, dan penghapusan akun yang masih linked; migrasi ini tidak mengubah tier, entitlement, wallet, atau commerce.
+Migrasi `0000`–`0012` diterapkan berurutan. `0011_mkl_identity_bridge.sql` menambah otoritas link identitas eksternal `(issuer, subject)` serta guard database yang menolak link admin, promosi linked customer menjadi admin, dan penghapusan akun yang masih linked. `0012_b3_entitlement_authority.sql` menambah organisasi terverifikasi pada link, checkpoint/proyeksi entitlement MKL, grant support/test nonkomersial, dan evidence portabilitas DOCX. Migrasi B3 tidak membuat offer, order, payment, atau wallet.
 
 Konfigurasi Worker ada di `wrangler.jsonc`. Binding lokal yang digunakan adalah `DB` (D1) dan `DOCUMENTS` (R2). Terapkan migrasi lokal:
 
@@ -79,22 +79,24 @@ Implicit provider linking dinonaktifkan untuk mencegah pengambilalihan akun berd
 
 ## MKL OIDC identity bridge
 
-Bridge MKL memakai Authorization Code + PKCE S256 dan mempertahankan Better Auth sebagai otoritas sesi lokal. Konfigurasi runtime yang dibutuhkan adalah `MKL_ISSUER`, `MKL_CLIENT_ID`, `MKL_CLIENT_SECRET`, dan `BETTER_AUTH_URL`. Secret klien hanya boleh diberikan melalui binding secret lokal/Cloudflare; jangan menaruh nilainya di repository. Nilai produksi yang dikunci adalah:
+Bridge MKL memakai Authorization Code + PKCE S256 dan mempertahankan Better Auth sebagai otoritas sesi lokal. Konfigurasi identity runtime adalah `MKL_ISSUER`, `MKL_CLIENT_ID`, `MKL_CLIENT_SECRET`, dan `BETTER_AUTH_URL`. B3 juga mengenal `MKL_APP_KEY`, `MKL_CATALOG_ITEM_ID`, serta secret commerce/API yang terpisah, `MKL_APP_API_SECRET`. `MKL_APP_API_SECRET` tidak boleh memakai ulang `MKL_CLIENT_SECRET`. Semua secret hanya boleh diberikan melalui binding secret lokal/Cloudflare dan tidak boleh ditaruh di repository. Nilai produksi yang dikunci adalah:
 
 - issuer: `https://marikitalembur.com`
 - origin aplikasi: `https://tulis.marikitalembur.com`
 - callback: `https://tulis.marikitalembur.com/api/auth/mkl/callback`
 - post-logout: `https://tulis.marikitalembur.com/`
 
-Client ID belum ditetapkan di source karena registrasi MKL belum dilakukan. Untuk test/dev, gunakan nilai test eksplisit dan origin localhost. Endpoint lokal bridge adalah `POST /api/auth/mkl/start`, `POST /api/auth/mkl/link/start`, `GET /api/auth/mkl/callback`, serta `GET`/`POST /api/account/mkl/link/confirm`.
+Client ID, app key, catalog item, dan secret produksi belum ditetapkan di source karena commissioning TulisAI belum dilakukan. Untuk test/dev, gunakan nilai test eksplisit dan origin localhost. Endpoint lokal bridge adalah `POST /api/auth/mkl/start`, `POST /api/auth/mkl/link/start`, `GET /api/auth/mkl/callback`, serta `GET`/`POST /api/account/mkl/link/confirm`.
 
-Email dari MKL hanya profil dan pemeriksaan konflik; link selalu menggunakan pasangan issuer + subject. Email yang sama tidak pernah mengadopsi akun lokal. Akun admin lokal tidak dapat memakai link pelanggan MKL. Logout TulisAI hanya mencabut sesi TulisAI dan tidak menghapus link atau mengklaim logout global MKL. Unlink belum tersedia; implementasinya menunggu reautentikasi, alternate login, recovery, tombstone audit, dan semantik suspensi B3.
+Email dari MKL hanya profil dan pemeriksaan konflik; link selalu menggunakan issuer + subject dan menyimpan claim `mkl_organization_id` yang terverifikasi. Email yang sama tidak pernah mengadopsi akun lokal. Akun admin lokal tidak dapat memakai link pelanggan MKL. Logout TulisAI hanya mencabut sesi TulisAI dan tidak menghapus link atau mengklaim logout global MKL. Unlink belum tersedia; implementasinya menunggu reautentikasi, alternate login, recovery, dan tombstone audit.
+
+Saat konfigurasi B3 lokal lengkap, callback yang baru memverifikasi ID token membaca `GET /app/v1/entitlements` dengan `MKL-Id-Token`, client ID, dan `MKL_APP_API_SECRET`. ID token mentah, authorization code, verifier PKCE, SSO secret, app API secret, dan payment secret tidak disimpan. Hak berbayar hanya hidup sampai minimum `fresh_until` (15 menit dari verifikasi) dan `period_end`; provider outage boleh memakai cache positif yang masih fresh, sedangkan cache stale/invalid selalu fail-closed. `/api/access` adalah bentuk authority yang jujur; `/api/usage` mempertahankan field lama dan menambahkan objek `access` sebagai adapter kompatibilitas.
 
 ## OpenRouter dan privacy gate
 
 AI memakai `OPENROUTER_API_KEY` dan `OPENROUTER_MODEL`. Model wajib dipilih dan diuji berdasarkan structured output prompt final v1. Provider request hardcoded `provider.data_collection=deny`. `AI_PUBLIC_ENABLED` harus tetap `false` sampai retensi dan privacy setting provider diverifikasi secara nyata.
 
-`AI_FREE_CHARACTER_ALLOWANCE` (default 3000) adalah jatah karakter sekali pakai per akun untuk tier Gratis dan merupakan cap yang benar-benar ditegakkan; tier berbayar memakai angka di `src/lib/plans.ts` dan diisi ulang tiap periode. `AI_MONTHLY_REQUEST_LIMIT` kini hanya pengaman burst dan angka informasi di panel admin. Keduanya batas operasional internal, bukan harga atau paket komersial. Timeout, response size, quota reservation, idempotency, dan status provider error harus dipertahankan sebagai error; aplikasi tidak boleh mengganti kegagalan dengan output palsu.
+`AI_FREE_CHARACTER_ALLOWANCE`, angka included-character per tier, ledger penggunaan saat ini, dan `AI_MONTHLY_REQUEST_LIMIT` tetap adapter akuntansi kompatibilitas dari implementasi sebelum B3. B3 tidak menerbitkan grant karakter, lot pembelian, atau wallet value; kontrak wallet baru dimulai di B4. `AI_MONTHLY_REQUEST_LIMIT` tetap pengaman request. Semua angka ini adalah batas operasional internal, bukan harga atau authority komersial. Timeout, response size, quota reservation kompatibilitas, idempotency, dan status provider error harus dipertahankan sebagai error; aplikasi tidak boleh mengganti kegagalan dengan output palsu.
 
 ## Cloudflare sebelum deployment
 
@@ -129,10 +131,12 @@ pnpm exec wrangler secret put BETTER_AUTH_SECRET
 pnpm exec wrangler secret put GOOGLE_CLIENT_ID
 pnpm exec wrangler secret put GOOGLE_CLIENT_SECRET
 pnpm exec wrangler secret put MKL_CLIENT_SECRET
+# Hanya setelah commissioning aplikasi disetujui; jangan gunakan MKL_CLIENT_SECRET:
+pnpm exec wrangler secret put MKL_APP_API_SECRET
 pnpm exec wrangler secret put OPENROUTER_API_KEY
 ```
 
-Set `BETTER_AUTH_URL` pada vars ke origin Worker/domain target dan daftarkan callback Google yang sama. `MKL_CLIENT_ID` baru boleh diisi setelah client row disetujui dan diregistrasikan; registrasi redirect/post-logout, aktivasi SSO, dan penyerahan secret adalah commissioning terpisah. Terapkan migrasi dengan `wrangler d1 migrations apply <database_name> --remote` hanya setelah database target diverifikasi. Build dan dry-run dahulu; `pnpm exec wrangler deploy` merupakan langkah eksternal terpisah setelah persetujuan rilis. AI tetap `false` sampai konfigurasi provider, kuota, dan evaluasi hasil disetujui.
+Set `BETTER_AUTH_URL` pada vars ke origin Worker/domain target dan daftarkan callback Google yang sama. `MKL_CLIENT_ID`, `MKL_APP_KEY`, dan `MKL_CATALOG_ITEM_ID` baru boleh diisi setelah client/application row disetujui dan diregistrasikan; registrasi redirect/post-logout, aktivasi SSO, app API secret, dan commissioning entitlement adalah langkah terpisah. B3 lokal ini bukan izin untuk membuat client/secret produksi. Terapkan migrasi dengan `wrangler d1 migrations apply <database_name> --remote` hanya setelah database target diverifikasi. Build dan dry-run dahulu; `pnpm exec wrangler deploy` merupakan langkah eksternal terpisah setelah persetujuan rilis. AI tetap `false` sampai konfigurasi provider, kuota, dan evaluasi hasil disetujui.
 
 Sebelum update berikutnya, catat versi Worker aktif dan ambil backup D1 menggunakan `wrangler d1 export <database_name> --remote --output <backup.sql>` ke lokasi privat. Rollback Worker melalui `wrangler rollback <version-id>` tidak mengembalikan data D1/R2; migrasi data memerlukan rencana pemulihan tersendiri. Migrasi initial hanya dijalankan sekali dan belum memiliki migrasi destruktif.
 

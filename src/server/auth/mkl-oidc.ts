@@ -22,6 +22,7 @@ export type MklDiscovery = {
 export type MklIdentity = {
   issuer: string;
   subject: string;
+  organizationId: string;
   email: string | null;
   emailVerified: boolean;
   name: string | null;
@@ -109,7 +110,8 @@ export async function verifyMklIdToken(token: string, discovery: MklDiscovery, c
     const jwks = createRemoteJWKSet(new URL(discovery.jwks_uri), { [customFetch]: fetcher, cooldownDuration: 0 });
     ({ payload } = await jwtVerify(token, jwks, { algorithms: ["RS256"], issuer: config.issuer, audience: config.clientId, requiredClaims: ["exp"], clockTolerance: 5 }));
   } catch { throw new MklProtocolError("MKL_TOKEN_INVALID", "The MKL ID token is invalid."); }
-  if (payload.aud !== config.clientId || payload.nonce !== expectedNonce || typeof payload.sub !== "string" || !payload.sub.trim()) {
+  const organizationId = typeof payload.mkl_organization_id === "string" ? payload.mkl_organization_id.trim() : "";
+  if (payload.aud !== config.clientId || payload.nonce !== expectedNonce || typeof payload.sub !== "string" || !payload.sub.trim() || !organizationId) {
     throw new MklProtocolError("MKL_TOKEN_INVALID", "The MKL ID token claims are invalid.");
   }
   const email = typeof payload.email === "string" ? payload.email.trim().toLowerCase() : null;
@@ -117,6 +119,7 @@ export async function verifyMklIdToken(token: string, discovery: MklDiscovery, c
   return {
     issuer: config.issuer,
     subject: payload.sub,
+    organizationId,
     email: usableEmail,
     emailVerified: usableEmail !== null && payload.email_verified === true,
     name: typeof payload.name === "string" && payload.name.trim() ? payload.name.trim().slice(0, 100) : null,

@@ -26,6 +26,7 @@ const PREVIEW_CHARACTERS = 1_200;
 type Extraction = {
   title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; pageMargins: string;
   orientation: Orientation; columns: number; header: RunningText | null; footer: RunningText | null; warnings: ImportWarning[];
+  docxImportReceipt: string;
 };
 
 // What each warning means to the writer; the file is still imported, these parts simply do not come with it.
@@ -76,7 +77,7 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
           orientation: extraction.orientation, columns: extraction.columns, header: extraction.header, footer: extraction.footer,
         }),
       };
-      const doc = await request<{ id: string }>('/api/documents', 'POST', { title: extraction.title, language: prefs.writingLanguage, content: extraction.content, preferences }, newKey());
+      const doc = await request<{ id: string }>('/api/documents', 'POST', { title: extraction.title, language: prefs.writingLanguage, content: extraction.content, preferences, docxImportReceipt: extraction.docxImportReceipt }, newKey());
       if (!guardedPush(router, `/notebooks/${doc.id}`)) onClose();
     } catch (caught) {
       if (!guard(caught)) setError(errorText(caught, locale === 'en'));

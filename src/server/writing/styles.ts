@@ -3,6 +3,8 @@ import { RequestError } from "../http";
 import { requireFeature } from "../usage/features";
 import { isNotebookColor } from "@/lib/notebook/appearance";
 import { STYLE_LIMIT, styleSettings, type StyleInput, type StylePatch, type WritingStyle } from "@/lib/writing/styles";
+import { entitlement } from "../usage/quota";
+import { storedSettingsForAccess } from "../usage/premium";
 
 type StyleRow = { id: string; name: string; description: string | null; color: string | null; icon: string | null; settings_json: string; created_at: number; updated_at: number };
 const now = () => Date.now();
@@ -25,8 +27,8 @@ export async function listStyles(ownerId: string): Promise<WritingStyle[]> {
 // Saved styles start at Plus; listing and deleting stay open so a downgrade never holds saved work hostage.
 // The per-owner limit is enforced inside the INSERT so concurrent creates cannot exceed it.
 export async function createStyle(ownerId: string, input: StyleInput): Promise<WritingStyle> {
-  await requireFeature(ownerId, "saved_styles");
-  const id = crypto.randomUUID(); const created = now(); const settings = JSON.stringify(styleSettings(input.settings));
+  const rights = await requireFeature(ownerId, "saved_styles");
+  const id = crypto.randomUUID(); const created = now(); const settings = JSON.stringify(styleSettings(storedSettingsForAccess(rights, input.settings)));
   try {
     const result = await runtime().DB.prepare("INSERT INTO writing_styles (id,owner_id,name,description,color,icon,settings_json,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT COUNT(*) FROM writing_styles WHERE owner_id=?)<?").bind(id, ownerId, input.name, input.description, input.color, input.icon, settings, created, created, ownerId, STYLE_LIMIT).run();
     if ((result.meta.changes ?? 0) !== 1) throw new RequestError("STYLE_LIMIT_REACHED", `You can save at most ${STYLE_LIMIT} styles.`, 409);
@@ -37,7 +39,8 @@ export async function createStyle(ownerId: string, input: StyleInput): Promise<W
 export async function updateStyle(ownerId: string, styleId: string, changes: StylePatch): Promise<WritingStyle> {
   await requireFeature(ownerId, "saved_styles");
   const existing = await rowForOwner(styleId, ownerId); const updated = now();
-  const next: StyleRow = { ...existing, name: changes.name ?? existing.name, description: changes.description === undefined ? existing.description : changes.description, color: changes.color === undefined ? existing.color : changes.color, icon: changes.icon === undefined ? existing.icon : changes.icon, settings_json: changes.settings === undefined ? existing.settings_json : JSON.stringify(styleSettings(changes.settings)), updated_at: updated };
+  const rights = await entitlement(ownerId); const oldSettings = parse(existing.settings_json);
+  const next: StyleRow = { ...existing, name: changes.name ?? existing.name, description: changes.description === undefined ? existing.description : changes.description, color: changes.color === undefined ? existing.color : changes.color, icon: changes.icon === undefined ? existing.icon : changes.icon, settings_json: changes.settings === undefined ? existing.settings_json : JSON.stringify(styleSettings(storedSettingsForAccess(rights, changes.settings, oldSettings))), updated_at: updated };
   try { await runtime().DB.prepare("UPDATE writing_styles SET name=?,description=?,color=?,icon=?,settings_json=?,updated_at=? WHERE id=? AND owner_id=?").bind(next.name, next.description, next.color, next.icon, next.settings_json, updated, styleId, ownerId).run(); }
   catch (error) { if (isUnique(error)) throw new RequestError("STYLE_EXISTS", "A style with this name already exists.", 409); throw error; }
   return dto(next);
