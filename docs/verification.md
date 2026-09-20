@@ -305,3 +305,34 @@ B2 performed no deployment, remote D1 migration, production client registration,
 **Next:** B3 — entitlement projection and capability resolver.
 
 **B2 source completeness is not production commissioning readiness.**
+
+## B3 — MKL Entitlement + Capability Authority — 20 September 2026
+
+**Status:** LOCAL IMPLEMENTATION; NOT COMMISSIONED
+
+**Base:** `e17a876b311454b959e8af928eea2b8409a784ba`
+
+**MKL contract base:** merge `31a110dd96019ceb2b3a58c62af5569d08202ea6`, deployed version `31a110dd9601`, migration `0028_entitlement_scope_revision.sql` applied.
+
+Migration `0012_b3_entitlement_authority.sql` persists a verified identity-bound checkpoint/projection, noncommercial support/test grants, and trusted DOCX portability evidence. The normalized replay hash contains only application provenance, holder provenance, and every sorted candidate fact; it excludes the compatibility singleton, response `server_time`, derived `active`, and the revision (which is compared separately). Older revisions are rejected, identical same-revision payloads refresh freshness as replay, and a changed same-revision payload immediately invalidates the projection.
+
+The resolver maps only `plus|pro|max` at `pricing-v1`. Linked accounts never use `user.tier` as commercial authority. Local admin and support/test capabilities remain noncommercial, cannot claim a paid plan, cannot enable top-up, and create no wallet value. Positive MKL access expires at the minimum of the 15-minute verification freshness window and the entitlement period end.
+
+Max-only free-text personalization/additional instruction and style reference/sample are stripped after runtime alias normalization. P08/AI Mode remains a structured `FEATURE_LOCKED` server gate below Max. Stored premium data and Advanced Workspace layout data survive downgrade while locked mutations are ignored or rejected. DOCX import creates a short-lived server receipt; consuming it creates trusted document evidence. DOCX export accepts current authority or that historical evidence, while semantic HTML export remains available to every owner.
+
+No character grants, wallet lots, reserve/settle/release changes, offers, checkout, orders, hosted payment, Midtrans integration, application commissioning, production client, or production secret are introduced by B3.
+
+Production follow-up remains mandatory before any live commissioning claim: an authenticated `GET /app/v1/entitlements` and a normal signed-in reconcile must be captured successfully.
+
+### Local validation evidence
+
+- Local migration replay: `0012_b3_entitlement_authority.sql` applied successfully (12 statements).
+- Focused entitlement/identity/document/style suites: 87/87 PASS.
+- Full Vitest suite: 636/637 PASS; the sole failure is the pre-existing Windows CRLF parser assertion in `tests/ai/core.test.ts` (`systemprompt.md` fenced blocks), already present at the B3 base and unrelated to these changes.
+- TypeScript: PASS.
+- ESLint: PASS.
+- Vinext compatibility: 100%.
+- Production build: PASS.
+- Wrangler deployment dry-run: PASS; no deployment occurred.
+- Changed-source secret pattern scan: PASS.
+- `git diff --check`: PASS.

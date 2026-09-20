@@ -4,6 +4,7 @@ import { z } from "zod";
 import { writeAudit } from "../audit";
 import { activeBan, emailOwner, getIdentityOwner, getMklLinkByUserId, provisionMklUser, updateAuthenticatedLink } from "../identity/links";
 import { runtime } from "../runtime";
+import { refreshMklAuthority } from "../entitlements/authority";
 import { authorizationUrl, discoverMkl, exchangeMklCode, mklConfig, MklProtocolError, safeLocalReturnTo, verifyMklIdToken, type MklConfig, type MklIdentity } from "./mkl-oidc";
 import { cookieAttributes, createAuthorizationState, createConsentState, mklCookieNames, randomToken, readCookie, sha256, consumeAuthorizationState, stateIdentifier } from "./mkl-state";
 
@@ -89,11 +90,11 @@ export function mklIdentityPlugin() {
           if (isAdmin(localSession.user.role)) { await rejectLink(localSession.user.id, "MKL_ADMIN_LINK_FORBIDDEN"); redirectError(ctx, config!, "MKL_ADMIN_LINK_FORBIDDEN"); }
         }
 
-        let identity: MklIdentity;
+        let identity: MklIdentity; let verifiedIdToken: string;
         try {
           const discovery = await discoverMkl(config!);
-          const token = await exchangeMklCode(discovery, config!, { code: ctx.query.code!, codeVerifier: state.codeVerifier });
-          identity = await verifyMklIdToken(token, discovery, config!, state.expectedNonce);
+          verifiedIdToken = await exchangeMklCode(discovery, config!, { code: ctx.query.code!, codeVerifier: state.codeVerifier });
+          identity = await verifyMklIdToken(verifiedIdToken, discovery, config!, state.expectedNonce);
         } catch (error) {
           if (error instanceof MklProtocolError) redirectError(ctx, config!, error.code);
           throw error;
@@ -133,6 +134,12 @@ export function mklIdentityPlugin() {
             if (isAdmin(owner.user.role)) redirectError(ctx, config!, "MKL_ADMIN_LINK_FORBIDDEN");
           }
         }
+        // Entitlement refresh is tied to this just-verified authorization
+        // ceremony. Identity sign-in remains available while B3 is locally
+        // uncommissioned or MKL is unavailable; the resolver independently
+        // fails closed once no fresh verified projection exists.
+        const freshLink = await getMklLinkByUserId(owner!.user.id);
+        if (freshLink) await refreshMklAuthority(owner!.user.id, freshLink, verifiedIdToken!).catch(() => undefined);
         const session = await ctx.context.internalAdapter.createSession(owner!.user.id);
         if (!session) redirectError(ctx, config!, "MKL_TOKEN_INVALID");
         await setSessionCookie(ctx, { session, user: owner!.user });

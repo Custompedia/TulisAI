@@ -7,7 +7,9 @@ import { RequestError } from "../http";
 import type { NotebookAppearance } from "@/lib/notebook/appearance";
 import { entitlement } from "../usage/quota";
 import { FeatureLockedError } from "../usage/features";
-import { ADVANCED_PREFERENCE, hasFeature } from "@/lib/plans";
+import { ADVANCED_PREFERENCE, hasFeature, PAGE_LAYOUT_PREFERENCES } from "@/lib/plans";
+import { storedSettingsForAccess } from "../usage/premium";
+import { validDocxImportReceipt } from "./portability";
 
 type DocumentRow = { id: string; title: string; language: "auto" | "id" | "en"; preferences_json: string; revision: number; body_json: string | null; body_r2_key: string | null; original_version_id?: string | null; color?: string | null; icon?: string | null; created_at: number; updated_at: number };
 type VersionRow = { id: string; document_id: string; kind: VersionDTO["kind"]; revision: number; label: string | null; snapshot_r2_key: string; created_at: number; prompt_id: string | null; scope_type: string | null };
@@ -19,14 +21,28 @@ const snapshot = (value: unknown) => JSON.stringify(value);
 
 // The advanced notebook flag lives in preferences, so it is verified here instead of trusted from the client.
 // Create refuses it outright; autosave strips it, because failing an autosave would trap the writer in a save loop.
-async function checkedPreferences(ownerId: string, preferences: Record<string, unknown> | undefined, onLocked: "reject" | "strip"): Promise<Record<string, unknown> | undefined> {
-  if (!preferences || preferences[ADVANCED_PREFERENCE] !== true) return preferences;
+const ADVANCED_KEYS = [ADVANCED_PREFERENCE, ...PAGE_LAYOUT_PREFERENCES] as const;
+async function checkedPreferences(ownerId: string, preferences: Record<string, unknown> | undefined, onLocked: "reject" | "strip", existing?: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+  if (!preferences) return preferences;
   const rights = await entitlement(ownerId);
-  if (hasFeature(rights.features, "advanced_notebook")) return preferences;
+  let next = storedSettingsForAccess(rights, preferences, existing);
+  const appliesSavedStyle = typeof preferences.styleId === "string" && preferences.styleId.length > 0 && preferences.styleId !== existing?.styleId;
+  if (appliesSavedStyle && !hasFeature(rights.features, "saved_styles")) {
+    if (onLocked === "reject") throw new FeatureLockedError("saved_styles");
+    next = { ...next, ...(existing && Object.hasOwn(existing, "styleId") ? { styleId: existing.styleId } : {}) };
+    if (!existing || !Object.hasOwn(existing, "styleId")) delete next.styleId;
+  }
+  const advancedMutation = ADVANCED_KEYS.some((key) => existing
+    ? preferences[key] !== existing[key]
+    : Object.hasOwn(preferences, key) && !(key === ADVANCED_PREFERENCE && preferences[key] === false));
+  if (!advancedMutation || hasFeature(rights.features, "advanced_notebook")) return next;
   if (onLocked === "reject") throw new FeatureLockedError("advanced_notebook");
-  const { [ADVANCED_PREFERENCE]: locked, ...rest } = preferences;
-  void locked;
-  return rest;
+  next = { ...next };
+  for (const key of ADVANCED_KEYS) {
+    if (existing && Object.hasOwn(existing, key)) next[key] = existing[key];
+    else delete next[key];
+  }
+  return next;
 }
 
 async function rowForOwner(documentId: string, ownerId: string): Promise<DocumentRow> { const row = await runtime().DB.prepare("SELECT id,title,language,preferences_json,revision,body_json,body_r2_key,original_version_id,color,icon,created_at,updated_at FROM documents WHERE id=? AND owner_id=?").bind(documentId, ownerId).first<DocumentRow>(); if (!row) throw new RequestError("NOT_FOUND", "Document not found.", 404); return row; }
@@ -35,12 +51,23 @@ async function dto(row: DocumentRow): Promise<DocumentDTO> { return { id: row.id
 
 export async function createDocument(ownerId: string, input: DocumentCreateInput): Promise<DocumentDTO> {
   const preferences = await checkedPreferences(ownerId, input.preferences, "reject");
-  const documentId = id(); const versionId = id(); const created = now(); const content = checkedContent(input.content ?? plainTextDocument("")); const body = snapshot(content); const object = await putImmutableSnapshot(documentId, versionId, body);
-  await runtime().DB.batch([
-    runtime().DB.prepare("INSERT INTO documents (id,owner_id,title,language,preferences_json,revision,body_json,storage_mode,original_version_id,color,icon,created_at,updated_at) VALUES (?,?,?,?,?,0,?,'d1',?,?,?,?,?)").bind(documentId, ownerId, input.title, input.language, JSON.stringify(preferences ?? {}), body, versionId, input.color ?? null, input.icon ?? null, created, created),
-    runtime().DB.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at) VALUES (?,?,?,'original',0,'Original',?,?,?)").bind(versionId, documentId, ownerId, object.key, object.hash, created)
-  ]);
-  return { id: documentId, title: input.title, language: input.language, preferences: input.preferences ?? {}, revision: 0, color: input.color ?? null, icon: input.icon ?? null, content, createdAt: new Date(created).toISOString(), updatedAt: new Date(created).toISOString() };
+  const documentId = id(); const versionId = id(); const created = now(); const content = checkedContent(input.content ?? plainTextDocument("")); const body = snapshot(content);
+  const receipt = input.docxImportReceipt ? await validDocxImportReceipt(ownerId, input.docxImportReceipt, content) : null;
+  if (input.docxImportReceipt && !receipt) throw new RequestError("DOCX_IMPORT_EVIDENCE_INVALID", "The DOCX import confirmation is invalid or expired.", 409);
+  const object = await putImmutableSnapshot(documentId, versionId, body);
+  const db = runtime().DB;
+  const statements = receipt ? [
+    db.prepare("DELETE FROM pending_docx_import_evidence WHERE id=? AND owner_id=? AND expires_at>?").bind(receipt.id, ownerId, created),
+    db.prepare("INSERT INTO documents (id,owner_id,title,language,preferences_json,revision,body_json,storage_mode,original_version_id,color,icon,created_at,updated_at) SELECT ?,?,?,?,?,0,?,'d1',?,?,?,?,? WHERE changes()=1").bind(documentId, ownerId, input.title, input.language, JSON.stringify(preferences ?? {}), body, versionId, input.color ?? null, input.icon ?? null, created, created),
+    db.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at) SELECT ?,?,?,'original',0,'Original',?,?,? WHERE changes()=1").bind(versionId, documentId, ownerId, object.key, object.hash, created),
+    db.prepare("INSERT INTO document_portability_evidence (document_id,owner_id,kind,authority,projection_revision,created_at) SELECT ?,?,'docx_import',?,?,? WHERE changes()=1").bind(documentId, ownerId, receipt.authority, receipt.projection_revision, created),
+  ] : [
+    db.prepare("INSERT INTO documents (id,owner_id,title,language,preferences_json,revision,body_json,storage_mode,original_version_id,color,icon,created_at,updated_at) VALUES (?,?,?,?,?,0,?,'d1',?,?,?,?,?)").bind(documentId, ownerId, input.title, input.language, JSON.stringify(preferences ?? {}), body, versionId, input.color ?? null, input.icon ?? null, created, created),
+    db.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at) VALUES (?,?,?,'original',0,'Original',?,?,?)").bind(versionId, documentId, ownerId, object.key, object.hash, created),
+  ];
+  const results = await db.batch(statements);
+  if (receipt && results.some((result) => (result.meta.changes ?? 0) !== 1)) throw new RequestError("DOCX_IMPORT_EVIDENCE_INVALID", "The DOCX import confirmation was already used.", 409);
+  return { id: documentId, title: input.title, language: input.language, preferences: preferences ?? {}, revision: 0, color: input.color ?? null, icon: input.icon ?? null, content, createdAt: new Date(created).toISOString(), updatedAt: new Date(created).toISOString() };
 }
 
 export async function getDocument(ownerId: string, documentId: string) { return dto(await rowForOwner(documentId, ownerId)); }
@@ -67,7 +94,15 @@ export async function saveDocument(ownerId: string, documentId: string, expected
   return { id: documentId, title, language: existing.language, revision, content, createdAt: new Date(existing.created_at).toISOString(), updatedAt: new Date(changed).toISOString() } satisfies DocumentDTO;
 }
 
-export async function autosaveDocument(ownerId: string, documentId: string, expectedRevision: number, content: unknown, metadata?: { title?: string; language?: "auto" | "id" | "en"; preferences?: Record<string, unknown> }) { const parsed = checkedContent(content); const preferences = await checkedPreferences(ownerId, metadata?.preferences, "strip"); const current = await rowForOwner(documentId, ownerId); const saved = now(); const result = await runtime().DB.prepare("UPDATE documents SET title=?,language=?,preferences_json=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=?").bind(metadata?.title ?? current.title, metadata?.language ?? current.language, JSON.stringify(preferences ?? JSON.parse(current.preferences_json || "{}")), snapshot(parsed), saved, documentId, ownerId, expectedRevision).run(); if ((result.meta.changes ?? 0) !== 1) { const latest = await rowForOwner(documentId, ownerId); throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: latest.revision }); } return getDocument(ownerId, documentId); }
+export async function autosaveDocument(ownerId: string, documentId: string, expectedRevision: number, content: unknown, metadata?: { title?: string; language?: "auto" | "id" | "en"; preferences?: Record<string, unknown> }) {
+  const parsed = checkedContent(content); const current = await rowForOwner(documentId, ownerId);
+  const oldPreferences = JSON.parse(current.preferences_json || "{}") as Record<string, unknown>;
+  const preferences = await checkedPreferences(ownerId, metadata?.preferences, "strip", oldPreferences); const saved = now();
+  const result = await runtime().DB.prepare("UPDATE documents SET title=?,language=?,preferences_json=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=?")
+    .bind(metadata?.title ?? current.title, metadata?.language ?? current.language, JSON.stringify(preferences ?? oldPreferences), snapshot(parsed), saved, documentId, ownerId, expectedRevision).run();
+  if ((result.meta.changes ?? 0) !== 1) { const latest = await rowForOwner(documentId, ownerId); throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: latest.revision }); }
+  return getDocument(ownerId, documentId);
+}
 // Cosmetic metadata only: no revision bump, no version, updated_at untouched.
 export async function updateAppearance(ownerId: string, documentId: string, appearance: NotebookAppearance) { const result = await runtime().DB.prepare("UPDATE documents SET color=?,icon=? WHERE id=? AND owner_id=?").bind(appearance.color, appearance.icon, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found.", 404); return { id: documentId, color: appearance.color, icon: appearance.icon }; }
 export async function listVersions(ownerId: string, documentId: string, cursor?: string, limit = 20) { await rowForOwner(documentId, ownerId); const bounded = Math.min(Math.max(limit, 1), 50); let sql = "SELECT id,document_id,kind,revision,label,snapshot_r2_key,created_at,prompt_id,scope_type FROM document_versions WHERE document_id=? AND owner_id=?"; const args: unknown[] = [documentId, ownerId]; if (cursor) { const [created, versionId] = cursor.split(":"); if (!created || !versionId || !/^\d+$/.test(created)) throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); sql += " AND (created_at < ? OR (created_at = ? AND id < ?))"; args.push(Number(created), Number(created), versionId); } sql += " ORDER BY created_at DESC,id DESC LIMIT ?"; args.push(bounded + 1); const rows = await runtime().DB.prepare(sql).bind(...args).all<VersionRow>(); const results = rows.results ?? []; const page = results.slice(0, bounded); const last = page.at(-1); return { items: page.map((row) => ({ id: row.id, documentId: row.document_id, kind: row.kind, revision: row.revision, label: row.label, promptId: row.prompt_id, scopeType: row.scope_type, createdAt: new Date(row.created_at).toISOString() })), nextCursor: results.length > bounded && last ? `${last.created_at}:${last.id}` : null }; }

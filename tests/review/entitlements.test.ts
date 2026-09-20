@@ -63,16 +63,17 @@ describe('review: entitlements are resolved from the account, not the client', (
     for (const feature of FEATURES) expect(() => assertFeature(rights, feature)).toThrowError(/paid plan/);
   });
 
-  it('opens each feature at the tier that sells it and names that tier for the upsell', async () => {
+  it('keeps unlinked legacy tiers as noncommercial compatibility authority', async () => {
     const expected: Record<string, readonly string[]> = {
-      plus: ['saved_styles', 'purchase_topup'],
-      pro: ['saved_styles', 'purchase_topup', 'advanced_notebook', 'docx_import', 'docx_export'],
-      max: [...FEATURES],
+      plus: ['saved_styles'],
+      pro: ['saved_styles', 'advanced_notebook', 'docx_import', 'docx_export'],
+      max: FEATURES.filter((feature) => feature !== 'purchase_topup'),
     };
     for (const tier of TIERS.filter((value) => value !== 'free')) {
       account(`user-${tier}`, tier);
       const rights = await entitlement(`user-${tier}`);
       expect(rights.tier).toBe(tier);
+      expect(rights.access).toMatchObject({ authority: 'legacy_local', commercialActive: false, plan: null, topupEligible: false });
       expect([...rights.features].sort()).toEqual([...expected[tier]].sort());
       for (const feature of FEATURES) {
         const allowed = expected[tier].includes(feature);
@@ -93,13 +94,14 @@ describe('review: entitlements are resolved from the account, not the client', (
     expect(() => assertFeature(rights, 'freeform_prompt')).toThrowError(/paid plan/);
   });
 
-  it('treats an admin as unlimited with every feature AND the top-tier run limit', async () => {
+  it('treats an admin as unlimited and noncommercial with no top-up capability', async () => {
     // An admin row still says tier 'free'. Holding every feature but running into the 1,000-character free
     // cap was the bug this covers.
     account('boss', 'free', 'admin');
     const rights = await entitlement('boss');
     expect(rights.unlimited).toBe(true);
-    expect([...rights.features].sort()).toEqual([...FEATURES].sort());
+    expect([...rights.features].sort()).toEqual(FEATURES.filter((feature) => feature !== 'purchase_topup').sort());
+    expect(rights.access).toMatchObject({ authority: 'local_admin', commercialActive: false, plan: null, topupEligible: false });
     expect(rights.limits.runLimit).toBe(MAX_RUN_LIMIT);
     expect(rights.limits.runLimit).toBe(PLAN_LIMITS.pro.runLimit);
     expect(rights.characterLimit).toBeGreaterThan(PLAN_LIMITS.max.includedCharacters);

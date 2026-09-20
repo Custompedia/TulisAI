@@ -67,7 +67,7 @@ beforeEach(async () => {
       tokenCalls += 1; const form = new URLSearchParams(String(init?.body)); expect(form.get("client_secret")).toBe("test-client-secret");
       if (tokenFailure) return Response.json({ error: "invalid_code" }, { status: 400 });
       const nonce = (globalThis as typeof globalThis & { __mklNonce?: string }).__mklNonce;
-      const idToken = await new SignJWT({ nonce, email: profileEmail, email_verified: profileVerified, name: profileName, role: "admin", tier: "max", entitlement: "paid" }).setProtectedHeader({ alg: "RS256", kid: "current" }).setIssuer(ISSUER).setSubject(subject).setAudience("tulis-test").setIssuedAt().setExpirationTime("5m").sign(privateKey);
+      const idToken = await new SignJWT({ nonce, email: profileEmail, email_verified: profileVerified, name: profileName, mkl_organization_id: "mkl-org-1", role: "admin", tier: "max", entitlement: "paid" }).setProtectedHeader({ alg: "RS256", kid: "current" }).setIssuer(ISSUER).setSubject(subject).setAudience("tulis-test").setIssuedAt().setExpirationTime("5m").sign(privateKey);
       return Response.json({ id_token: idToken, token_type: "id_token", expires_in: 300, scope: "email openid profile" });
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -86,7 +86,7 @@ describe("MKL sign-in", () => {
     const response = await callback(flow); expect(response.status).toBe(302); expect(response.headers.get("location")).toBe(`${APP}/onboarding`);
     expect(response.headers.getSetCookie().join(";")).toContain("__Secure-better-auth.session_token=");
     expect(db.prepare("SELECT email,role,tier,username FROM user").get()).toEqual({ email: "ada@example.test", role: "user", tier: "free", username: null });
-    expect(db.prepare("SELECT issuer,subject,provider,profile_email FROM external_identity_link").get()).toMatchObject({ issuer: ISSUER, subject, provider: "mkl", profile_email: "ada@example.test" });
+    expect(db.prepare("SELECT issuer,subject,organization_id,provider,profile_email FROM external_identity_link").get()).toMatchObject({ issuer: ISSUER, subject, organization_id: "mkl-org-1", provider: "mkl", profile_email: "ada@example.test" });
     expect(db.prepare("SELECT action FROM admin_audit_log").all()).toEqual([{ action: "identity.mkl.account-created" }]);
     const auditDetails = String((db.prepare("SELECT details_json FROM admin_audit_log").get() as { details_json: string }).details_json);
     expect(auditDetails).not.toContain("test-client-secret"); expect(auditDetails).not.toContain("one-time-code"); expect(auditDetails).not.toContain(flow.url.searchParams.get("state")!); expect(auditDetails).not.toContain(flow.url.searchParams.get("nonce")!);
@@ -263,7 +263,7 @@ describe("explicit MKL linking", () => {
 describe("migration authority", () => {
   it("enforces one owner per issuer/subject and one MKL identity per local user", () => {
     const columns = db.prepare("PRAGMA table_info(external_identity_link)").all() as Array<{ name: string }>;
-    expect(columns.map((column) => column.name)).toEqual(["id", "provider", "issuer", "subject", "user_id", "profile_email", "profile_name", "link_method", "created_at", "updated_at", "last_authenticated_at"]);
+    expect(columns.map((column) => column.name)).toEqual(["id", "provider", "issuer", "subject", "user_id", "profile_email", "profile_name", "link_method", "created_at", "updated_at", "last_authenticated_at", "organization_id"]);
     db.prepare("INSERT INTO user (id,name,email,email_verified,role,tier,banned,created_at,updated_at) VALUES ('u','U','u@example.test',1,'user','free',0,1,1)").run();
     db.prepare("INSERT INTO external_identity_link (id,provider,issuer,subject,user_id,link_method,created_at,updated_at) VALUES ('l','mkl','i','s','u','explicit-link',1,1)").run();
     expect(() => db.prepare("INSERT INTO external_identity_link (id,provider,issuer,subject,user_id,link_method,created_at,updated_at) VALUES ('l2','mkl','i','s2','u','explicit-link',1,1)").run()).toThrow();
@@ -277,10 +277,11 @@ describe("migration authority", () => {
   it("upgrades representative credential and Google accounts without changing them", () => {
     const existing = new DatabaseSync(":memory:");
     try {
-      for (const name of migrationFiles().filter((name) => name !== "0011_mkl_identity_bridge.sql")) existing.exec(readFileSync(join("migrations", name), "utf8"));
+      for (const name of migrationFiles().filter((name) => name !== "0011_mkl_identity_bridge.sql" && name !== "0012_b3_entitlement_authority.sql")) existing.exec(readFileSync(join("migrations", name), "utf8"));
       existing.prepare("INSERT INTO user (id,name,email,email_verified,username,role,tier,banned,created_at,updated_at) VALUES ('credential-user','Credential','credential@example.test',1,'credential','user','free',0,1,1),('google-user','Google','google@example.test',1,NULL,'user','free',0,1,1)").run();
       existing.prepare("INSERT INTO account (id,account_id,provider_id,user_id,password,created_at,updated_at) VALUES ('credential-account','credential-user','credential','credential-user','hash',1,1),('google-account','google-sub','google','google-user',NULL,1,1)").run();
       existing.exec(readFileSync(join("migrations", "0011_mkl_identity_bridge.sql"), "utf8"));
+      existing.exec(readFileSync(join("migrations", "0012_b3_entitlement_authority.sql"), "utf8"));
       expect(existing.prepare("SELECT id,email,role,tier FROM user ORDER BY id").all()).toEqual([
         { id: "credential-user", email: "credential@example.test", role: "user", tier: "free" },
         { id: "google-user", email: "google@example.test", role: "user", tier: "free" },
