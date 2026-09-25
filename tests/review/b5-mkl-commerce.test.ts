@@ -307,7 +307,7 @@ describe("B5 ordered corrections and wallet fencing", () => {
     db.prepare("UPDATE character_purchased_lots SET settled_amount=40000 WHERE id=?").run(lotId);
     db.prepare("UPDATE character_grants SET settled_amount=original_amount WHERE owner_id='u' AND kind='included'").run();
     const held = await reserveCharacters({ ownerId: "u", idempotencyKey: "held", fingerprint: "held", operation: "generate", sourceCharacters: 1000, now: NOW + 10 });
-    f.purchase = purchase({ purchase_revision: 2, corrections: [{ correction_id: "correction-1", revision: 2, kind: "reversal", final_state: "reversed", amount_idr: 99_000, cumulative_refunded_idr: 99_000, corrected_at: iso(NOW + 20) }] });
+    f.purchase = purchase({ purchase_revision: 2, corrections: [{ correction_id: "correction-1", revision: 2, kind: "reversal", final_state: "reversed", amount_idr: 99_000, cumulative_refunded_idr: 0, corrected_at: iso(NOW + 20) }] });
     await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 20 }, fetcher(f));
     await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 21 }, fetcher(f));
     expect(db.prepare("SELECT settled_amount,reserved_amount,state,reversal_state FROM character_purchased_lots WHERE id=?").get(lotId)).toEqual({ settled_amount: 40000, reserved_amount: 0, state: "reversed", reversal_state: "reversed" });
@@ -495,7 +495,7 @@ describe("B5 hardening: final states, recovery classes, gate and offers", () => 
       }
       expect(lotRow()).toMatchObject({ state: "reconciliation_required", reversal_state: "reconciliation_required" });
       f.order = order("charged_back"); f.purchase = purchase({ status: "charged_back", purchase_revision: 2,
-        corrections: [{ correction_id: "chargeback-1", revision: 2, kind: "reversal", final_state: "reversed", amount_idr: 99_000, cumulative_refunded_idr: 99_000, corrected_at: iso(NOW + 3) }] });
+        corrections: [{ correction_id: "chargeback-1", revision: 2, kind: "reversal", final_state: "reversed", amount_idr: 99_000, cumulative_refunded_idr: 0, corrected_at: iso(NOW + 3) }] });
       for (const at of [NOW + 4, NOW + 5]) expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: at }, fetcher(f))).outcome).toBe("reconciled");
       expect(lotRow()).toMatchObject({ state: "reversed", reversal_state: "reversed", original_amount: 100_000 });
       expect(db.prepare("SELECT COUNT(*) AS lots FROM character_purchased_lots").get()).toEqual({ lots: 1 });
@@ -686,5 +686,141 @@ describe("B5 hardening: final states, recovery classes, gate and offers", () => 
       expect((await authorizePurchaseIntent({ ownerId: "u", purchaseId: access, identity, idToken: "closed-reconcile", now: NOW }, fetcher(g))).intent.status).toBe("reconciled");
       expect(g.checkoutCalls).toBe(1);
     });
+  });
+});
+
+describe("B5 correction arithmetic aligned with MKL PR #22", () => {
+  type Correction = { correction_id: string; revision: number; kind: "refund" | "reversal"; final_state: "partially_refunded" | "reversed";
+    amount_idr: number; cumulative_refunded_idr: number; corrected_at: string };
+  const refund = (revision: number, amount: number, cumulative: number, id = `refund-${revision}`, at = iso(NOW + revision)): Correction => ({
+    correction_id: id, revision, kind: "refund", final_state: cumulative >= 99_000 ? "reversed" : "partially_refunded",
+    amount_idr: amount, cumulative_refunded_idr: cumulative, corrected_at: at });
+  const chargeback = (revision: number, amount: number, cumulative: number, at = iso(NOW)): Correction => ({
+    correction_id: "chargeback:order-1", revision, kind: "reversal", final_state: "reversed",
+    amount_idr: amount, cumulative_refunded_idr: cumulative, corrected_at: at });
+  const envelope = (corrections: Correction[], status = "paid") => purchase({ status, purchase_revision: 1 + corrections.length, corrections });
+  const read = (body: unknown) => readPurchase(commerceConfig(state.env), "order-1", async () => Response.json(body));
+  const lot = () => db.prepare("SELECT state,reversal_state,original_amount,reserved_amount,settled_amount FROM character_purchased_lots").get() as Record<string, unknown>;
+  const count = (sql: string) => Number((db.prepare(sql).get() as { n: number }).n);
+
+  async function spentLotWithHold() {
+    seedUser(true); const f = fixture();
+    const created = await createPurchaseIntent({ ownerId: "u", kind: "consumable", planCode: "topup_100k", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "arith-lot", now: NOW }, fetcher(f));
+    await authorizePurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, identity, idToken: "token", now: NOW }, fetcher(f)); f.order = order("paid");
+    await recoverPurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, now: NOW }, fetcher(f));
+    const lotId = String((db.prepare("SELECT id FROM character_purchased_lots").get() as { id: string }).id);
+    db.prepare("UPDATE character_purchased_lots SET settled_amount=40000 WHERE id=?").run(lotId);
+    db.prepare("UPDATE character_grants SET settled_amount=original_amount WHERE owner_id='u' AND kind='included'").run();
+    const held = await reserveCharacters({ ownerId: "u", idempotencyKey: "arith-held", fingerprint: "arith-held", operation: "generate", sourceCharacters: 1000, now: NOW + 10 });
+    return { f, id: created.intent.purchaseId, lotId, holdId: held.reservation.id };
+  }
+  async function recoverTwice(f: Fixture, id: string, at: number) {
+    for (const now of [at, at + 1]) expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now }, fetcher(f))).outcome).toBe("reconciled");
+  }
+  function assertReversedWithoutDebt(holdId: string) {
+    expect(lot()).toMatchObject({ state: "reversed", reversal_state: "reversed", original_amount: 100_000, settled_amount: 40_000, reserved_amount: 0 });
+    expect(db.prepare("SELECT state FROM character_reservations WHERE id=?").get(holdId)).toEqual({ state: "released" });
+  }
+
+  it("accepts a clean chargeback with no prior refunds: full amount, zero cumulative refunds", async () => {
+    await expect(read(envelope([chargeback(2, 99_000, 0)], "charged_back"))).resolves.toMatchObject({ corrections: [{ amountIdr: 99_000, cumulativeRefundedIdr: 0, kind: "reversal" }] });
+    const { f, id, holdId } = await spentLotWithHold();
+    f.order = order("charged_back"); f.purchase = envelope([chargeback(2, 99_000, 0)], "charged_back");
+    await recoverTwice(f, id, NOW + 20);
+    assertReversedWithoutDebt(holdId);
+    expect(count("SELECT COUNT(*) AS n FROM character_lot_corrections")).toBe(1);
+    expect((await walletSummary("u", NOW + 30)).purchased.available).toBe(0);
+  });
+
+  it("accepts a chargeback after a partial refund, even when its corrected_at predates the refund", async () => {
+    const history = [refund(2, 10_000, 10_000), chargeback(3, 89_000, 10_000, iso(NOW - 5_000))];
+    await expect(read(envelope(history, "charged_back"))).resolves.toMatchObject({ purchaseRevision: 3 });
+    const { f, id, holdId } = await spentLotWithHold();
+    f.order = order("paid"); f.purchase = envelope([history[0]!]);
+    await recoverTwice(f, id, NOW + 20);
+    expect(lot()).toMatchObject({ state: "reversed", reversal_state: "partially_refunded", settled_amount: 40_000 });
+    f.order = order("charged_back"); f.purchase = envelope(history, "charged_back");
+    await recoverTwice(f, id, NOW + 30);
+    assertReversedWithoutDebt(holdId);
+    expect(count("SELECT COUNT(*) AS n FROM character_lot_corrections")).toBe(2);
+  });
+
+  it("accepts a zero-amount chargeback when refunds already reserve the outstanding gross, and a later refund cannot downgrade it", async () => {
+    await expect(read(envelope([chargeback(2, 0, 0)], "charged_back"))).resolves.toMatchObject({ corrections: [{ amountIdr: 0, cumulativeRefundedIdr: 0 }] });
+    const { f, id, holdId } = await spentLotWithHold();
+    f.order = order("charged_back"); f.purchase = envelope([chargeback(2, 0, 0)], "charged_back");
+    await recoverTwice(f, id, NOW + 20);
+    assertReversedWithoutDebt(holdId);
+    // The reserved refund completes later as the next revision.
+    f.purchase = envelope([chargeback(2, 0, 0), refund(3, 30_000, 30_000)], "charged_back");
+    await recoverTwice(f, id, NOW + 30);
+    assertReversedWithoutDebt(holdId);
+    expect(count("SELECT COUNT(*) AS n FROM character_lot_corrections")).toBe(2);
+  });
+
+  it("validates completed refund arithmetic and final state from the cumulative total", async () => {
+    await expect(read(envelope([refund(2, 10_000, 10_000), refund(3, 20_000, 30_000), refund(4, 69_000, 99_000)]))).resolves.toMatchObject({ purchaseRevision: 4 });
+    const wrongState = { ...refund(2, 10_000, 10_000), final_state: "reversed" as const };
+    const earlyPartial = { ...refund(2, 99_000, 99_000), final_state: "partially_refunded" as const };
+    for (const history of [[wrongState], [earlyPartial], [refund(2, 99_001, 99_001)], [refund(2, 60_000, 60_000), refund(3, 40_000, 100_000)]]) {
+      await expect(read(envelope(history))).rejects.toMatchObject({ code: "MKL_CORRECTION_SEQUENCE_INVALID" });
+    }
+  });
+
+  it("rejects malformed cumulative progression and leaves the lot fenced, not corrected", async () => {
+    const malformed: Correction[][] = [
+      [refund(2, 10_000, 20_000)],
+      [refund(2, 10_000, 10_000), refund(3, 10_000, 10_000)],
+      // The pre-alignment TulisAI assumption: reversal cumulative equals price.
+      [chargeback(2, 99_000, 99_000)],
+      [refund(2, 10_000, 10_000), chargeback(3, 89_000, 0)],
+      [refund(2, 10_000, 10_000), chargeback(3, 99_000, 10_000)],
+      [chargeback(2, 99_000, 0), refund(3, 10_000, 10_000)],
+      [chargeback(2, 99_000, 0), { ...chargeback(3, 0, 0), correction_id: "chargeback:again" }],
+      [{ ...chargeback(2, 99_000, 0), final_state: "partially_refunded" as const }],
+      [{ ...refund(2, -1, -1) }],
+    ];
+    for (const history of malformed) await expect(read(envelope(history))).rejects.toMatchObject({ code: expect.stringMatching(/^MKL_(CORRECTION_SEQUENCE|RESPONSE)_INVALID$/) });
+    const { f, id } = await spentLotWithHold();
+    f.order = order("charged_back"); f.purchase = envelope([chargeback(2, 99_000, 99_000)], "charged_back");
+    await expect(recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 20 }, fetcher(f))).rejects.toMatchObject({ code: "MKL_CORRECTION_SEQUENCE_INVALID" });
+    expect(lot()).toMatchObject({ state: "reconciliation_required", reversal_state: "reconciliation_required", settled_amount: 40_000 });
+    expect(count("SELECT COUNT(*) AS n FROM character_lot_corrections")).toBe(0);
+  });
+
+  it("keeps replay inert across repeated recovery", async () => {
+    const { f, id, holdId } = await spentLotWithHold();
+    f.order = order("charged_back"); f.purchase = envelope([refund(2, 10_000, 10_000), chargeback(3, 89_000, 10_000)], "charged_back");
+    await recoverTwice(f, id, NOW + 20);
+    const events = count("SELECT COUNT(*) AS n FROM character_wallet_events");
+    for (const at of [NOW + 30, NOW + 31, NOW + 32]) await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: at }, fetcher(f));
+    expect(count("SELECT COUNT(*) AS n FROM character_wallet_events")).toBe(events);
+    expect(count("SELECT COUNT(*) AS n FROM character_lot_corrections")).toBe(2);
+    expect(count("SELECT COUNT(*) AS n FROM character_purchased_lots")).toBe(1);
+    assertReversedWithoutDebt(holdId);
+  });
+
+  it("rejects out-of-order revisions from MKL and stale envelopes after newer authority", async () => {
+    const swapped = [{ ...refund(2, 10_000, 10_000), revision: 3 }, { ...chargeback(3, 89_000, 10_000), revision: 2 }];
+    await expect(read({ ...envelope(swapped), purchase_revision: 3 })).rejects.toMatchObject({ code: "MKL_CORRECTION_SEQUENCE_INVALID" });
+    const { f, id } = await spentLotWithHold();
+    f.order = order("charged_back"); f.purchase = envelope([refund(2, 10_000, 10_000), chargeback(3, 89_000, 10_000)], "charged_back");
+    await recoverTwice(f, id, NOW + 20);
+    const before = lot();
+    f.order = order("paid"); f.purchase = envelope([refund(2, 10_000, 10_000)]);
+    await expect(recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 30 }, fetcher(f))).rejects.toMatchObject({ code: "PURCHASE_REVISION_STALE" });
+    expect(lot()).toEqual(before);
+  });
+
+  it("fails closed when correction history conflicts with what was already applied", async () => {
+    const { f, id } = await spentLotWithHold();
+    f.order = order("paid"); f.purchase = envelope([refund(2, 10_000, 10_000)]);
+    await recoverTwice(f, id, NOW + 20);
+    // Same correction identity rewritten with different facts under a newer revision.
+    f.order = order("charged_back"); f.purchase = envelope([refund(2, 20_000, 20_000, "refund-2"), chargeback(3, 79_000, 20_000)], "charged_back");
+    await expect(recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 30 }, fetcher(f))).rejects.toMatchObject({ code: "CORRECTION_CONFLICT" });
+    expect(count("SELECT COUNT(*) AS n FROM character_lot_corrections")).toBe(1);
+    expect(lot()).toMatchObject({ settled_amount: 40_000, reserved_amount: 0 });
+    expect(db.prepare("SELECT status,last_error_code FROM mkl_purchase_intents WHERE id=?").get(id)).toEqual({ status: "reconciliation_required", last_error_code: "CORRECTION_CONFLICT" });
   });
 });

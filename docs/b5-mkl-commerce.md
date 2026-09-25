@@ -180,7 +180,27 @@ Corrections are applied in MKL revision order through
 `applyVerifiedLotCorrection`. Partial refund and full reversal both revoke
 remaining local inventory, preserve settled characters without debt, and
 atomically release reservations touching the lot. Exact replay is inert; an
-older or same-revision/different-payload authority is rejected.
+older or same-revision/different-payload authority is rejected. A lot that
+reached `reversed` keeps that label if a refund completes later.
+
+Correction histories are validated with MKL PR #22's arithmetic
+(`assertCorrectionArithmetic` in `src/server/commerce/mkl-client.ts`):
+
+- **Refund:** `cumulative_refunded_idr` = previous completed refunds +
+  `amount_idr`, never above the price. `final_state` is `reversed` exactly when
+  that total reaches the price, otherwise `partially_refunded`.
+- **Chargeback reversal:** always `reversed`, at most once per order.
+  `cumulative_refunded_idr` stays equal to the completed-refund total, because a
+  chargeback is not a refund, and may be `0`. `amount_idr` is the gross not
+  already reserved by refunds; it may be `0` and never exceeds price minus
+  completed refunds.
+- The reversal amount plus all completed refunds never exceeds the price.
+- Revision order is the only ordering authority. A chargeback's `corrected_at`
+  is the order's last update, so it may predate an earlier refund or the
+  fulfillment, and it is not compared.
+
+Any violation is `MKL_CORRECTION_SEQUENCE_INVALID`. That is received authority,
+so the lot is fenced and no correction is applied.
 
 If MKL reports `corrections_complete=false`, or a previously accepted purchase
 later conflicts at the same revision/provenance/price boundary, B5 invokes the

@@ -216,8 +216,42 @@ function normalizeCorrection(input: unknown): MklPurchaseCorrection {
   const value = record(input); const kind = string(value.kind, "correction kind"); const finalState = string(value.final_state, "correction final state");
   if (kind !== "refund" && kind !== "reversal") throw new CommerceError("MKL_RESPONSE_INVALID", "MKL returned an invalid correction kind.", 502);
   if (finalState !== "partially_refunded" && finalState !== "reversed") throw new CommerceError("MKL_RESPONSE_INVALID", "MKL returned an invalid correction state.", 502);
+  // MKL permits 0 for both amounts: a chargeback whose outstanding gross is
+  // already reserved by refunds reverses 0, and cumulative counts refunds only.
   return { correctionId: string(value.correction_id, "correction id")!, revision: integer(value.revision, "correction revision", 2), kind, finalState,
-    amountIdr: integer(value.amount_idr, "correction amount", 1), cumulativeRefundedIdr: integer(value.cumulative_refunded_idr, "cumulative refund", 1), correctedAt: instant(value.corrected_at, "corrected_at")! };
+    amountIdr: integer(value.amount_idr, "correction amount", 0), cumulativeRefundedIdr: integer(value.cumulative_refunded_idr, "cumulative refund", 0), correctedAt: instant(value.corrected_at, "corrected_at")! };
+}
+
+/**
+ * Validate a correction history against MKL's arithmetic (MKL contract,
+ * "The arithmetic, exactly"). Revision order is the only ordering authority:
+ * a chargeback's `corrected_at` is the order's last update, so it can predate an
+ * earlier-revision refund or even fulfillment, and is not compared.
+ *
+ * - refund: cumulative = completed refunds so far + amount, never above price;
+ *   final state is `reversed` exactly when cumulative reaches the price.
+ * - reversal (chargeback): always `reversed`, at most once; cumulative stays the
+ *   completed-refund total; amount is at most the gross not yet refunded.
+ * - reversal amount plus all completed refunds never exceeds the price.
+ */
+export function assertCorrectionArithmetic(corrections: readonly MklPurchaseCorrection[], priceIdr: number): void {
+  const invalid = () => new CommerceError("MKL_CORRECTION_SEQUENCE_INVALID", "MKL returned inconsistent correction facts.", 502);
+  const ids = new Set<string>(); let refunded = 0; let reversal: number | null = null;
+  for (const correction of corrections) {
+    if (ids.has(correction.correctionId)) throw invalid();
+    ids.add(correction.correctionId);
+    if (correction.kind === "refund") {
+      const cumulative = refunded + correction.amountIdr;
+      if (correction.cumulativeRefundedIdr !== cumulative || cumulative > priceIdr) throw invalid();
+      if (correction.finalState !== (cumulative >= priceIdr ? "reversed" : "partially_refunded")) throw invalid();
+      refunded = cumulative;
+    } else {
+      if (correction.finalState !== "reversed" || reversal !== null) throw invalid();
+      if (correction.cumulativeRefundedIdr !== refunded || correction.amountIdr > priceIdr - refunded) throw invalid();
+      reversal = correction.amountIdr;
+    }
+    if ((reversal ?? 0) + refunded > priceIdr) throw invalid();
+  }
 }
 
 export async function readPurchase(config: CommerceConfig, orderId: string, fetcher: typeof fetch = fetch): Promise<MklPurchase> {
@@ -237,16 +271,6 @@ export async function readPurchase(config: CommerceConfig, orderId: string, fetc
     requiresActiveAccess: bool(value.requires_active_access, "requires_active_access"), purchaseRevision: revision, correctionsComplete: bool(value.corrections_complete, "corrections_complete"), corrections,
   };
   if (purchase.orderId !== orderId) throw new CommerceError("ORDER_BINDING_MISMATCH", "MKL returned another purchase.", 502);
-  const correctionIds = new Set<string>(); let cumulative = 0; let correctedAt = purchase.fulfilledAt ? Date.parse(purchase.fulfilledAt) : Number.NEGATIVE_INFINITY;
-  for (const correction of purchase.corrections) {
-    const at = Date.parse(correction.correctedAt);
-    if (correctionIds.has(correction.correctionId) || correction.amountIdr > purchase.priceIdrSnapshot || correction.cumulativeRefundedIdr !== cumulative + correction.amountIdr || correction.cumulativeRefundedIdr > purchase.priceIdrSnapshot || at < correctedAt ||
-      (correction.kind === "reversal" && correction.finalState !== "reversed") ||
-      (correction.finalState === "partially_refunded" && correction.cumulativeRefundedIdr >= purchase.priceIdrSnapshot) ||
-      (correction.finalState === "reversed" && correction.cumulativeRefundedIdr !== purchase.priceIdrSnapshot)) {
-      throw new CommerceError("MKL_CORRECTION_SEQUENCE_INVALID", "MKL returned inconsistent correction facts.", 502);
-    }
-    correctionIds.add(correction.correctionId); cumulative = correction.cumulativeRefundedIdr; correctedAt = at;
-  }
+  assertCorrectionArithmetic(purchase.corrections, purchase.priceIdrSnapshot);
   return purchase;
 }

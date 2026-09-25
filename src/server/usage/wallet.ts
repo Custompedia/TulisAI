@@ -466,13 +466,16 @@ export async function applyVerifiedLotCorrection(fact: VerifiedCorrection, now =
       FROM character_reservations r WHERE r.state='released' AND r.released_at=? AND r.failure_reason=?
         AND r.id IN (SELECT reservation_id FROM character_allocations WHERE source_kind='purchased_lot' AND source_id=?)`)
       .bind(`correction:${fact.correctionId}`, now, now, `verified_${fact.kind}:${fact.reasonCode}`.slice(0, 120), fact.lotId),
-    runtime().DB.prepare(`UPDATE character_purchased_lots SET state='reversed',reversal_state=?,updated_at=? WHERE id=? AND owner_id=?`)
+    // A refund completing after a chargeback must not relabel a full reversal
+    // as partial: `reversed` is final.
+    runtime().DB.prepare(`UPDATE character_purchased_lots SET state='reversed',
+      reversal_state=CASE WHEN reversal_state='reversed' THEN 'reversed' ELSE ? END,updated_at=? WHERE id=? AND owner_id=?`)
       .bind(nextState, now, fact.lotId, fact.ownerId),
     runtime().DB.prepare(`INSERT INTO character_lot_corrections (id,lot_id,owner_id,correction_id,correction_revision,kind,verification_payload_hash,reason_code,created_at)
       VALUES (?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(), fact.lotId, fact.ownerId, fact.correctionId, fact.revision, fact.kind, fact.payloadHash, fact.reasonCode, now),
     runtime().DB.prepare(`INSERT INTO character_wallet_events (id,owner_id,event_type,lot_id,causal_reference,metadata_json,created_at)
       VALUES (?,?,'purchased_lot_corrected',?,?,?,?)`).bind(crypto.randomUUID(), fact.ownerId, fact.lotId, fact.correctionId,
-        JSON.stringify({ kind: fact.kind, revision: fact.revision, reasonCode: fact.reasonCode, oldState: lot.reversal_state, newState: nextState }), now),
+        JSON.stringify({ kind: fact.kind, revision: fact.revision, reasonCode: fact.reasonCode, oldState: lot.reversal_state, newState: lot.reversal_state === "reversed" ? "reversed" : nextState }), now),
   ];
   try { await runBatch(statements); }
   catch { throw new WalletError("CORRECTION_RECONCILIATION_REQUIRED", "The verified correction could not be applied atomically.", 409); }
