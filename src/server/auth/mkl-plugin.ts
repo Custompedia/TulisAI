@@ -7,6 +7,10 @@ import { runtime } from "../runtime";
 import { refreshMklAuthority } from "../entitlements/authority";
 import { authorizationUrl, discoverMkl, exchangeMklCode, mklConfig, MklProtocolError, safeLocalReturnTo, verifyMklIdToken, type MklConfig, type MklIdentity } from "./mkl-oidc";
 import { cookieAttributes, createAuthorizationState, createConsentState, mklCookieNames, randomToken, readCookie, sha256, consumeAuthorizationState, stateIdentifier } from "./mkl-state";
+import { clearReauth, markReauthOnSignOut, reauthRequested } from "./mkl-reauth";
+
+/** Clock drift allowed when comparing MKL's auth_time with when the ceremony started. */
+const AUTH_TIME_TOLERANCE_MS = 5_000;
 
 const startBody = z.object({ returnTo: z.string().max(2048).optional() }).default({});
 const callbackQuery = z.object({ state: z.string().min(1).max(2048).optional(), code: z.string().min(1).max(4096).optional(), error: z.string().max(200).optional() });
@@ -55,7 +59,11 @@ async function begin(rawContext: unknown, intent: "sign_in" | "link") {
     const flow = await createAuthorizationState(ctx.context.internalAdapter, config, { intent, browser, userId, sessionId, returnTo: safeLocalReturnTo(ctx.body?.returnTo, "/app") });
     ctx.setCookie(names.browser, browser, cookieAttributes(names.secure));
     ctx.setHeader("cache-control", "no-store");
-    return ctx.json({ url: authorizationUrl(discovery, config, flow), redirect: true });
+    // A link must prove fresh control of the MKL identity, and the first
+    // sign-in after an explicit sign-out must not be answered by MKL's old
+    // session: both ask MKL for a real authentication.
+    const prompt = intent === "link" || reauthRequested(config, headersOf(ctx)) ? "login" as const : undefined;
+    return ctx.json({ url: authorizationUrl(discovery, config, { ...flow, prompt }), redirect: true });
   } catch (error) { apiError(error); }
 }
 
@@ -66,6 +74,7 @@ async function rejectLink(userId: string, code: string, identity?: MklIdentity) 
 export function mklIdentityPlugin() {
   return {
     id: "mkl-identity" as const,
+    hooks: { after: [markReauthOnSignOut] },
     endpoints: {
       mklStart: createAuthEndpoint("/mkl/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware], body: startBody }, (ctx) => begin(ctx, "sign_in")),
       mklLinkStart: createAuthEndpoint("/mkl/link/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware, sensitiveSessionMiddleware], body: startBody }, (ctx) => begin(ctx, "link")),
@@ -90,9 +99,10 @@ export function mklIdentityPlugin() {
           if (isAdmin(localSession.user.role)) { await rejectLink(localSession.user.id, "MKL_ADMIN_LINK_FORBIDDEN"); redirectError(ctx, config!, "MKL_ADMIN_LINK_FORBIDDEN"); }
         }
 
-        let identity: MklIdentity; let verifiedIdToken: string;
+        let identity: MklIdentity; let verifiedIdToken: string; let authTimeSupported = false;
         try {
           const discovery = await discoverMkl(config!);
+          authTimeSupported = discovery.authTimeSupported;
           verifiedIdToken = await exchangeMklCode(discovery, config!, { code: ctx.query.code!, codeVerifier: state.codeVerifier });
           identity = await verifyMklIdToken(verifiedIdToken, discovery, config!, state.expectedNonce);
         } catch (error) {
@@ -102,6 +112,12 @@ export function mklIdentityPlugin() {
 
         if (state.intent === "link") {
           const userId = localSession!.user.id;
+          // Fresh verified control: once MKL reports auth_time, the MKL sign-in
+          // behind this link must have happened after the ceremony started, not
+          // be a session somebody left open.
+          if (authTimeSupported && (identity.authTime === null || identity.authTime * 1000 + AUTH_TIME_TOLERANCE_MS < state.createdAt)) {
+            await rejectLink(userId, "MKL_REAUTH_REQUIRED", identity); redirectError(ctx, config!, "MKL_REAUTH_REQUIRED");
+          }
           if (await getMklLinkByUserId(userId)) { await rejectLink(userId, "MKL_ACCOUNT_ALREADY_LINKED", identity); redirectError(ctx, config!, "MKL_ACCOUNT_ALREADY_LINKED"); }
           if (await getIdentityOwner(identity.issuer, identity.subject)) { await rejectLink(userId, "MKL_IDENTITY_LINKED_ELSEWHERE", identity); redirectError(ctx, config!, "MKL_IDENTITY_LINKED_ELSEWHERE"); }
           const receipt = await createConsentState(ctx.context.internalAdapter, { userId, browserHash: state.browserHash, identity, correlationRef: state.correlationRef });
@@ -143,6 +159,7 @@ export function mklIdentityPlugin() {
         const session = await ctx.context.internalAdapter.createSession(owner!.user.id);
         if (!session) redirectError(ctx, config!, "MKL_TOKEN_INVALID");
         await setSessionCookie(ctx, { session, user: owner!.user });
+        clearReauth(ctx, config!);
         ctx.setHeader("cache-control", "no-store");
         throw ctx.redirect(new URL(isNewUser ? "/onboarding" : state.returnTo, config!.appOrigin).toString());
       }),

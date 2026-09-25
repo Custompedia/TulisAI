@@ -37,6 +37,8 @@ const d1 = () => ({
 
 const APP = "https://tulis.marikitalembur.com"; const ISSUER = "https://mkl.test";
 let privateKey: CryptoKey; let publicJwk: Record<string, unknown>; let subject = "mkl-subject-1"; let profileEmail = "ada@example.test"; let profileName = "Ada MKL"; let profileVerified = true; let tokenCalls = 0; let tokenFailure = false;
+// Identity V2 MKL: advertises auth_time in discovery and puts it in the token.
+let advertiseAuthTime = false; let tokenAuthTime: number | null = null;
 
 const cookiePairs = (response: Response) => response.headers.getSetCookie().map((value) => value.split(";", 1)[0]!);
 function cookieJar(...parts: Array<string | Response>): string {
@@ -58,16 +60,16 @@ beforeEach(async () => {
   db = new DatabaseSync(":memory:"); applyMigrations(db);
   state.env = { DB: d1(), BETTER_AUTH_SECRET: "a test secret that is long enough for Better Auth", BETTER_AUTH_URL: APP, MKL_ISSUER: ISSUER, MKL_CLIENT_ID: "tulis-test", MKL_CLIENT_SECRET: "test-client-secret" };
   const pair = await generateKeyPair("RS256"); privateKey = pair.privateKey; publicJwk = { ...await exportJWK(pair.publicKey), kid: "current", alg: "RS256", use: "sig" };
-  subject = "mkl-subject-1"; profileEmail = "ada@example.test"; profileName = "Ada MKL"; profileVerified = true; tokenCalls = 0; tokenFailure = false;
+  subject = "mkl-subject-1"; profileEmail = "ada@example.test"; profileName = "Ada MKL"; profileVerified = true; tokenCalls = 0; tokenFailure = false; advertiseAuthTime = false; tokenAuthTime = null;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input : input.url);
-    if (url.pathname === "/.well-known/openid-configuration") return Response.json({ issuer: ISSUER, authorization_endpoint: `${ISSUER}/sso/authorize`, token_endpoint: `${ISSUER}/sso/token`, jwks_uri: `${ISSUER}/.well-known/jwks.json` });
+    if (url.pathname === "/.well-known/openid-configuration") return Response.json({ issuer: ISSUER, authorization_endpoint: `${ISSUER}/sso/authorize`, token_endpoint: `${ISSUER}/sso/token`, jwks_uri: `${ISSUER}/.well-known/jwks.json`, ...(advertiseAuthTime ? { claims_supported: ["sub", "auth_time"] } : {}) });
     if (url.pathname === "/.well-known/jwks.json") return Response.json({ keys: [publicJwk] });
     if (url.pathname === "/sso/token") {
       tokenCalls += 1; const form = new URLSearchParams(String(init?.body)); expect(form.get("client_secret")).toBe("test-client-secret");
       if (tokenFailure) return Response.json({ error: "invalid_code" }, { status: 400 });
       const nonce = (globalThis as typeof globalThis & { __mklNonce?: string }).__mklNonce;
-      const idToken = await new SignJWT({ nonce, email: profileEmail, email_verified: profileVerified, name: profileName, mkl_organization_id: "mkl-org-1", role: "admin", tier: "max", entitlement: "paid" }).setProtectedHeader({ alg: "RS256", kid: "current" }).setIssuer(ISSUER).setSubject(subject).setAudience("tulis-test").setIssuedAt().setExpirationTime("5m").sign(privateKey);
+      const idToken = await new SignJWT({ nonce, email: profileEmail, email_verified: profileVerified, name: profileName, mkl_organization_id: "mkl-org-1", role: "admin", tier: "max", entitlement: "paid", ...(tokenAuthTime === null ? {} : { auth_time: tokenAuthTime }) }).setProtectedHeader({ alg: "RS256", kid: "current" }).setIssuer(ISSUER).setSubject(subject).setAudience("tulis-test").setIssuedAt().setExpirationTime("5m").sign(privateKey);
       return Response.json({ id_token: idToken, token_type: "id_token", expires_in: 300, scope: "email openid profile" });
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -104,6 +106,19 @@ describe("MKL sign-in", () => {
     const logout = await post("/sign-out", {}, sessionCookie); expect(logout.status).toBe(200);
     expect(db.prepare("SELECT COUNT(*) AS n FROM external_identity_link").get()).toEqual({ n: 1 });
   }, 20000);
+
+  it("asks MKL for a real sign-in after an explicit sign-out, and a completed sign-in clears the mark", async () => {
+    const first = await begin(); expect(first.url.searchParams.get("prompt")).toBeNull();
+    rememberNonce(first); const created = await callback(first); const sessionCookie = cookieJar(created);
+    const logout = await post("/sign-out", {}, sessionCookie); expect(logout.status).toBe(200);
+    const mark = logout.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-tulis_mkl_reauth="))!;
+    expect(mark).toContain("__Host-tulis_mkl_reauth=1"); expect(mark).toContain("HttpOnly"); expect(mark).toContain("Secure"); expect(mark).not.toContain("Domain=");
+    const again = await begin("/mkl/start", "__Host-tulis_mkl_reauth=1"); expect(again.url.searchParams.get("prompt")).toBe("login");
+    rememberNonce(again); const signedIn = await callback(again); expect(signedIn.status).toBe(302);
+    expect(signedIn.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-tulis_mkl_reauth="))).toContain("Max-Age=0");
+    // The same subject still opens the same account.
+    expect(db.prepare("SELECT COUNT(*) AS n FROM user").get()).toEqual({ n: 1 });
+  }, 30000);
 
   it("refuses a case-insensitive local email collision without adopting the account", async () => {
     db.prepare("INSERT INTO user (id,name,email,email_verified,role,tier,banned,created_at,updated_at) VALUES ('local','Local','Ada@Example.Test',1,'user','free',0,1,1)").run();
@@ -163,6 +178,19 @@ describe("explicit MKL linking", () => {
     expect(deletion.status).toBe(409); expect(await deletion.json()).toMatchObject({ error: { code: "MKL_LINKED_ACCOUNT_DELETE_FORBIDDEN" } });
     const linked = await getUser((db.prepare("SELECT id FROM user").get() as { id: string }).id);
     await expect(assertRoleChange("admin", linked, "admin")).rejects.toMatchObject({ code: "MKL_LINKED_ADMIN_FORBIDDEN" });
+  }, 30000);
+
+  it("always asks MKL for a fresh sign-in, and refuses a stale one once MKL reports auth_time", async () => {
+    const registered = await post("/sign-up/email", { name: "Local Ada", email: "ada@example.test", username: "ada", password: "correct horse battery" });
+    const localCookie = cookieJar(registered);
+    advertiseAuthTime = true; tokenAuthTime = Math.floor(Date.now() / 1000) - 3600;
+    const stale = await begin("/mkl/link/start", localCookie); expect(stale.url.searchParams.get("prompt")).toBe("login"); rememberNonce(stale);
+    const refused = await callback(stale); expect(refused.headers.get("location")).toContain("code=MKL_REAUTH_REQUIRED");
+    expect(refused.headers.getSetCookie().find((cookie) => cookie.startsWith("__Host-tulis_mkl_consent="))).toBeUndefined();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM external_identity_link").get()).toEqual({ n: 0 });
+    tokenAuthTime = Math.floor(Date.now() / 1000) + 1;
+    const fresh = await begin("/mkl/link/start", localCookie); rememberNonce(fresh);
+    expect((await callback(fresh)).headers.get("location")).toBe(`${APP}/settings?mkl=confirm#profil`);
   }, 30000);
 
   it("expires the consent cookie when a pending confirmation has expired", async () => {

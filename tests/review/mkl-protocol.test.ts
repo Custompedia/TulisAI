@@ -18,6 +18,15 @@ describe("MKL OIDC protocol", () => {
     await expect(discoverMkl(config, async () => discoveryResponse({ token_endpoint: "https://evil.test/token" }))).rejects.toMatchObject({ code: "MKL_TOKEN_INVALID" });
   });
 
+  it("adds prompt=login only when asked, and reads auth_time support from discovery", async () => {
+    const fetched = await discoverMkl(config, async () => discoveryResponse());
+    expect(fetched.authTimeSupported).toBe(false);
+    const fresh = new URL(authorizationUrl(fetched, config, { state: "state", nonce: "nonce", codeChallenge: "challenge", prompt: "login" }));
+    expect(fresh.searchParams.get("prompt")).toBe("login");
+    const advertised = await discoverMkl(config, async () => discoveryResponse({ claims_supported: ["sub", "auth_time"] }));
+    expect(advertised.authTimeSupported).toBe(true);
+  });
+
   it("posts the exact code exchange without persisting or accepting an access token", async () => {
     let form: URLSearchParams | null = null;
     const token = await exchangeMklCode(discovery, config, { code: "one-time", codeVerifier: "verifier" }, async (_input, init) => {
