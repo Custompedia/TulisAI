@@ -1,7 +1,18 @@
 # B5 MKL commerce bridge
 
-Status: **SOURCE IMPLEMENTED ON `codex/b5-mkl-commerce`; NOT DEPLOYED; NOT
-COMMISSIONED; NO PAYMENT OR SANDBOX TRANSACTION PERFORMED.**
+Status: **SOURCE IMPLEMENTED AND HARDENED ON `codex/b5-mkl-commerce`; NOT
+DEPLOYED; NOT COMMISSIONED; NO PAYMENT OR SANDBOX TRANSACTION PERFORMED.
+BLOCKED ON MKL PR #22 (consumable authority, migration `0029`) BEING MERGED
+AND DEPLOYED.**
+
+MKL's merged `/app/v1/offers` and `/app/v1/purchases` responses do not yet
+carry `consumable_validity_unit`, `consumable_validity_count`,
+`requires_active_access`, `application`, `holder`, `fulfillment_id`,
+`fulfilled_at`, `consumable_expires_at`, `purchase_revision`,
+`corrections_complete`, or `corrections`. Those fields exist only in MKL
+PR #22. Until it is live, B5 discovery and purchase reads fail closed with
+`MKL_RESPONSE_INVALID` for every product, access included. Do not merge or
+enable B5 before that dependency is available.
 
 This is the TulisAI consumer of MKL's generic first-party application commerce
 contract. It contains no Midtrans code, webhook, invoice, financial journal,
@@ -31,8 +42,27 @@ TulisAI verifies MKL's discovered price against the locked contract but never
 sends a price to checkout and never maps characters from price. Access offers
 must be exactly one calendar month. Consumables must have no access term,
 exactly 12 calendar months of MKL-owned validity, and
-`requires_active_access=true`. Unknown, wrong-version, duplicate, mismatched,
-or cross-catalog offers fail closed.
+`requires_active_access=true`.
+
+Discovery validates only catalog entries whose `plan_code` and
+`plan_version` equal the requested TulisAI product. Unrelated, unplanned
+(`plan_code: null`), other-version, or malformed entries are ignored, so a
+Control edit to another offer cannot stop TulisAI sales. A matching entry that
+breaks the locked contract (price, kind, term, validity, access prerequisite,
+catalog binding) or appears twice still fails closed.
+
+**Repricing is a coordinated TulisAI release.** MKL treats offer prices as
+editable in Control, but B0 locks these prices. Changing a TulisAI offer price
+in MKL without a matching TulisAI release makes that product unavailable
+(`OFFER_CONTRACT_MISMATCH`) and closes unbound intents for it. It never
+silently accepts the new price.
+
+**External contract requirement.** The top-up identities `topup_15k`,
+`topup_45k`, `topup_100k` at `pricing-v1` are defined by TulisAI. MKL's
+`spec/apps/tulisai-pricing-v1.json` lists only `plus`/`pro`/`max`, and MKL
+PR #22 defines the generic consumable envelope but no TulisAI codes. The MKL
+spec and the commissioned offers must carry exactly these codes and version
+(not, for example, Mari Rekap's `topup-v1`) before top-ups can be sold.
 
 ## Durable intent state
 
@@ -53,8 +83,30 @@ does not block a deliberate repeat.
 
 Lifecycle values distinguish `created`, `checkout_pending`,
 `pending_payment`, `paid_awaiting_authority`, `reconciling`, `reconciled`,
-`terminal`, and `reconciliation_required`. A paid historical order cannot
-remain a fake local pending order.
+`terminal`, and `reconciliation_required`. Every status write goes through
+one transition table in `src/server/commerce/intents.ts`. The allowed-source
+check is part of the SQL `UPDATE`, so a concurrent writer can never regress an
+intent. The existing schema represents every state, so no migration was added.
+
+- `terminal` is final for both kinds, and `reconciled` is final for access.
+  Recovery returns them without calling MKL.
+- A reconciled top-up stays re-verifiable because MKL corrections arrive
+  later. It may only move between `reconciling`, `reconciled`, and
+  `reconciliation_required`, never back to a pre-payment status.
+- A deliberate new intent closes older unbound `created` intents of the same
+  kind as `terminal`/`superseded_by_new_intent` (they cannot hold a payable
+  order) and first tries to resolve older bound ones from current authority.
+- A checkout failure returns to `created` only for a definitive MKL 4xx
+  refusal, which creates nothing. A network error, 5xx, 429,
+  `checkout_already_in_progress`, or an unreadable response may have created
+  an order under the stable key, so the intent stays `checkout_pending` and
+  only that key is retried.
+- Unbound intents whose offer disappeared (`offer_unavailable`), stopped
+  matching the locked contract (`offer_contract_mismatch`), or drifted
+  (`offer_changed`) become `terminal`. A transient discovery failure changes
+  nothing.
+- Terminal rows keep `terminal_reason`, `last_error_code`, `order_status`,
+  and their bindings. Nothing is deleted.
 
 ## OIDC commerce ceremony and checkout
 
@@ -82,11 +134,39 @@ requires the local session, and invokes the same recovery used by
 `GET /api/commerce/intents/:id`. The return URL/cookie are recovery hints,
 never payment proof. Lost returns remain recoverable from the durable intent.
 
-Pending orders grant nothing. `expired`, `cancelled`, and `failed` become
-terminal. Paid access becomes `paid_awaiting_authority`; a fresh OIDC ceremony
-must make B3 observe the exact plan before reconciliation. B3 then issues B4's
-included-period grant idempotently. Browser navigation never writes a tier or
-grant.
+Order statuses are handled by what they prove:
+
+| MKL order status | Meaning | Local handling |
+| --- | --- | --- |
+| `pending_payment` | unpaid | `pending_payment`; contradiction if local state is already post-payment |
+| `expired`, `cancelled`, `failed` | unpaid, final | `terminal`; contradiction if local state is already post-payment |
+| `paid`, `chargeback_pending`, `charged_back` | post-payment | read `/app/v1/purchases` and reconcile |
+| anything else | unknown | no state or wallet change; evidence recorded; outcome `retry` |
+
+A contradiction (for example an order reported pending after payment was
+verified) never moves the intent backwards. Access goes to
+`reconciliation_required`, and a top-up lot is fenced.
+
+Paid access is decided from B3 authority observed **strictly after** the
+order's `paid_at`: fresh, for the same identity link, and not invalidated
+except by MKL's revoked/suspended lifecycle.
+
+- The exact plan is active → `reconciled`.
+- Another plan is active → `terminal`/`access_superseded`.
+- Nothing is active → `terminal`/`access_not_active_after_payment`.
+- The order is charged back → `terminal`/`order_charged_back`.
+
+Without such an observation the intent waits in `paid_awaiting_authority`.
+Any fresh B3 refresh can decide it: a purchase ceremony, or an ordinary MKL
+sign-in followed by a new purchase attempt. An old paid access intent therefore
+cannot block a later purchase forever. B3 still issues B4's included-period
+grant idempotently. Browser navigation never writes a tier or grant.
+
+Transport failures are not authority. A network error, any non-2xx response
+(including 401, 403, 429, and 5xx), or a body that is not JSON changes neither
+lifecycle nor wallet. Recovery records `last_error_code` and returns outcome
+`retry`. Only successfully received MKL data that is contradictory, explicitly
+incomplete, or in conflict with persisted authority fences a lot.
 
 For a paid consumable, TulisAI cross-checks order ID/number/status/paid time and
 gross against the frozen purchase; client/app/catalog; holder; offer; exact
@@ -109,6 +189,28 @@ are released. A later complete consistent envelope may restore a non-corrected
 lot to frozen state; fresh paid B3 authority remains required before B4
 activates it. A verified correction remains terminal.
 
+## Local commerce gate
+
+`TULISAI_COMMERCE_CHECKOUT_ENABLED` is TulisAI's own switch for **new**
+purchases. It is open only when exactly `"true"`. `wrangler.jsonc` sets
+`"false"`, and an unset value is also closed. It is independent of MKL's
+per-client `app_commerce_enabled` and global checkout flags.
+
+When closed:
+
+- `POST /api/commerce/intents` refuses new intents with
+  `COMMERCE_CHECKOUT_CLOSED`; an exact idempotent replay still returns the
+  existing intent.
+- `POST /api/auth/mkl/commerce/start` and the callback refuse unbound intents,
+  so no MKL checkout is called.
+- Recovery, access reconciliation, top-up fulfillment of already-bound orders,
+  refund/reversal application, and the B3 projection keep working.
+
+Production commissioning order: deploy with the gate closed; commission MKL
+credentials, offers, and B3 entitlements; verify recovery and entitlements; then
+open checkout by setting the var to `"true"` in a separate, owner-approved
+release. Closing it again never strands paid buyers.
+
 ## Server contract
 
 - `POST /api/commerce/intents` — authenticated same-origin creation with
@@ -119,6 +221,11 @@ activates it. A verified correction remains terminal.
   `{purchaseId, returnTo?}`.
 - `GET /api/commerce/mkl/return` — cookie-bound recovery signal.
 
+Recovery outcomes are `authorization_required`, `pending`, `terminal`,
+`reconciled`, `reconciliation_required`, and `retry`. `retry` means MKL could
+not be read, or returned a status this release does not support; nothing
+changed.
+
 B6 may build truthful UI over these states. It must not introduce browser-side
 price authority or treat navigation as settlement.
 
@@ -128,6 +235,13 @@ The B5 suite covers exact offers, identity/provenance, stable intent/order
 replay, eligibility, terminal replacement, browser-return non-authority, paid
 access reconciliation, exact expiry retention, concurrent recovery, correction
 replay/order/conflict, no-debt/hold release, and incomplete-authority fencing.
+Hardening regressions cover final-state non-regression; access intents leaving
+the blocking set after expiry, supersession, or chargeback; same-instant
+observations; `chargeback_pending`; unsupported and contradictory order
+statuses; every transport failure class on orders and purchases (no lot or
+hold change, exactly-once fulfillment afterwards); stale unbound intents;
+repricing; ambiguous versus definitive checkout failures; offer filtering; and
+the local gate.
 B2/B3/B4 regression suites remain in the full run.
 
 Passing fixtures means **SOURCE COMPLETE only**. It does not mean the MKL

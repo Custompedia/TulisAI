@@ -39,8 +39,22 @@ export type CommerceConfig = {
   issuer: string; clientId: string; secret: string; appKey: string; catalogItemId: string; returnUri: string;
 };
 
+/**
+ * `transport` marks a failure to obtain MKL authority at all: network failure,
+ * any non-2xx response, or an unparseable body. It is never evidence about a
+ * purchase, so callers must not change commercial or wallet state because of it.
+ */
 export class CommerceError extends Error {
-  constructor(public code: string, message: string, public status = 409) { super(message); this.name = "CommerceError"; }
+  constructor(public code: string, message: string, public status = 409, public transport = false) { super(message); this.name = "CommerceError"; }
+}
+
+/** Local TulisAI gate for NEW purchases. Recovery and reconciliation ignore it. */
+export function checkoutEnabled(env: RuntimeEnv): boolean {
+  return env.TULISAI_COMMERCE_CHECKOUT_ENABLED?.trim() === "true";
+}
+
+export function assertCheckoutOpen(env: RuntimeEnv): void {
+  if (!checkoutEnabled(env)) throw new CommerceError("COMMERCE_CHECKOUT_CLOSED", "New TulisAI purchases are not open.", 409);
 }
 
 const record = (value: unknown, code = "MKL_RESPONSE_INVALID"): Record<string, unknown> => {
@@ -144,20 +158,33 @@ function headers(config: CommerceConfig, extra?: HeadersInit): Headers {
 async function requestJson(config: CommerceConfig, path: string, init: RequestInit, fetcher: typeof fetch): Promise<unknown> {
   let response: Response;
   try { response = await fetcher(new URL(path, `${config.issuer}/`), { ...init, redirect: "error", headers: headers(config, init.headers) }); }
-  catch { throw new CommerceError("MKL_UNAVAILABLE", "MKL commerce is temporarily unavailable.", 503); }
-  let body: unknown = null;
-  try { body = await response.json(); } catch { /* normalized below */ }
+  catch { throw new CommerceError("MKL_UNAVAILABLE", "MKL commerce is temporarily unavailable.", 503, true); }
+  let body: unknown = null; let parsed = true;
+  try { body = await response.json(); } catch { parsed = false; }
   if (!response.ok) {
     const error = body && typeof body === "object" && typeof (body as Record<string, unknown>).error === "string" ? String((body as Record<string, unknown>).error) : "mkl_request_rejected";
-    throw new CommerceError(`MKL_${error.toUpperCase()}`, "MKL rejected the commerce request.", response.status);
+    throw new CommerceError(`MKL_${error.toUpperCase().replace(/[^A-Z0-9_]/g, "_").slice(0, 80)}`, "MKL rejected the commerce request.", response.status, true);
   }
+  // A 2xx without a JSON body (proxy or edge error page) carries no MKL facts.
+  if (!parsed) throw new CommerceError("MKL_RESPONSE_UNPARSEABLE", "MKL returned an unreadable response.", 502, true);
   return body;
+}
+
+/**
+ * Only offers carrying the requested TulisAI plan code and version are
+ * TulisAI's to validate. Unrelated, other-version, or unplanned catalog entries
+ * are ignored; a matching offer that breaks the locked contract still fails.
+ */
+function isRequestedProductOffer(value: unknown, planCode: string, planVersion: string): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const offer = value as Record<string, unknown>;
+  return offer.plan_code === planCode && offer.plan_version === planVersion;
 }
 
 export async function discoverOffer(config: CommerceConfig, planCode: string, planVersion: string, fetcher: typeof fetch = fetch): Promise<MklOffer> {
   const product = productContract(planCode, planVersion); const body = record(await requestJson(config, "/app/v1/offers", { method: "GET" }, fetcher));
   if (!Array.isArray(body.offers)) throw new CommerceError("MKL_RESPONSE_INVALID", "MKL returned an invalid offers response.", 502);
-  const candidates = body.offers.map((offer) => normalizeOffer(offer, config)).filter((offer) => offer.planCode === product.planCode && offer.planVersion === product.planVersion);
+  const candidates = body.offers.filter((offer) => isRequestedProductOffer(offer, product.planCode, product.planVersion)).map((offer) => normalizeOffer(offer, config));
   if (candidates.length === 0) throw new CommerceError("OFFER_NOT_AVAILABLE", "The requested MKL offer is not available.", 404);
   if (candidates.length !== 1) throw new CommerceError("OFFER_AMBIGUOUS", "MKL returned duplicate offers for one TulisAI product.", 409);
   return candidates[0]!;

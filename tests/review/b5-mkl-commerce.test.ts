@@ -7,7 +7,9 @@ import { applyMigrations, migrationFiles } from "../helpers/migrations";
 const state = vi.hoisted(() => ({ env: {} as Record<string, unknown> }));
 vi.mock("@/server/runtime", () => ({ runtime: () => state.env, ConfigurationError: class extends Error {} }));
 
-import { B5_PLAN_VERSION, CommerceError, commerceConfig, discoverOffer, readPurchase } from "@/server/commerce/mkl-client";
+import { B5_PLAN_VERSION, CommerceError, assertCheckoutOpen, commerceConfig, discoverOffer, readPurchase } from "@/server/commerce/mkl-client";
+import { refreshMklAuthority } from "@/server/entitlements/authority";
+import { getMklLinkByUserId } from "@/server/identity/links";
 import { assertPurchaseAuthorizationStart, authorizePurchaseIntent, createPurchaseIntent, getPurchaseIntent, recoverPurchaseIntent } from "@/server/commerce/intents";
 import { reserveCharacters, walletSummary } from "@/server/usage/wallet";
 import { createAuthorizationState, consumeAuthorizationState } from "@/server/auth/mkl-state";
@@ -54,7 +56,7 @@ const authority = (candidates: unknown[], revision = 2) => ({ active: candidates
   holder: { subject: identity.subject, organization_id: identity.organizationId }, access_entitlements_complete: true,
   access_entitlements_revision: revision, cancellation_semantics: "no_separate_cancellation_state", access_entitlements: candidates });
 
-const order = (status = "pending_payment") => ({ id: "order-1", order_number: "MKL-1", status, gross_idr: 99_000, paid_at: status === "paid" || status === "charged_back" ? iso(NOW) : null });
+const order = (status = "pending_payment") => ({ id: "order-1", order_number: "MKL-1", status, gross_idr: 99_000, paid_at: ["paid", "chargeback_pending", "charged_back", "disputed_review"].includes(status) ? iso(NOW) : null });
 const purchase = (overrides: Record<string, unknown> = {}) => ({ order_id: "order-1", status: "paid", paid_at: iso(NOW), plan_code: "topup_100k", plan_version: B5_PLAN_VERSION,
   commercial_kind: "consumable", price_idr_snapshot: 99_000, offer_id: "offer-topup_100k",
   application: { client_id: config.clientId, app_key: config.appKey, catalog_item_id: config.catalogItemId },
@@ -62,7 +64,13 @@ const purchase = (overrides: Record<string, unknown> = {}) => ({ order_id: "orde
   consumable_expires_at: iso(Date.parse("2027-09-21T08:00:00.000Z")), consumable_validity_unit: "month", consumable_validity_count: 12,
   requires_active_access: true, purchase_revision: 1, corrections_complete: true, corrections: [], ...overrides });
 
-type Fixture = { offers: unknown[]; entitlement: unknown; order: Record<string, unknown>; purchase: Record<string, unknown>; checkoutCalls: number; checkoutBodies: unknown[] };
+const PAID_AT = iso(NOW - 1_000);
+const paidAccessOrder = (status = "paid") => ({ id: "order-1", order_number: "MKL-1", status, gross_idr: 49_000, paid_at: PAID_AT });
+const paidAccessPurchase = (overrides: Record<string, unknown> = {}) => purchase({ status: "paid", paid_at: PAID_AT, plan_code: "plus", commercial_kind: "access", offer_id: "offer-plus",
+  price_idr_snapshot: 49_000, fulfillment_id: null, fulfilled_at: null, consumable_expires_at: null, consumable_validity_unit: null, consumable_validity_count: null,
+  requires_active_access: false, purchase_revision: 0, corrections_complete: false, ...overrides });
+
+type Fixture ={ offers: unknown[]; entitlement: unknown; order: Record<string, unknown>; purchase: Record<string, unknown>; checkoutCalls: number; checkoutBodies: unknown[] };
 const fixture = (): Fixture => ({ offers: [offer("plus"), offer("pro"), offer("max"), offer("topup_15k"), offer("topup_45k"), offer("topup_100k")],
   entitlement: authority([activeCandidate()]), order: order(), purchase: purchase(), checkoutCalls: 0, checkoutBodies: [] });
 const fetcher = (f: Fixture): typeof fetch => async (input, init) => {
@@ -92,7 +100,7 @@ function seedUser(withPaidProjection = false) {
 beforeEach(() => {
   db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys=ON"); applyMigrations(db);
   state.env = { DB: d1(), BETTER_AUTH_URL: "https://tulis.test", MKL_ISSUER: config.issuer, MKL_CLIENT_ID: config.clientId,
-    MKL_APP_API_SECRET: config.secret, MKL_APP_KEY: config.appKey, MKL_CATALOG_ITEM_ID: config.catalogItemId };
+    MKL_APP_API_SECRET: config.secret, MKL_APP_KEY: config.appKey, MKL_CATALOG_ITEM_ID: config.catalogItemId, TULISAI_COMMERCE_CHECKOUT_ENABLED: "true" };
 });
 afterEach(() => db.close());
 
@@ -274,11 +282,10 @@ describe("B5 checkout, recovery and fulfillment", () => {
   });
 
   it("paid access requires a fresh B3 reconciliation and its replay issues one included grant", async () => {
-    seedUser(false); const f = fixture(); f.entitlement = authority([], 1);
+    seedUser(false); const f = fixture(); f.entitlement = { ...authority([], 1), server_time: iso(NOW - 5_000) };
     const created = await createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "plus", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "access-paid", now: NOW }, fetcher(f));
     await authorizePurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, identity, idToken: "before-payment", now: NOW }, fetcher(f));
-    f.order = { ...order("paid"), gross_idr: 49_000 }; f.purchase = purchase({ plan_code: "plus", commercial_kind: "access", offer_id: "offer-plus", price_idr_snapshot: 49_000, fulfillment_id: null, fulfilled_at: null,
-      consumable_expires_at: null, consumable_validity_unit: null, consumable_validity_count: null, requires_active_access: false, purchase_revision: 0, corrections_complete: false });
+    f.order = paidAccessOrder(); f.purchase = paidAccessPurchase();
     expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, now: NOW }, fetcher(f))).outcome).toBe("authorization_required");
     f.entitlement = authority([activeCandidate()], 2);
     expect((await authorizePurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, identity, idToken: "after-payment", now: NOW }, fetcher(f))).intent.status).toBe("reconciled");
@@ -357,5 +364,327 @@ describe("B5 ordered corrections and wallet fencing", () => {
       { correction_id: "one", revision: 2, kind: "refund", final_state: "partially_refunded", amount_idr: 10_000, cumulative_refunded_idr: 20_000, corrected_at: iso(NOW) },
     ] });
     await expect(readPurchase(commerceConfig(state.env), "order-1", async () => Response.json(cumulative))).rejects.toMatchObject({ code: "MKL_CORRECTION_SEQUENCE_INVALID" });
+  });
+});
+
+describe("B5 hardening: final states, recovery classes, gate and offers", () => {
+  const DAY = 86_400_000;
+  const calls = (f: Fixture) => { const seen: string[] = []; const base = fetcher(f);
+    return { seen, fetch: (async (input, init) => { seen.push(new URL(String(input)).pathname); return base(input, init); }) as typeof fetch }; };
+  const withResponse = (f: Fixture, path: string, reply: () => Response | Promise<Response>): typeof fetch => {
+    const base = fetcher(f); return async (input, init) => new URL(String(input)).pathname === path ? reply() : base(input, init);
+  };
+  const intentRow = (id: string) => db.prepare("SELECT status,order_status,last_error_code,terminal_reason,lot_id,purchase_revision FROM mkl_purchase_intents WHERE id=?").get(id) as Record<string, unknown>;
+  const lotRow = () => db.prepare("SELECT state,reversal_state,original_amount,reserved_amount,settled_amount,expires_at FROM character_purchased_lots").get() as Record<string, unknown>;
+
+  async function startAccess(f: Fixture, key = "access-intent", planCode = "plus") {
+    const created = await createPurchaseIntent({ ownerId: "u", kind: "access", planCode, planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: key, now: NOW }, fetcher(f));
+    await authorizePurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, identity, idToken: "before-payment", now: NOW }, fetcher(f));
+    return created.intent.purchaseId;
+  }
+  async function reconciledAccess() {
+    seedUser(false); const f = fixture(); f.entitlement = { ...authority([], 1), server_time: iso(NOW - 5_000) };
+    const id = await startAccess(f); f.order = paidAccessOrder(); f.purchase = paidAccessPurchase();
+    f.entitlement = authority([activeCandidate({ period_start: PAID_AT })], 2);
+    expect((await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "after-payment", now: NOW }, fetcher(f))).intent.status).toBe("reconciled");
+    return { f, id };
+  }
+  async function paidTopUp(key = "hardening-lot") {
+    seedUser(true); const f = fixture();
+    const created = await createPurchaseIntent({ ownerId: "u", kind: "consumable", planCode: "topup_100k", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: key, now: NOW }, fetcher(f));
+    await authorizePurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, identity, idToken: "token", now: NOW }, fetcher(f)); f.order = order("paid");
+    expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, now: NOW }, fetcher(f))).outcome).toBe("reconciled");
+    return { f, id: created.intent.purchaseId };
+  }
+
+  describe("A. final access intents never regress", () => {
+    it("repeated recovery, re-authorization and hostile MKL answers leave a reconciled access intent untouched", async () => {
+      const { f, id } = await reconciledAccess(); const before = intentRow(id);
+      for (const status of ["pending_payment", "expired", "chargeback_pending", "charged_back", "something_new"]) {
+        f.order = paidAccessOrder(status); const probe = calls(f);
+        const again = await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 10 }, probe.fetch);
+        expect(again).toMatchObject({ outcome: "reconciled", intent: { status: "reconciled" } });
+        expect(probe.seen).toEqual([]);
+      }
+      f.entitlement = authority([], 3);
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "later", now: NOW + 20 }, fetcher(f));
+      await expect(assertPurchaseAuthorizationStart("u", id, NOW + 21)).rejects.toMatchObject({ code: "PURCHASE_NOT_AUTHORIZABLE" });
+      expect(intentRow(id)).toEqual(before);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM character_grants WHERE kind='included'").get()).toEqual({ n: 1 });
+    });
+
+    it("keeps terminal intents terminal and makes no MKL call for them", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1); const id = await startAccess(f);
+      f.order = order("expired");
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 1 }, fetcher(f))).outcome).toBe("terminal");
+      f.order = paidAccessOrder(); const probe = calls(f);
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 2 }, probe.fetch)).outcome).toBe("terminal");
+      expect(probe.seen).toEqual([]); expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "expired" });
+    });
+  });
+
+  describe("B. unresolved access intents become non-blocking once authority decides", () => {
+    async function awaitingAccess(paidAt: string) {
+      seedUser(false); const f = fixture(); f.entitlement = { ...authority([], 1), server_time: iso(Date.parse(paidAt) - 5_000) };
+      const id = await startAccess(f); f.order = { ...paidAccessOrder(), paid_at: paidAt }; f.purchase = paidAccessPurchase({ paid_at: paidAt });
+      // The only projection predates payment, so recovery cannot decide yet.
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW }, fetcher(f))).outcome).toBe("authorization_required");
+      expect(intentRow(id)).toMatchObject({ status: "paid_awaiting_authority", last_error_code: "ACCESS_AUTHORITY_NOT_OBSERVED" });
+      return { f, id };
+    }
+
+    it("terminalizes an access intent whose paid period has expired, then allows a later purchase", async () => {
+      const paidAt = iso(NOW - 40 * DAY); const { f, id } = await awaitingAccess(paidAt);
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "pro", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "blocked-renewal", now: NOW }, fetcher(f)))
+        .rejects.toMatchObject({ code: "PURCHASE_ALREADY_OPEN" });
+      f.entitlement = authority([activeCandidate({ status: "expired", active: false, period_start: paidAt, period_end: iso(NOW - 10 * DAY), access_deadline: iso(NOW - 10 * DAY) })], 3);
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "after-expiry", now: NOW + 1 }, fetcher(f));
+      expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "access_not_active_after_payment", order_status: "paid" });
+      for (const at of [NOW + 2, NOW + 3]) expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: at }, fetcher(f))).outcome).toBe("terminal");
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "pro", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "renewal-after-expiry", now: NOW + 4 }, fetcher(f)))
+        .resolves.toMatchObject({ created: true });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM mkl_purchase_intents WHERE owner_id='u'").get()).toEqual({ n: 2 });
+    });
+
+    it("a new purchase resolves the old intent from fresh post-payment authority without a purchase ceremony", async () => {
+      const paidAt = iso(NOW - 40 * DAY); const { f, id } = await awaitingAccess(paidAt);
+      f.entitlement = authority([], 4);
+      await refreshMklAuthority("u", (await getMklLinkByUserId("u"))!, "ordinary-sign-in", fetcher(f));
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "plus", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "renewal-by-sign-in", now: NOW + 1 }, fetcher(f)))
+        .resolves.toMatchObject({ created: true });
+      expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "access_not_active_after_payment" });
+    });
+
+    it("records superseded authority as terminal instead of attributing another plan", async () => {
+      const { f, id } = await awaitingAccess(PAID_AT);
+      f.entitlement = authority([activeCandidate({ plan_code: "pro", period_start: PAID_AT })], 3);
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "superseded", now: NOW + 1 }, fetcher(f));
+      expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "access_superseded" });
+    });
+
+    it("moves a legacy reconciliation_required access intent out of the blocking set", async () => {
+      const paidAt = iso(NOW - 40 * DAY); const { f, id } = await awaitingAccess(paidAt);
+      db.prepare("UPDATE mkl_purchase_intents SET status='reconciliation_required' WHERE id=?").run(id);
+      f.entitlement = authority([], 5);
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "legacy", now: NOW + 1 }, fetcher(f));
+      expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "access_not_active_after_payment" });
+    });
+
+    it("terminalizes a charged-back access order", async () => {
+      const { f, id } = await awaitingAccess(PAID_AT);
+      f.order = paidAccessOrder("charged_back"); f.purchase = paidAccessPurchase({ status: "charged_back" });
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 1 }, fetcher(f))).outcome).toBe("terminal");
+      expect(intentRow(id)).toMatchObject({ terminal_reason: "order_charged_back" });
+    });
+
+    it("does not decide from a same-instant projection", async () => {
+      const { f, id } = await awaitingAccess(PAID_AT);
+      f.entitlement = { ...authority([], 3), server_time: PAID_AT };
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "same-ms", now: NOW + 1 }, fetcher(f));
+      expect(intentRow(id)).toMatchObject({ status: "paid_awaiting_authority" });
+    });
+  });
+
+  describe("C. order status handling", () => {
+    it("reconciles chargeback_pending through purchase authority, fences the lot, and never reports pending payment", async () => {
+      const { f, id } = await paidTopUp();
+      f.order = order("chargeback_pending"); f.purchase = purchase({ status: "chargeback_pending", corrections_complete: false });
+      for (const at of [NOW + 1, NOW + 2]) {
+        const recovered = await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: at }, fetcher(f));
+        expect(recovered).toMatchObject({ outcome: "reconciliation_required", intent: { status: "reconciliation_required", orderStatus: "chargeback_pending" } });
+      }
+      expect(lotRow()).toMatchObject({ state: "reconciliation_required", reversal_state: "reconciliation_required" });
+      f.order = order("charged_back"); f.purchase = purchase({ status: "charged_back", purchase_revision: 2,
+        corrections: [{ correction_id: "chargeback-1", revision: 2, kind: "reversal", final_state: "reversed", amount_idr: 99_000, cumulative_refunded_idr: 99_000, corrected_at: iso(NOW + 3) }] });
+      for (const at of [NOW + 4, NOW + 5]) expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: at }, fetcher(f))).outcome).toBe("reconciled");
+      expect(lotRow()).toMatchObject({ state: "reversed", reversal_state: "reversed", original_amount: 100_000 });
+      expect(db.prepare("SELECT COUNT(*) AS lots FROM character_purchased_lots").get()).toEqual({ lots: 1 });
+      expect(db.prepare("SELECT COUNT(*) AS n FROM character_lot_corrections").get()).toEqual({ n: 1 });
+    });
+
+    it("routes chargeback_pending on an unreconciled access order to authority, not pending payment", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = { ...authority([], 1), server_time: iso(NOW - 5_000) }; const id = await startAccess(f);
+      f.order = paidAccessOrder("chargeback_pending"); f.purchase = paidAccessPurchase({ status: "chargeback_pending" });
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW }, fetcher(f))).intent.status).toBe("paid_awaiting_authority");
+    });
+
+    it("fails closed on an unsupported order status without touching state or wallet", async () => {
+      const { f, id } = await paidTopUp(); const lot = lotRow();
+      f.order = order("disputed_review");
+      const recovered = await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 1 }, fetcher(f));
+      expect(recovered.outcome).toBe("retry");
+      expect(intentRow(id)).toMatchObject({ status: "reconciled", order_status: "disputed_review", last_error_code: "MKL_ORDER_STATUS_UNSUPPORTED" });
+      expect(lotRow()).toEqual(lot);
+    });
+
+    it("treats a pending order after verified payment as contradictory authority, never as pending", async () => {
+      const { f, id } = await paidTopUp(); f.order = order("pending_payment");
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 1 }, fetcher(f))).outcome).toBe("reconciliation_required");
+      expect(intentRow(id)).toMatchObject({ status: "reconciliation_required", last_error_code: "ORDER_STATUS_CONTRADICTS_PAYMENT" });
+      expect(lotRow()).toMatchObject({ reversal_state: "reconciliation_required" });
+    });
+  });
+
+  describe("D. transport failures never change wallet authority", () => {
+    const failures: [string, () => Response | Promise<Response>][] = [
+      ["network failure", () => { throw new TypeError("fetch failed"); }],
+      ["500", () => Response.json({ error: "internal_error" }, { status: 500 })],
+      ["503 without JSON", () => new Response("<html>bad gateway</html>", { status: 503 })],
+      ["401", () => Response.json({ error: "invalid_client_credentials" }, { status: 401 })],
+      ["403", () => Response.json({ error: "app_commerce_disabled" }, { status: 403 })],
+      ["429", () => Response.json({ error: "rate_limited" }, { status: 429 })],
+      ["2xx without JSON", () => new Response("<html>edge</html>", { status: 200 })],
+    ];
+    for (const path of ["/app/v1/orders", "/app/v1/purchases"]) {
+      it.each(failures)(`leaves a healthy lot and its holds alone on ${path} %s`, async (_label, reply) => {
+        const { f, id } = await paidTopUp();
+        db.prepare("UPDATE character_grants SET settled_amount=original_amount WHERE owner_id='u' AND kind='included'").run();
+        const held = await reserveCharacters({ ownerId: "u", idempotencyKey: "held-transport", fingerprint: "held-transport", operation: "generate", sourceCharacters: 1000, now: NOW + 10 });
+        const lot = lotRow(); const intent = intentRow(id);
+        const recovered = await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 11 }, withResponse(f, path, reply));
+        expect(recovered.outcome).toBe("retry");
+        expect(lotRow()).toEqual(lot);
+        expect(db.prepare("SELECT state FROM character_reservations WHERE id=?").get(held.reservation.id)).toEqual({ state: "reserved" });
+        expect({ ...intentRow(id), last_error_code: null }).toEqual({ ...intent, last_error_code: null });
+        expect(String(intentRow(id).last_error_code)).toMatch(/^MKL_/);
+        // Authority returns: still exactly one lot and nothing reversed.
+        expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 12 }, fetcher(f))).outcome).toBe("reconciled");
+        expect(db.prepare("SELECT COUNT(*) AS n,SUM(original_amount) AS amount FROM character_purchased_lots").get()).toEqual({ n: 1, amount: 100_000 });
+        expect(db.prepare("SELECT COUNT(*) AS n FROM character_lot_corrections").get()).toEqual({ n: 0 });
+      });
+    }
+
+    it("a transient failure before first fulfillment grants nothing and later fulfills exactly once", async () => {
+      seedUser(true); const f = fixture();
+      const created = await createPurchaseIntent({ ownerId: "u", kind: "consumable", planCode: "topup_15k", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "first-fulfil", now: NOW }, fetcher(f));
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, identity, idToken: "token", now: NOW }, fetcher(f));
+      f.order = { ...order("paid"), gross_idr: 19_000 }; f.purchase = purchase({ plan_code: "topup_15k", offer_id: "offer-topup_15k", price_idr_snapshot: 19_000 });
+      const flaky = withResponse(f, "/app/v1/purchases", () => Response.json({ error: "internal_error" }, { status: 502 }));
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, now: NOW + 1 }, flaky)).outcome).toBe("retry");
+      expect(intentRow(created.intent.purchaseId)).toMatchObject({ status: "pending_payment", lot_id: null });
+      for (const at of [NOW + 2, NOW + 3]) await recoverPurchaseIntent({ ownerId: "u", purchaseId: created.intent.purchaseId, now: at }, fetcher(f));
+      expect(db.prepare("SELECT COUNT(*) AS n,SUM(original_amount) AS amount FROM character_purchased_lots").get()).toEqual({ n: 1, amount: 15_000 });
+    });
+
+    it("still fences on received contradictory authority", async () => {
+      const { f, id } = await paidTopUp(); f.purchase = purchase({ holder: { subject: "someone-else", organization_id: identity.organizationId } });
+      await expect(recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 1 }, fetcher(f))).rejects.toMatchObject({ code: "PURCHASE_PROVENANCE_MISMATCH" });
+      expect(lotRow()).toMatchObject({ reversal_state: "reconciliation_required" });
+    });
+  });
+
+  describe("G. stale unbound intents and checkout ambiguity", () => {
+    async function createdAccess(f: Fixture, key = "unbound-access", planCode = "plus") {
+      return (await createPurchaseIntent({ ownerId: "u", kind: "access", planCode, planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: key, now: NOW }, fetcher(f))).intent.purchaseId;
+    }
+
+    it("closes an intent whose offer disappeared and allows a new valid purchase", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1); const id = await createdAccess(f);
+      f.offers = f.offers.filter((o) => (o as { plan_code: string }).plan_code !== "plus");
+      await expect(authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "t", now: NOW }, fetcher(f))).rejects.toMatchObject({ code: "OFFER_NOT_AVAILABLE" });
+      expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "offer_unavailable" });
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "pro", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "after-removal", now: NOW }, fetcher(f)))
+        .resolves.toMatchObject({ created: true });
+      expect(f.checkoutCalls).toBe(0);
+    });
+
+    it("closes an intent whose locked offer was repriced, and refuses new intents for the repriced offer", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1); const id = await createdAccess(f);
+      f.offers = f.offers.map((o) => (o as { plan_code: string }).plan_code === "plus" ? offer("plus", { price_idr: 59_000 }) : o);
+      await expect(authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "t", now: NOW }, fetcher(f))).rejects.toMatchObject({ code: "OFFER_CONTRACT_MISMATCH" });
+      expect(intentRow(id)).toMatchObject({ status: "terminal", terminal_reason: "offer_contract_mismatch" });
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "plus", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "repriced-plus", now: NOW }, fetcher(f)))
+        .rejects.toMatchObject({ code: "OFFER_CONTRACT_MISMATCH" });
+      expect(f.checkoutCalls).toBe(0);
+    });
+
+    it("keeps an unbound intent open when offer discovery merely fails transiently", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1); const id = await createdAccess(f);
+      await expect(authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "t", now: NOW },
+        withResponse(f, "/app/v1/offers", () => Response.json({ error: "internal_error" }, { status: 500 })))).rejects.toMatchObject({ transport: true });
+      expect(intentRow(id)).toMatchObject({ status: "created" });
+    });
+
+    it("a deliberate new intent supersedes an unbound created intent without deleting it", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1); const first = await createdAccess(f, "first-unbound");
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "pro", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "second-choice", now: NOW + 1 }, fetcher(f)))
+        .resolves.toMatchObject({ created: true });
+      expect(intentRow(first)).toMatchObject({ status: "terminal", terminal_reason: "superseded_by_new_intent" });
+    });
+
+    it("an ambiguous checkout failure keeps the stable key pending; a definitive refusal returns to created", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1); const id = await createdAccess(f);
+      await expect(authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "t", now: NOW },
+        withResponse(f, "/app/v1/checkout", () => Response.json({ error: "internal_error" }, { status: 502 })))).rejects.toMatchObject({ transport: true });
+      expect(intentRow(id)).toMatchObject({ status: "checkout_pending" });
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "pro", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "while-ambiguous", now: NOW }, fetcher(f)))
+        .rejects.toMatchObject({ code: "PURCHASE_ALREADY_OPEN" });
+      await authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "t2", now: NOW + 1 }, fetcher(f));
+      expect(intentRow(id)).toMatchObject({ status: "pending_payment" });
+      expect(f.checkoutBodies).toHaveLength(1);
+
+      db.prepare("DELETE FROM mkl_purchase_intents").run(); const second = await createdAccess(f, "definitive-refusal");
+      await expect(authorizePurchaseIntent({ ownerId: "u", purchaseId: second, identity, idToken: "t3", now: NOW + 2 },
+        withResponse(f, "/app/v1/checkout", () => Response.json({ error: "buyer_email_mismatch" }, { status: 400 })))).rejects.toMatchObject({ code: "MKL_BUYER_EMAIL_MISMATCH" });
+      expect(intentRow(second)).toMatchObject({ status: "created", last_error_code: "MKL_BUYER_EMAIL_MISMATCH" });
+    });
+  });
+
+  describe("offer discovery", () => {
+    it("ignores unrelated, unplanned, other-version and malformed catalog entries", async () => {
+      const f = fixture();
+      f.offers.push({ offer_id: "legacy", name: "Legacy", type: "one_time", price_idr: 10_000, catalog_item_id: config.catalogItemId, catalog_title: "TulisAI", plan_code: null, plan_version: null, term_unit: null, term_count: null });
+      f.offers.push(offer("team", { price_idr: 1 }), offer("plus", { plan_version: "pricing-v2", price_idr: 59_000 }), "garbage", null);
+      f.offers.push({ offer_id: "mr", plan_code: "starter", plan_version: "pricing-v3", price_idr: 19_000 });
+      for (const code of ["plus", "topup_15k"]) await expect(discoverOffer(commerceConfig(state.env), code, B5_PLAN_VERSION, fetcher(f))).resolves.toMatchObject({ planCode: code });
+    });
+
+    it("still fails closed when the TulisAI offer itself breaks the locked contract", async () => {
+      const f = fixture(); f.offers = [offer("topup_45k", { price_idr: 45_000 })];
+      await expect(discoverOffer(commerceConfig(state.env), "topup_45k", B5_PLAN_VERSION, fetcher(f))).rejects.toMatchObject({ code: "OFFER_CONTRACT_MISMATCH" });
+      f.offers = [offer("plus", { consumable_validity_unit: undefined })];
+      await expect(discoverOffer(commerceConfig(state.env), "plus", B5_PLAN_VERSION, fetcher(f))).rejects.toMatchObject({ code: "MKL_RESPONSE_INVALID" });
+    });
+  });
+
+  describe("local commerce gate", () => {
+    it("is closed unless explicitly true", () => {
+      for (const value of [undefined, "", "false", "TRUE", "1", "yes"]) {
+        state.env.TULISAI_COMMERCE_CHECKOUT_ENABLED = value;
+        expect(() => assertCheckoutOpen(state.env)).toThrowError(CommerceError);
+      }
+    });
+
+    it("blocks new intents and new checkout only", async () => {
+      seedUser(false); const f = fixture(); f.entitlement = authority([], 1);
+      const id = (await createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "plus", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "made-while-open", now: NOW }, fetcher(f))).intent.purchaseId;
+      state.env.TULISAI_COMMERCE_CHECKOUT_ENABLED = "false";
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "pro", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "made-while-closed", now: NOW }, fetcher(f)))
+        .rejects.toMatchObject({ code: "COMMERCE_CHECKOUT_CLOSED" });
+      await expect(createPurchaseIntent({ ownerId: "u", kind: "access", planCode: "plus", planVersion: B5_PLAN_VERSION, buyerPhone: "0800", clientRequestKey: "made-while-open", now: NOW }, fetcher(f)))
+        .resolves.toMatchObject({ created: false });
+      await expect(assertPurchaseAuthorizationStart("u", id, NOW)).rejects.toMatchObject({ code: "COMMERCE_CHECKOUT_CLOSED" });
+      await expect(authorizePurchaseIntent({ ownerId: "u", purchaseId: id, identity, idToken: "t", now: NOW }, fetcher(f))).rejects.toMatchObject({ code: "COMMERCE_CHECKOUT_CLOSED" });
+      expect(f.checkoutCalls).toBe(0); expect(intentRow(id)).toMatchObject({ status: "created" });
+    });
+
+    it("keeps recovery, access reconciliation and correction application live while closed", async () => {
+      const { f, id } = await paidTopUp("gate-lot");
+      state.env.TULISAI_COMMERCE_CHECKOUT_ENABLED = "false";
+      const projectionBefore = db.prepare("SELECT * FROM mkl_entitlement_projection").get();
+      f.purchase = purchase({ purchase_revision: 2, corrections: [{ correction_id: "closed-refund", revision: 2, kind: "refund", final_state: "partially_refunded", amount_idr: 10_000, cumulative_refunded_idr: 10_000, corrected_at: iso(NOW + 1) }] });
+      expect((await recoverPurchaseIntent({ ownerId: "u", purchaseId: id, now: NOW + 2 }, fetcher(f))).outcome).toBe("reconciled");
+      expect(lotRow()).toMatchObject({ state: "reversed", reversal_state: "partially_refunded" });
+      expect(db.prepare("SELECT * FROM mkl_entitlement_projection").get()).toEqual(projectionBefore);
+
+      db.close(); db = new DatabaseSync(":memory:"); db.exec("PRAGMA foreign_keys=ON"); applyMigrations(db);
+      state.env.TULISAI_COMMERCE_CHECKOUT_ENABLED = "true";
+      seedUser(false); const g = fixture(); g.entitlement = { ...authority([], 1), server_time: iso(NOW - 5_000) }; const access = await startAccess(g, "gate-access");
+      state.env.TULISAI_COMMERCE_CHECKOUT_ENABLED = "false";
+      g.order = paidAccessOrder(); g.purchase = paidAccessPurchase(); g.entitlement = authority([activeCandidate({ period_start: PAID_AT })], 2);
+      await expect(assertPurchaseAuthorizationStart("u", access, NOW)).resolves.toMatchObject({ id: access });
+      expect((await authorizePurchaseIntent({ ownerId: "u", purchaseId: access, identity, idToken: "closed-reconcile", now: NOW }, fetcher(g))).intent.status).toBe("reconciled");
+      expect(g.checkoutCalls).toBe(1);
+    });
   });
 });
