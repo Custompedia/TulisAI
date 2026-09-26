@@ -3,6 +3,9 @@ import { apiError } from "@/lib/contracts";
 import { ConfigurationError } from "./runtime";
 import { APIError } from "better-auth/api";
 import { ForbiddenError, UnauthorizedError } from "./auth/auth";
+import { CommerceError } from "./commerce/mkl-client";
+import { AuthorityError } from "./entitlements/authority";
+import { WalletError } from "./usage/wallet";
 
 export async function readJson<T>(request: Request, schema: ZodType<T>): Promise<T> {
   const length = Number(request.headers.get("content-length") ?? "0");
@@ -41,6 +44,9 @@ export class RequestError extends Error { constructor(public code: string, messa
 export function handleRouteError(error: unknown): Response {
   if (error instanceof ZodError) return apiError("INVALID_REQUEST", "Request data is invalid.", 400, error.flatten());
   if (error instanceof RequestError) return apiError(error.code, error.message, error.status, error.details);
+  if (error instanceof CommerceError) return apiError(error.code, error.message, error.status);
+  if (error instanceof AuthorityError) return apiError(error.code, error.message, error.status);
+  if (error instanceof WalletError) return apiError(error.code, error.message, error.status);
   if (error instanceof UnauthorizedError) return apiError("UNAUTHENTICATED", error.message, 401);
   if (error instanceof ForbiddenError) return apiError(error.code, error.message, 403);
   if (error instanceof APIError) { const body = error.body as { code?: string; message?: string } | undefined; return apiError(body?.code ?? "AUTH_ERROR", body?.message ?? error.message, error.statusCode); }

@@ -8,12 +8,22 @@ Tanggal: 12 September 2026. Pelaksana awal Luna/Terra; Astra melakukan review, p
 
 B3 telah merged pada `59edeb36d5a1703dc9019d6932f964b537c300c6`.
 B4 wallet karakter diimplementasikan hanya di source lokal; hasil gate terbaru
-dan desain detail ada di `docs/b4-character-wallet.md`. Migrasi production
-belum diterapkan, TulisAI belum di-commission di MKL, dan integrasi fulfillment
-lot nyata tetap menunggu B5. Tabel wallet B4 adalah authority komersial;
+dan desain detail ada di `docs/b4-character-wallet.md`. Pada snapshot addendum
+B4 ini, migrasi production belum diterapkan, TulisAI belum di-commission di
+MKL, dan integrasi fulfillment lot nyata masih menunggu B5. Tabel wallet B4 adalah authority komersial;
 `usage_ledger` dan `period_key` hanya telemetry/analytics serta pengaman request.
 Follow-up integrasi terautentikasi B3 juga masih pending. Status historis dan
 angka tes di bawah dipertahankan sebagai bukti baseline, bukan hasil gate B4.
+
+### Addendum B5 — 21 September 2026
+
+B5 diimplementasikan pada branch source `codex/b5-mkl-commerce` dengan migrasi
+lokal `0014_b5_mkl_commerce.sql`; desain dan batas bukti ada di
+`docs/b5-mkl-commerce.md`. Integrasi memakai fixture/local boundary: tidak ada
+checkout/payment Sandbox atau Production, deploy, remote D1, credential
+commissioning, atau klaim fulfillment live. Kegagalan historis CRLF Windows di
+`tests/ai/core.test.ts` direproduksi tanpa perubahan B5 pada checkout baseline
+dan tidak diubah.
 
 Implementasi core MVP tersedia di workspace lokal. Tidak ada kredensial Google OAuth/OpenRouter atau resource Cloudflare remote; tidak ada login Google nyata, panggilan model berbayar, push, deployment, maupun verifikasi browser. HTTP smoke hanya membuktikan shell SSR dan respons konfigurasi, bukan interaksi pengguna terautentikasi. Build dan tes tidak membuktikan kualitas visual di perangkat atau kualitas semantik model live.
 

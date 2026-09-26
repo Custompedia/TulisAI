@@ -5,6 +5,8 @@ import { writeAudit } from "../audit";
 import { activeBan, emailOwner, getIdentityOwner, getMklLinkByUserId, provisionMklUser, updateAuthenticatedLink } from "../identity/links";
 import { runtime } from "../runtime";
 import { refreshMklAuthority } from "../entitlements/authority";
+import { CommerceError } from "../commerce/mkl-client";
+import { assertPurchaseAuthorizationStart, authorizePurchaseIntent } from "../commerce/intents";
 import { authorizationUrl, discoverMkl, exchangeMklCode, mklConfig, MklProtocolError, safeLocalReturnTo, verifyMklIdToken, type MklConfig, type MklIdentity } from "./mkl-oidc";
 import { cookieAttributes, createAuthorizationState, createConsentState, mklCookieNames, randomToken, readCookie, sha256, consumeAuthorizationState, stateIdentifier } from "./mkl-state";
 import { clearReauth, markReauthOnSignOut, reauthRequested } from "./mkl-reauth";
@@ -13,6 +15,7 @@ import { clearReauth, markReauthOnSignOut, reauthRequested } from "./mkl-reauth"
 const AUTH_TIME_TOLERANCE_MS = 5_000;
 
 const startBody = z.object({ returnTo: z.string().max(2048).optional() }).default({});
+const commerceStartBody = z.object({ purchaseId: z.string().uuid(), returnTo: z.string().max(2048).optional() });
 const callbackQuery = z.object({ state: z.string().min(1).max(2048).optional(), code: z.string().min(1).max(4096).optional(), error: z.string().max(200).optional() });
 
 function apiError(error: unknown): never {
@@ -34,11 +37,12 @@ function headersOf(ctx: { headers?: Headers; request?: Request }): Headers { ret
 const validOpaqueCookie = (value: string | null): string | null => value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 const isAdmin = (role: unknown) => typeof role === "string" && role.split(",").some((value) => value.trim() === "admin");
 
-async function begin(rawContext: unknown, intent: "sign_in" | "link") {
-  const ctx = rawContext as Parameters<typeof getAuthoritativeSessionFromCtx>[0] & { body?: z.infer<typeof startBody> };
+async function begin(rawContext: unknown, intent: "sign_in" | "link" | "purchase") {
+  const ctx = rawContext as Parameters<typeof getAuthoritativeSessionFromCtx>[0] & { body?: z.infer<typeof commerceStartBody> };
   try {
     const config = mklConfig(runtime()); const names = mklCookieNames(config);
     let userId: string | null = null; let sessionId: string | null = null;
+    let purchaseId: string | null = null;
     if (intent === "sign_in") {
       if (await getAuthoritativeSessionFromCtx(ctx)) throw APIError.from("BAD_REQUEST", { code: "MKL_ALREADY_AUTHENTICATED", message: "Sign out before switching accounts." });
     } else {
@@ -49,14 +53,23 @@ async function begin(rawContext: unknown, intent: "sign_in" | "link") {
         await writeAudit(sessionUserId, sessionUserId, "identity.mkl.link-refused", { code: "MKL_ADMIN_LINK_FORBIDDEN", method: "explicit-link" });
         throw APIError.from("FORBIDDEN", { code: "MKL_ADMIN_LINK_FORBIDDEN", message: "Local admin accounts cannot link MKL customer identities." });
       }
-      if (await getMklLinkByUserId(sessionUserId)) {
+      if (intent === "link" && await getMklLinkByUserId(sessionUserId)) {
         await writeAudit(sessionUserId, sessionUserId, "identity.mkl.link-refused", { code: "MKL_ACCOUNT_ALREADY_LINKED", method: "explicit-link" });
         throw APIError.from("BAD_REQUEST", { code: "MKL_ACCOUNT_ALREADY_LINKED", message: "This account already has an MKL identity." });
+      }
+      if (intent === "purchase") {
+        purchaseId = ctx.body?.purchaseId ?? null;
+        if (!purchaseId) throw APIError.from("BAD_REQUEST", { code: "PURCHASE_NOT_FOUND", message: "A purchase intent is required." });
+        try { await assertPurchaseAuthorizationStart(sessionUserId, purchaseId); }
+        catch (error) {
+          if (error instanceof CommerceError) throw APIError.from(error.status === 404 ? "NOT_FOUND" : error.status === 403 ? "FORBIDDEN" : "BAD_REQUEST", { code: error.code, message: error.message });
+          throw error;
+        }
       }
     }
     const discovery = await discoverMkl(config);
     const existing = validOpaqueCookie(readCookie(headersOf(ctx), names.browser)); const browser = existing ?? randomToken();
-    const flow = await createAuthorizationState(ctx.context.internalAdapter, config, { intent, browser, userId, sessionId, returnTo: safeLocalReturnTo(ctx.body?.returnTo, "/app") });
+    const flow = await createAuthorizationState(ctx.context.internalAdapter, config, { intent, browser, userId, sessionId, purchaseId, returnTo: safeLocalReturnTo(ctx.body?.returnTo, "/app") });
     ctx.setCookie(names.browser, browser, cookieAttributes(names.secure));
     ctx.setHeader("cache-control", "no-store");
     // A link must prove fresh control of the MKL identity, and the first
@@ -78,6 +91,7 @@ export function mklIdentityPlugin() {
     endpoints: {
       mklStart: createAuthEndpoint("/mkl/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware], body: startBody }, (ctx) => begin(ctx, "sign_in")),
       mklLinkStart: createAuthEndpoint("/mkl/link/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware, sensitiveSessionMiddleware], body: startBody }, (ctx) => begin(ctx, "link")),
+      mklCommerceStart: createAuthEndpoint("/mkl/commerce/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware, sensitiveSessionMiddleware], body: commerceStartBody }, (ctx) => begin(ctx, "purchase")),
       mklCallback: createAuthEndpoint("/mkl/callback", { method: "GET", requireHeaders: true, query: callbackQuery }, async (ctx) => {
         let config: MklConfig;
         try { config = mklConfig(runtime()); } catch (error) { apiError(error); }
@@ -93,10 +107,10 @@ export function mklIdentityPlugin() {
         if (!ctx.query.code) redirectError(ctx, config!, "MKL_TOKEN_INVALID");
 
         let localSession: Awaited<ReturnType<typeof getAuthoritativeSessionFromCtx>> = null;
-        if (state.intent === "link") {
+        if (state.intent === "link" || state.intent === "purchase") {
           localSession = await getAuthoritativeSessionFromCtx(ctx);
           if (!localSession?.user || localSession.user.id !== state.userId || localSession.session.id !== state.sessionId) redirectError(ctx, config!, "UNAUTHENTICATED");
-          if (isAdmin(localSession.user.role)) { await rejectLink(localSession.user.id, "MKL_ADMIN_LINK_FORBIDDEN"); redirectError(ctx, config!, "MKL_ADMIN_LINK_FORBIDDEN"); }
+          if (isAdmin(localSession.user.role)) { if (state.intent === "link") await rejectLink(localSession.user.id, "MKL_ADMIN_LINK_FORBIDDEN"); redirectError(ctx, config!, "MKL_ADMIN_LINK_FORBIDDEN"); }
         }
 
         let identity: MklIdentity; let verifiedIdToken: string; let authTimeSupported = false;
@@ -125,6 +139,27 @@ export function mklIdentityPlugin() {
           ctx.setCookie(names.consent, receipt, cookieAttributes(names.secure));
           ctx.setHeader("cache-control", "no-store");
           throw ctx.redirect(new URL("/settings?mkl=confirm#profil", config!.appOrigin).toString());
+        }
+
+        if (state.intent === "purchase") {
+          const userId = localSession!.user.id; const link = await getMklLinkByUserId(userId);
+          if (!link || link.issuer !== identity.issuer || link.subject !== identity.subject || link.organizationId !== identity.organizationId) {
+            redirectError(ctx, config!, "PURCHASE_IDENTITY_MISMATCH");
+          }
+          await updateAuthenticatedLink(link!.id, identity);
+          try {
+            const result = await authorizePurchaseIntent({ ownerId: userId, purchaseId: state.purchaseId!, identity, idToken: verifiedIdToken! });
+            ctx.setCookie(names.browser, browser, cookieAttributes(names.secure));
+            ctx.setCookie(names.purchase, state.purchaseId!, cookieAttributes(names.secure, 7 * 24 * 60 * 60));
+            ctx.setHeader("cache-control", "no-store");
+            throw ctx.redirect(result.redirectUrl);
+          } catch (error) {
+            if (error instanceof CommerceError) redirectError(ctx, config!, error.code);
+            if (error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string") {
+              redirectError(ctx, config!, String((error as { code: string }).code));
+            }
+            throw error;
+          }
         }
 
         let owner = await getIdentityOwner(identity.issuer, identity.subject); let isNewUser = false;

@@ -103,8 +103,9 @@ revision are replay-protected. A verified reversal/refund atomically fences and
 releases every outstanding reservation that touches the lot, revokes all
 remaining unspent quantity, preserves consumed quantity without debt, and
 appends causal audit/provenance. Conflicting or out-of-order corrections fail
-closed for reconciliation. B5 still must provide the real verified fulfillment
-and correction transport.
+closed for reconciliation. B5 now supplies the source-level verified
+fulfillment/correction transport described in `docs/b5-mkl-commerce.md`; live
+commissioning remains pending.
 
 ## API shape
 
@@ -113,5 +114,6 @@ measurement version; Free original/remainder; current included period amounts;
 purchased available/reserved/frozen/expired/settled totals; mode; and total
 spendable characters. It does not expose MKL subject/customer identifiers.
 
-Real purchased-lot fulfillment integration remains **pending B5**. B4 source
-completion is not Sandbox or Production readiness.
+Real purchased-lot fulfillment is **integrated in B5 source against local
+fixtures only**. It has not been commissioned or exercised against live MKL or
+Sandbox. B4/B5 source completion is not Sandbox or Production readiness.
