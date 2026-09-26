@@ -121,6 +121,15 @@ describe("B5 offer and configuration authority", () => {
     expect(result).toMatchObject({ planCode: code, planVersion: B5_PLAN_VERSION, commercialKind: kind, priceIdr: price });
   });
 
+  it("never asks Workers for redirect: error, and never follows an MKL redirect", async () => {
+    // workerd throws on redirect "error" ("must be one of follow or manual"), so the
+    // only safe mode is "manual" with the redirect itself refused.
+    const modes: Array<RequestRedirect | undefined> = [];
+    const redirecting: typeof fetch = async (_input, init) => { modes.push(init?.redirect); return new Response(null, { status: 302, headers: { location: "https://elsewhere.test/offers" } }); };
+    await expect(discoverOffer(commerceConfig(state.env), "plus", B5_PLAN_VERSION, redirecting)).rejects.toMatchObject({ code: "MKL_UNAVAILABLE", transport: true });
+    expect(modes).toEqual(["manual"]);
+  });
+
   it("fails closed on unknown code, wrong version, duplicate semantic offers and wrong catalog binding", async () => {
     const f = fixture();
     await expect(discoverOffer(commerceConfig(state.env), "team", B5_PLAN_VERSION, fetcher(f))).rejects.toMatchObject({ code: "UNSUPPORTED_PRODUCT" });
