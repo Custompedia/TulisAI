@@ -17,6 +17,11 @@ export type MklDiscovery = {
   authorization_endpoint: string;
   token_endpoint: string;
   jwks_uri: string;
+  /**
+   * MKL advertises `auth_time` (Identity V2). When it does, a link
+   * ceremony must prove the MKL sign-in happened after it started.
+   */
+  authTimeSupported: boolean;
 };
 
 export type MklIdentity = {
@@ -26,6 +31,8 @@ export type MklIdentity = {
   email: string | null;
   emailVerified: boolean;
   name: string | null;
+  /** When the person authenticated at MKL, epoch seconds, if MKL said. */
+  authTime: number | null;
 };
 
 export class MklProtocolError extends Error {
@@ -77,14 +84,22 @@ export async function discoverMkl(config: MklConfig, fetcher: typeof fetch = fet
     authorization_endpoint: exactIssuerEndpoint(config, document.authorization_endpoint, "/sso/authorize"),
     token_endpoint: exactIssuerEndpoint(config, document.token_endpoint, "/sso/token"),
     jwks_uri: exactIssuerEndpoint(config, document.jwks_uri, "/.well-known/jwks.json"),
+    authTimeSupported: Array.isArray(document.claims_supported) && document.claims_supported.includes("auth_time"),
   };
 }
 
-export function authorizationUrl(discovery: MklDiscovery, config: MklConfig, input: { state: string; nonce: string; codeChallenge: string }): string {
+/**
+ * `prompt=login` asks MKL for a real authentication even while its session is
+ * live: sent for every link ceremony (fresh verified control of the MKL
+ * identity) and for the first sign-in after an explicit sign-out. Omitted
+ * otherwise, so an ordinary sign-in stays a silent SSO round trip.
+ */
+export function authorizationUrl(discovery: MklDiscovery, config: MklConfig, input: { state: string; nonce: string; codeChallenge: string; prompt?: "login" }): string {
   const url = new URL(discovery.authorization_endpoint);
   url.search = new URLSearchParams({
     response_type: "code", client_id: config.clientId, redirect_uri: config.redirectUri, scope: MKL_SCOPE,
     state: input.state, nonce: input.nonce, code_challenge: input.codeChallenge, code_challenge_method: "S256",
+    ...(input.prompt ? { prompt: input.prompt } : {}),
   }).toString();
   return url.toString();
 }
@@ -123,6 +138,7 @@ export async function verifyMklIdToken(token: string, discovery: MklDiscovery, c
     email: usableEmail,
     emailVerified: usableEmail !== null && payload.email_verified === true,
     name: typeof payload.name === "string" && payload.name.trim() ? payload.name.trim().slice(0, 100) : null,
+    authTime: typeof payload.auth_time === "number" && Number.isFinite(payload.auth_time) ? payload.auth_time : null,
   };
 }
 

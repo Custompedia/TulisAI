@@ -85,6 +85,7 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'MKL_TOKEN_INVALID': return t('Identitas MKL tidak dapat diverifikasi.', 'The MKL identity could not be verified.');
     case code === 'MKL_PROFILE_INCOMPLETE': return t('MKL harus menyediakan email terverifikasi untuk membuat akun baru.', 'MKL must provide a verified email to create a new account.');
     case code === 'MKL_EMAIL_CONFLICT': return t('Email ini sudah dipakai akun lokal. Masuk secara lokal lalu hubungkan MKL dari Pengaturan.', 'This email belongs to a local account. Sign in locally, then link MKL from Settings.');
+    case code === 'MKL_REAUTH_REQUIRED': return t('Masuk ulang di MKL untuk menautkan akun, lalu coba lagi.', 'Sign in to MKL again to link your account, then try again.');
     case code === 'MKL_IDENTITY_LINKED_ELSEWHERE': return t('Identitas MKL ini tidak dapat dihubungkan ke akun tersebut.', 'This MKL identity cannot be linked to that account.');
     case code === 'MKL_ACCOUNT_ALREADY_LINKED': return t('Akun lokal ini sudah terhubung ke identitas MKL.', 'This local account is already linked to an MKL identity.');
     case code === 'MKL_ADMIN_LINK_FORBIDDEN' || code === 'MKL_LINKED_ADMIN_FORBIDDEN': return t('Identitas pelanggan MKL harus terpisah dari akun admin lokal.', 'MKL customer identity must remain separate from local admin accounts.');
