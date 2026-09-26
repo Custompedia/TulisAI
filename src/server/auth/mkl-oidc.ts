@@ -73,7 +73,10 @@ function exactIssuerEndpoint(config: MklConfig, value: unknown, path: string): s
 export async function discoverMkl(config: MklConfig, fetcher: typeof fetch = fetch): Promise<MklDiscovery> {
   let response: Response;
   try {
-    response = await fetcher(new URL("/.well-known/openid-configuration", `${config.issuer}/`), { headers: { accept: "application/json" }, redirect: "error" });
+    // Cloudflare Workers throw on the "error" redirect mode and only offer "follow" or
+    // "manual". MKL answers are never followed elsewhere: "manual" returns the
+    // redirect itself, which is not `ok` and is refused below.
+    response = await fetcher(new URL("/.well-known/openid-configuration", `${config.issuer}/`), { headers: { accept: "application/json" }, redirect: "manual" });
   } catch { throw new MklProtocolError("MKL_UNAVAILABLE", "MKL is temporarily unavailable.", 503); }
   if (!response.ok) throw new MklProtocolError("MKL_UNAVAILABLE", "MKL is temporarily unavailable.", 503);
   let document: Record<string, unknown>;
@@ -108,10 +111,12 @@ export async function exchangeMklCode(discovery: MklDiscovery, config: MklConfig
   let response: Response;
   try {
     response = await fetcher(discovery.token_endpoint, {
-      method: "POST", redirect: "error", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      method: "POST", redirect: "manual", headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
       body: new URLSearchParams({ grant_type: "authorization_code", code: input.code, client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: config.redirectUri, code_verifier: input.codeVerifier }),
     });
   } catch { throw new MklProtocolError("MKL_UNAVAILABLE", "MKL is temporarily unavailable.", 503); }
+  // A redirected token request is refused, never followed (see discoverMkl).
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) throw new MklProtocolError("MKL_UNAVAILABLE", "MKL is temporarily unavailable.", 503);
   if (!response.ok) throw new MklProtocolError("MKL_TOKEN_INVALID", "MKL rejected the authorization code.");
   let body: Record<string, unknown>;
   try { body = await response.json() as Record<string, unknown>; } catch { throw new MklProtocolError("MKL_TOKEN_INVALID", "MKL returned an invalid token response."); }

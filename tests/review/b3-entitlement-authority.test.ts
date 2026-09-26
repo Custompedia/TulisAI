@@ -151,6 +151,11 @@ describe("B3 checkpoint and capability resolver", () => {
     await refreshMklAuthority("u", link, "distinct-raw-id-token", async (_input, init) => { headers = new Headers(init?.headers); return Response.json(response); });
     expect(headers.get("authorization")).toBe("Bearer distinct-app-secret"); expect(headers.get("mkl-id-token")).toBe("distinct-raw-id-token");
     await expect(refreshMklAuthority("u", link, "another-token", async () => { throw new Error("offline"); })).rejects.toMatchObject({ code: "MKL_ENTITLEMENTS_UNAVAILABLE" });
+    // Workers only accept redirect "follow" or "manual"; a redirect is refused, never followed.
+    let mode: RequestRedirect | undefined;
+    await expect(refreshMklAuthority("u", link, "another-token", async (_input, init) => { mode = init?.redirect; return new Response(null, { status: 302, headers: { location: "https://elsewhere.test/" } }); }))
+      .rejects.toMatchObject({ code: "MKL_ENTITLEMENTS_UNAVAILABLE" });
+    expect(mode).toBe("manual");
     expect((await entitlement("u")).access).toMatchObject({ commercialActive: true, plan: "plus", fresh: true });
     const persisted = JSON.stringify(db.prepare("SELECT * FROM mkl_entitlement_projection").all());
     expect(persisted).not.toContain("distinct-raw-id-token"); expect(persisted).not.toContain("distinct-app-secret");
