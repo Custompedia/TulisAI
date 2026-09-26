@@ -157,7 +157,7 @@ function headers(config: CommerceConfig, extra?: HeadersInit): Headers {
 
 async function requestJson(config: CommerceConfig, path: string, init: RequestInit, fetcher: typeof fetch): Promise<unknown> {
   let response: Response;
-  // Cloudflare Workers throw on `redirect: "error"`; they only offer "follow" or
+  // Cloudflare Workers throw on the "error" redirect mode; they only offer "follow" or
   // "manual". MKL commerce answers are never followed elsewhere, so ask for
   // "manual" and treat any redirect as MKL being unavailable.
   try { response = await fetcher(new URL(path, `${config.issuer}/`), { ...init, redirect: "manual", headers: headers(config, init.headers) }); }
