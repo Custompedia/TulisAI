@@ -221,7 +221,8 @@ export async function refreshMklAuthority(userId: string, link: ExternalIdentity
   const expected = configuredAuthorityProvenance(env, { issuer: link.issuer, subject: link.subject, organizationId: link.organizationId });
   let response: Response;
   try {
-    response = await fetcher(new URL("/app/v1/entitlements", `${link.issuer}/`), { method: "GET", redirect: "error", headers: {
+    // Workers reject redirect "error"; "manual" returns a redirect unfollowed, and it is not `ok`.
+    response = await fetcher(new URL("/app/v1/entitlements", `${link.issuer}/`), { method: "GET", redirect: "manual", headers: {
       accept: "application/json", "MKL-Client-Id": expected.clientId, Authorization: `Bearer ${secret}`, "MKL-Id-Token": idToken,
     } });
   } catch { throw new AuthorityError("MKL_ENTITLEMENTS_UNAVAILABLE", "MKL entitlement authority is temporarily unavailable.", 503); }

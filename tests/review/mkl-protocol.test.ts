@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 import { authorizationUrl, discoverMkl, exchangeMklCode, safeLocalReturnTo, verifyMklIdToken, type MklConfig } from "@/server/auth/mkl-oidc";
 import { consumeAuthorizationState, createAuthorizationState, sha256 } from "@/server/auth/mkl-state";
@@ -34,6 +36,26 @@ describe("MKL OIDC protocol", () => {
     });
     expect(token).toBe("header.payload.signature");
     expect(Object.fromEntries(form!)).toEqual({ grant_type: "authorization_code", code: "one-time", client_id: config.clientId, client_secret: config.clientSecret, redirect_uri: config.redirectUri, code_verifier: "verifier" });
+  });
+
+  it("never asks Workers for redirect: error, and never follows an MKL redirect", async () => {
+    // workerd throws on redirect "error" ("must be one of follow or manual"), which made
+    // every MKL call fail on the real runtime while Node tests passed.
+    const modes: Array<RequestRedirect | undefined> = [];
+    const redirecting: typeof fetch = async (_input, init) => { modes.push(init?.redirect); return new Response(null, { status: 302, headers: { location: "https://elsewhere.test/" } }); };
+    await expect(discoverMkl(config, redirecting)).rejects.toMatchObject({ code: "MKL_UNAVAILABLE" });
+    await expect(exchangeMklCode(discovery, config, { code: "one-time", codeVerifier: "verifier" }, redirecting)).rejects.toMatchObject({ code: "MKL_UNAVAILABLE" });
+    expect(modes).toEqual(["manual", "manual"]);
+  });
+
+  it("keeps redirect: error out of every server fetch", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => { for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) walk(path); else if (/\.tsx?$/.test(entry.name) && /redirect:\s*["']error["']/.test(readFileSync(path, "utf8"))) offenders.push(path);
+    } };
+    walk("src");
+    expect(offenders).toEqual([]);
   });
 
   it("pins RS256 and verifies issuer, exact audience, expiry, nonce, subject, signature, kid, and rotation", async () => {
