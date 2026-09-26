@@ -321,3 +321,23 @@ describe("migration authority", () => {
     } finally { existing.close(); }
   });
 });
+
+describe("B6 purchase ceremony return", () => {
+  it("returns a purchase MKL cancelled to the app with the purchase named, never to the sign-in page", async () => {
+    const flow = await begin(); rememberNonce(flow); const created = await callback(flow); const session = cookieJar(flow.cookie, created);
+    const user = db.prepare("SELECT id FROM user").get() as { id: string };
+    const link = db.prepare("SELECT id,organization_id FROM external_identity_link").get() as { id: string; organization_id: string };
+    const purchaseId = crypto.randomUUID(); const now = Date.now();
+    db.prepare(`INSERT INTO mkl_purchase_intents (id,owner_id,identity_link_id,organization_id,purchase_kind,plan_code,plan_version,offer_id,offer_contract_json,offer_contract_hash,
+      client_request_key_hash,request_fingerprint,mkl_idempotency_key,buyer_phone,return_uri,status,created_at,updated_at)
+      VALUES (?,?,?,?,'consumable','topup_15k','pricing-v1','offer-1','{}','hash','key-hash','fingerprint',?,'0812345678',?,'created',?,?)`)
+      .run(purchaseId, user.id, link.id, link.organization_id, `tulisai:${purchaseId}`, `${APP}/api/commerce/mkl/return`, now, now);
+    state.env.TULISAI_COMMERCE_CHECKOUT_ENABLED = "true";
+    const start = await post("/mkl/commerce/start", { purchaseId }, session); expect(start.status).toBe(200);
+    const url = new URL((await start.json() as { url: string }).url); const cookie = cookieJar(session, start);
+    const response = await auth().handler(new Request(`${APP}/api/auth/mkl/callback?error=access_denied&state=${encodeURIComponent(url.searchParams.get("state")!)}`, { headers: { cookie } }));
+    expect(response.status).toBe(302);
+    expect(response.headers.get("location")).toBe(`${APP}/app?purchase=${purchaseId}&purchase_error=MKL_AUTH_CANCELLED`);
+    expect(tokenCalls).toBe(1);
+  });
+});

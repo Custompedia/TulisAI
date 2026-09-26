@@ -2,10 +2,10 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpRight, Gauge, Palette, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
+import { ArrowUpRight, Gauge, Palette, Receipt, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
 import { delMany, keys } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
-import { numberFormat } from '@/lib/client/format';
+import { dateOnly, numberFormat } from '@/lib/client/format';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { AppShell, useSessionGuard, useShell, type UserSettings } from '@/components/app/AppShell';
 import { Avatar } from '@/components/ui/Avatar';
@@ -15,8 +15,9 @@ import { inputClass, Segmented } from '@/components/ui/Field';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { ProfileCard, ProfileError, ProfileSkeleton, type AccountDetails, type Notice } from '@/components/settings/ProfileCard';
 import { StylesCard } from '@/components/settings/StylesCard';
+import { PurchasesCard } from '@/components/settings/PurchasesCard';
 
-const TABS = ['profil', 'skills', 'preferensi', 'pemakaian', 'privasi'] as const;
+const TABS = ['profil', 'skills', 'preferensi', 'pemakaian', 'pembelian', 'privasi'] as const;
 type Tab = (typeof TABS)[number];
 const tabFromHash = (hash: string): Tab => { const value = hash.replace(/^#/, ''); return value === 'bahasa' ? 'preferensi' : (TABS as readonly string[]).includes(value) ? value as Tab : 'profil'; };
 
@@ -124,6 +125,7 @@ function SettingsView() {
     { id: 'skills', icon: Palette, label: 'Skills' },
     { id: 'preferensi', icon: SlidersHorizontal, label: t('Preferensi', 'Preferences') },
     { id: 'pemakaian', icon: Gauge, label: t('Pemakaian AI', 'AI usage') },
+    { id: 'pembelian', icon: Receipt, label: t('Pembelian', 'Purchases') },
     { id: 'privasi', icon: ShieldCheck, label: t('Privasi & data', 'Privacy & data') },
   ];
   const profile = account ?? { name: user.name, email: user.email, image: user.image ?? null };
@@ -188,16 +190,32 @@ function SettingsView() {
           )}
 
           {tab === 'pemakaian' && (
-            <Card title={t('Pemakaian AI', 'AI usage')} description={usage ? (usage.characterScope === 'account' ? t('Jatah sekali pakai untuk akun ini', 'A one-time allowance for this account') : `${t('Periode', 'Period')} ${usage.period} (UTC)`) : undefined}>
+            <Card title={t('Pemakaian AI', 'AI usage')} description={usage ? (usage.characterScope === 'account' ? t('Jatah sekali pakai untuk akun ini', 'A one-time allowance for this account')
+              : usage.wallet?.included ? `${t('Periode paket', 'Plan period')} ${dateOnly(usage.wallet.included.periodStart, locale)} – ${dateOnly(usage.wallet.included.periodEnd, locale)}`
+                : `${t('Periode', 'Period')} ${usage.period} (UTC)`) : undefined}>
               {usage ? (
                 <>
                   <div className="flex items-end justify-between"><p className="text-3xl font-bold text-ink-950">{numberFormat(usage.charactersUsed, locale)}<span className="text-base font-medium text-ink-400"> / {usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span></p><p className="text-sm text-ink-500">{usage.unlimited ? t('Tanpa batas', 'Unlimited') : `${numberFormat(usage.charactersRemaining, locale)} ${t('karakter tersisa', 'characters remaining')}`}</p></div>
                   {!usage.unlimited && <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper-deep"><div className={`h-full rounded-full ${usedPercent >= 90 ? 'bg-amber-500' : 'bg-brand-600'}`} style={{ width: `${usedPercent}%` }} /></div>}
+                  {usage.wallet?.mode === 'paid' && !usage.unlimited && (
+                    <dl className="mt-4 grid gap-2 rounded-xl border border-line bg-paper/50 p-4 text-[13px] sm:grid-cols-2">
+                      <div><dt className="text-ink-500">{t('Kuota paket tersisa', 'Plan allowance left')}</dt><dd className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.wallet.included?.remaining ?? 0, locale)}{usage.wallet.included && <span className="font-normal text-ink-500"> / {numberFormat(usage.wallet.included.original, locale)}</span>}</dd></div>
+                      <div><dt className="text-ink-500">{t('Karakter tambahan tersedia', 'Top-up characters available')}</dt><dd className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.wallet.purchased.available, locale)}</dd></div>
+                      {usage.wallet.purchased.frozen > 0 && <p className="text-ink-500 sm:col-span-2">{t(`${numberFormat(usage.wallet.purchased.frozen, locale)} karakter tambahan sedang dibekukan dan aktif lagi saat paketmu aktif.`, `${numberFormat(usage.wallet.purchased.frozen, locale)} top-up characters are frozen and become usable again while your plan is active.`)}</p>}
+                    </dl>
+                  )}
+                  {usage.wallet?.mode === 'free' && usage.wallet.purchased.frozen > 0 && <p className="mt-3 text-[13px] text-ink-500">{t(`${numberFormat(usage.wallet.purchased.frozen, locale)} karakter tambahan dibekukan sampai kamu berlangganan lagi.`, `${numberFormat(usage.wallet.purchased.frozen, locale)} top-up characters are frozen until you subscribe again.`)}</p>}
                   <p className="mt-3 text-[13px] text-ink-500">{t('Yang dihitung hanya teks sumber yang berhasil diproses. Perbaikan otomatis, percobaan gagal, mengetik, riwayat, dan perbandingan tidak dihitung.', 'Only source text that was processed successfully is counted. Automatic repairs, failed attempts, typing, history, and comparisons are never counted.')}</p>
                 </>
               ) : (
                 <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-ink-500">{t('Data pemakaian belum tersedia.', 'Usage data is unavailable.')}</p><Button size="sm" icon={RotateCw} onClick={() => void refresh()}>{t('Muat ulang', 'Reload')}</Button></div>
               )}
+            </Card>
+          )}
+
+          {tab === 'pembelian' && (
+            <Card title={t('Pembelian', 'Purchases')} description={t('Paket dan tambahan karakter yang dibayar lewat MKL. Statusnya selalu dibaca dari MKL.', 'Plans and character top-ups paid through MKL. Their status is always read from MKL.')}>
+              <PurchasesCard notify={setNotice} />
             </Card>
           )}
 

@@ -25,6 +25,27 @@ commissioning, atau klaim fulfillment live. Kegagalan historis CRLF Windows di
 `tests/ai/core.test.ts` direproduksi tanpa perubahan B5 pada checkout baseline
 dan tidak diubah.
 
+### Addendum B6 — 26 September 2026
+
+B6 diimplementasikan pada branch `feat/b6-commercial-frontend` di atas B5; desain
+dan batas bukti ada di `docs/b6-commercial-frontend.md`. Gate lokal pada branch
+itu:
+- typecheck, lint, build vinext, dan `wrangler deploy --dry-run` lulus;
+- 752/753 tes lulus, dengan satu-satunya kegagalan adalah CRLF Windows yang sama di `tests/ai/core.test.ts`.
+
+QA visual dijalankan di `vinext dev` lokal (localhost), memakai D1 lokal, akun uji lokal, dan stand-in lokal yang hanya melayani `GET /app/v1/offers`. Yang diperiksa:
+- **Status per produk:** belum tertaut (semua "Tautkan akun MKL"), tertaut tanpa paket (paket bisa dipilih, top-up butuh paket aktif), dan MKL tak terjangkau.
+- **Checkout:** langkah checkout dan error yang jelas saat MKL tidak menjawab discovery.
+- **Pengaturan › Pembelian:** tampil dengan aksi "Lanjutkan di MKL".
+- **Notifikasi kembali:** `purchase_error` tampil, dan link rekayasa `purchase_status=reconciled` tetap dibaca ulang dari server sehingga tidak tampil sebagai lunas.
+- **Layar 390px:** tanpa overflow horizontal.
+
+QA itu menemukan bahwa Cloudflare Workers menolak mode redirect `"error"`. Setiap panggilan MKL gagal di runtime nyata walaupun tes Node lulus:
+- commerce diperbaiki di B5 (`8eac49c`);
+- OIDC dan entitlement B3 diperbaiki di PR #7 ke `main`.
+
+Tidak ada checkout MKL nyata, pembayaran, deploy, remote D1, atau commissioning.
+
 Implementasi core MVP tersedia di workspace lokal. Tidak ada kredensial Google OAuth/OpenRouter atau resource Cloudflare remote; tidak ada login Google nyata, panggilan model berbayar, push, deployment, maupun verifikasi browser. HTTP smoke hanya membuktikan shell SSR dan respons konfigurasi, bukan interaksi pengguna terautentikasi. Build dan tes tidak membuktikan kualitas visual di perangkat atau kualitas semantik model live.
 
 ## Gate lokal

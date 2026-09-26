@@ -142,6 +142,11 @@ function isFreshActive(row: Projection | null, now = Date.now()): row is Project
     ["plus", "pro", "max"].includes(row.plan_code ?? "") && row.fresh_until > now && row.access_deadline && Date.parse(row.access_deadline) > now);
 }
 
+/** The same paid-access test the purchase gate applies, for surfaces that only describe it. */
+export async function hasFreshPaidAccess(ownerId: string, now = Date.now()): Promise<boolean> {
+  return isFreshActive(await projection(ownerId), now);
+}
+
 /**
  * What B3 authority says about a paid access order. Only a fresh projection
  * observed by MKL at or after the order's payment instant can decide; anything
