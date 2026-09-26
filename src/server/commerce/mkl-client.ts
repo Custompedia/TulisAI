@@ -157,8 +157,14 @@ function headers(config: CommerceConfig, extra?: HeadersInit): Headers {
 
 async function requestJson(config: CommerceConfig, path: string, init: RequestInit, fetcher: typeof fetch): Promise<unknown> {
   let response: Response;
-  try { response = await fetcher(new URL(path, `${config.issuer}/`), { ...init, redirect: "error", headers: headers(config, init.headers) }); }
+  // Cloudflare Workers throw on the "error" redirect mode; they only offer "follow" or
+  // "manual". MKL commerce answers are never followed elsewhere, so ask for
+  // "manual" and treat any redirect as MKL being unavailable.
+  try { response = await fetcher(new URL(path, `${config.issuer}/`), { ...init, redirect: "manual", headers: headers(config, init.headers) }); }
   catch { throw new CommerceError("MKL_UNAVAILABLE", "MKL commerce is temporarily unavailable.", 503, true); }
+  if (response.type === "opaqueredirect" || (response.status >= 300 && response.status < 400)) {
+    throw new CommerceError("MKL_UNAVAILABLE", "MKL commerce is temporarily unavailable.", 503, true);
+  }
   let body: unknown = null; let parsed = true;
   try { body = await response.json(); } catch { parsed = false; }
   if (!response.ok) {
