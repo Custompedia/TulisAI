@@ -34,7 +34,8 @@ This addendum records implementation completed after the B0 audit without rewrit
 - **B3:** COMPLETE / MERGED — verified entitlement projection and capability authority landed in `main` at merge commit `59edeb36d5a1703dc9019d6932f964b537c300c6`.
 - **B4:** SOURCE-COMPLETE / MERGED WHEN THIS ADDENDUM IS PRESENT ON `main` — the character wallet, Unicode usage accounting, reservations/allocations, lease recovery, internal purchased-lot/correction contracts, and canonical wallet summary are contained in the B4 merge change. See `docs/b4-character-wallet.md`.
 - **B5:** SOURCE IMPLEMENTED ON `codex/b5-mkl-commerce`; NOT DEPLOYED / NOT COMMISSIONED — durable intents, purchase OIDC, strict generic MKL offer/order/purchase recovery, B3 access reconciliation, and B4 fulfillment/correction transport are fixture-tested. See `docs/b5-mkl-commerce.md`. No live or Sandbox purchase has been made. Hardened after the 2026-09-25 compatibility audit (final-state transitions, transport-failure isolation, stale-intent closing, offer filtering, and a local checkout gate that is closed by default). Merge is blocked until MKL PR #22 (consumable authority) is merged and deployed.
-- **B6–B9:** NOT STARTED.
+- **B6:** SOURCE IMPLEMENTED ON `feat/b6-commercial-frontend` (stacked on B5); NOT DEPLOYED / NOT COMMISSIONED — server-decided offer states (`GET /api/commerce/offers`), a checkout step that collects only the buyer phone, return and recovery UI that reads status from the owner-scoped recovery route, a purchases list, and period/wallet display. See `docs/b6-commercial-frontend.md`.
+- **B7–B9:** NOT STARTED.
 
 No B4/B5 production migration has been applied. TulisAI has not been commissioned
 in MKL and no client, secret, offer, checkout, payment, Midtrans, or production
@@ -318,7 +319,7 @@ Additional reconciliation:
 | B3 | COMPLETE / MERGED | Entitlement/capability projection | Merged in TulisAI `main` at `59edeb36d5a1703dc9019d6932f964b537c300c6`; authenticated live-integration follow-up remains pending |
 | B4 | SOURCE-COMPLETE / MERGED ON `main` CONTAINING THIS ROW | Character wallets | Additive migration `0013`; B4 wallet and recovery behavior complete in source; real purchased-lot transport remains a B5 dependency |
 | B5 | SOURCE IMPLEMENTED; NOT DEPLOYED / NOT COMMISSIONED | Generic MKL app-commerce support | Migration `0014`; fixture-tested durable intents, purchase OIDC, order/purchase recovery, B3 access and B4 lot/correction integration; live/Sandbox follow-ups remain |
-| B6 | NOT STARTED | TulisAI commercial frontend | B2/B3/B4 usable interfaces + B5 approved commerce; truthful offers, pending states, refresh/recovery |
+| B6 | SOURCE IMPLEMENTED; NOT DEPLOYED / NOT COMMISSIONED | TulisAI commercial frontend | Server-decided offer states, phone-only checkout step, recovery-read return notices, purchases list, MKL-period wallet display; fixture-tested only |
 | B7 | NOT STARTED | Joint QA | B1–B6 integrated; identity, entitlement, wallets, portability, replay/concurrency/failure and legacy acceptance evidence |
 | B8 | NOT STARTED | Sandbox | B0–B7 complete and approved for real Sandbox acceptance; obey L |
 | B9 | NOT STARTED | Production | Successful B8, production readiness/release approvals and operational recovery evidence |

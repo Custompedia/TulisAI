@@ -33,6 +33,18 @@ function redirectError(ctx: { redirect: (url: string) => unknown; setHeader: (na
   throw ctx.redirect(url.toString());
 }
 
+/**
+ * A purchase ceremony belongs to a signed-in buyer, so its failures return to
+ * the app with the purchase named instead of to the sign-in page, where the
+ * purchase would be lost from view. The purchase ID grants nothing: the app
+ * reads it back through the owner-scoped recovery route.
+ */
+function redirectPurchaseError(ctx: { redirect: (url: string) => unknown; setHeader: (name: string, value: string) => void }, config: MklConfig, purchaseId: string, code: string): never {
+  ctx.setHeader("cache-control", "no-store");
+  const url = new URL("/app", config.appOrigin); url.searchParams.set("purchase", purchaseId); url.searchParams.set("purchase_error", code);
+  throw ctx.redirect(url.toString());
+}
+
 function headersOf(ctx: { headers?: Headers; request?: Request }): Headers { return ctx.headers ?? ctx.request?.headers ?? new Headers(); }
 const validOpaqueCookie = (value: string | null): string | null => value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 const isAdmin = (role: unknown) => typeof role === "string" && role.split(",").some((value) => value.trim() === "admin");
@@ -100,11 +112,14 @@ export function mklIdentityPlugin() {
         const peek = await ctx.context.internalAdapter.findVerificationValue(await stateIdentifier(stateToken!));
         const state = await consumeAuthorizationState(ctx.context.internalAdapter, stateToken!);
         if (!state) redirectError(ctx, config!, peek?.expiresAt && new Date(peek.expiresAt).getTime() <= Date.now() ? "MKL_STATE_EXPIRED" : "MKL_STATE_INVALID");
+        // Annotated so control flow treats a call like `redirectError`: code after it is unreachable.
+        const fail: (code: string) => never = (code) => state.intent === "purchase" && state.purchaseId
+          ? redirectPurchaseError(ctx, config!, state.purchaseId, code) : redirectError(ctx, config!, code);
         const names = mklCookieNames(config!); const browser = validOpaqueCookie(readCookie(headersOf(ctx), names.browser));
-        if (!browser || await sha256(browser) !== state.browserHash) redirectError(ctx, config!, "MKL_STATE_INVALID");
-        if (state.issuer !== config!.issuer || state.clientId !== config!.clientId || state.redirectUri !== config!.redirectUri) redirectError(ctx, config!, "MKL_STATE_INVALID");
-        if (ctx.query.error) redirectError(ctx, config!, "MKL_AUTH_CANCELLED");
-        if (!ctx.query.code) redirectError(ctx, config!, "MKL_TOKEN_INVALID");
+        if (!browser || await sha256(browser) !== state.browserHash) fail("MKL_STATE_INVALID");
+        if (state.issuer !== config!.issuer || state.clientId !== config!.clientId || state.redirectUri !== config!.redirectUri) fail("MKL_STATE_INVALID");
+        if (ctx.query.error) fail("MKL_AUTH_CANCELLED");
+        if (!ctx.query.code) fail("MKL_TOKEN_INVALID");
 
         let localSession: Awaited<ReturnType<typeof getAuthoritativeSessionFromCtx>> = null;
         if (state.intent === "link" || state.intent === "purchase") {
@@ -120,7 +135,7 @@ export function mklIdentityPlugin() {
           verifiedIdToken = await exchangeMklCode(discovery, config!, { code: ctx.query.code!, codeVerifier: state.codeVerifier });
           identity = await verifyMklIdToken(verifiedIdToken, discovery, config!, state.expectedNonce);
         } catch (error) {
-          if (error instanceof MklProtocolError) redirectError(ctx, config!, error.code);
+          if (error instanceof MklProtocolError) fail(error.code);
           throw error;
         }
 
@@ -144,7 +159,7 @@ export function mklIdentityPlugin() {
         if (state.intent === "purchase") {
           const userId = localSession!.user.id; const link = await getMklLinkByUserId(userId);
           if (!link || link.issuer !== identity.issuer || link.subject !== identity.subject || link.organizationId !== identity.organizationId) {
-            redirectError(ctx, config!, "PURCHASE_IDENTITY_MISMATCH");
+            fail("PURCHASE_IDENTITY_MISMATCH");
           }
           await updateAuthenticatedLink(link!.id, identity);
           try {
@@ -154,9 +169,9 @@ export function mklIdentityPlugin() {
             ctx.setHeader("cache-control", "no-store");
             throw ctx.redirect(result.redirectUrl);
           } catch (error) {
-            if (error instanceof CommerceError) redirectError(ctx, config!, error.code);
+            if (error instanceof CommerceError) fail(error.code);
             if (error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string") {
-              redirectError(ctx, config!, String((error as { code: string }).code));
+              fail(String((error as { code: string }).code));
             }
             throw error;
           }

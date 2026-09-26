@@ -10,13 +10,22 @@ import { StatusScreen, statusIcons } from '@/components/ui/StatusScreen';
 import { Logo } from '@/components/ui/Logo';
 import { AccountMenu } from './AccountMenu';
 import { PlansDialog } from './PlansDialog';
+import { PurchaseReturn } from './PurchaseReturn';
 import { Sidebar } from './Sidebar';
 import { LoadingBlock } from '@/components/ui/Spinner';
 import { hasFeature, PLAN_LIMITS, type Feature, type PlanLimits, type Tier } from '@/lib/plans';
 
 export type SessionUser = { id: string; name: string; email: string; username?: string | null; image?: string | null; role?: 'user' | 'admin' };
 export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: 'academic' | 'professional' | 'general'; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; onboarded: boolean; updatedAt: string | null };
-export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; charactersUsed: number; characterLimit: number; charactersRemaining: number; characterScope?: 'account' | 'period'; unlimited?: boolean; tier?: Tier; limits?: PlanLimits; features?: Feature[] };
+// Mirrors AccessSummary and WalletSummary in src/server/usage; only the fields the interface reads.
+export type AccessInfo = { plan: Exclude<Tier, 'free'> | null; commercialActive: boolean; topupEligible: boolean; linked: boolean; fresh: boolean; periodEnd: string | null; paidUntil: string | null };
+export type WalletInfo = {
+  mode: 'free' | 'paid' | 'unavailable';
+  included: { periodStart: string; periodEnd: string; original: number; reserved: number; settled: number; remaining: number } | null;
+  purchased: { available: number; reserved: number; frozen: number; expired: number; settled: number };
+  spendableTotal: number;
+};
+export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; charactersUsed: number; characterLimit: number; charactersRemaining: number; characterScope?: 'account' | 'period'; unlimited?: boolean; tier?: Tier; limits?: PlanLimits; features?: Feature[]; access?: AccessInfo; wallet?: WalletInfo };
 export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
 
 type Shell = { user: SessionUser; settings: UserSettings; usage: Usage | null; setSettings: (settings: UserSettings) => void; refresh: () => Promise<void> };
@@ -89,9 +98,10 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
   }
 
   const shell: Shell = { ...state, setSettings: (settings) => setState((current) => (current ? { ...current, settings } : current)), refresh: load };
-  if (bare) return <ShellContext.Provider value={shell}>{children}</ShellContext.Provider>;
+  if (bare) return <ShellContext.Provider value={shell}>{children}<PurchaseReturn /></ShellContext.Provider>;
   return (
     <ShellContext.Provider value={shell}>
+      <PurchaseReturn />
       <div className={`bg-shell ${fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh'}`}>
         <TopBar />
         <Sidebar />
@@ -116,8 +126,8 @@ function TopBar() {
       <Logo href="/app" mark="h-9 w-9" />
       <div className="ml-auto flex items-center gap-2.5">
         {usage && (
-          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={oneTime ? t('Karakter AI sekali pakai yang sudah terpakai', 'One-time AI characters used') : t('Karakter AI terpakai bulan ini', 'AI characters used this month')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
-            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span>{oneTime ? t('karakter sekali pakai', 'one-time characters') : t('karakter bulan ini', 'characters this month')}
+          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={oneTime ? t('Karakter AI sekali pakai yang sudah terpakai', 'One-time AI characters used') : t('Karakter AI terpakai pada periode paket ini', 'AI characters used in this plan period')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
+            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span>{oneTime ? t('karakter sekali pakai', 'one-time characters') : t('karakter periode ini', 'characters this period')}
           </button>
         )}
         <AccountMenu />

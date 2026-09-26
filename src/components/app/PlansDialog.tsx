@@ -1,20 +1,23 @@
 'use client';
-import { useState } from 'react';
-import { Check, ChevronDown, Crown, Gauge, Leaf, Minus, Rocket, Sparkles, Wallet, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { ArrowLeft, Check, ChevronDown, Crown, Gauge, Leaf, Minus, RotateCw, Rocket, Sparkles, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
+import { errorText, newKey } from '@/lib/client/api';
+import { beginPurchase, blockedLabel, loadCatalog, phoneLooksValid, productName, type CatalogProduct, type CommerceCatalog, type PlanCode } from '@/lib/client/commerce';
 import { PLAN_LIMITS, TIERS, TOP_UPS, TOP_UP_VALIDITY_MONTHS, type Tier, type TopUp } from '@/lib/plans';
-import { pressGreen, raisedGreen } from '@/components/ui/Button';
+import { Button, pressGreen, raisedGreen } from '@/components/ui/Button';
+import { FieldLabel, inputClass } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { Alert } from '@/components/ui/Alert';
-import { useShell } from './AppShell';
+import { useSessionGuard, useShell } from './AppShell';
 
 type T = (id: string, en: string) => string;
 type Plan = { id: Tier; name: string; icon: LucideIcon; tagline: string; quota: string; inherits?: string; features: string[]; popular?: boolean };
 type Cells = [string | boolean, string | boolean, string | boolean, string | boolean];
 
 // Prices, allowances and gates all come from PLAN_LIMITS, so this catalogue cannot drift from what the server enforces.
-// Payment is not wired yet, so choosing a plan explains that instead of pretending to sell.
+// Whether something can be bought right now comes only from /api/commerce/offers; MKL takes the payment.
 const FREE_CHARACTERS = PLAN_LIMITS.free.includedCharacters;
 const chars = (value: number, t: T) => t(`${numberFormat(value, 'id')} karakter`, `${numberFormat(value, 'en')} characters`);
 const perRun = (tier: Tier, t: T) => t(`Sekali proses s.d. ${chars(PLAN_LIMITS[tier].runLimit, t)}`, `Up to ${chars(PLAN_LIMITS[tier].runLimit, t)} per run`);
@@ -31,7 +34,7 @@ function plans(t: T, freeCharacters: number): Plan[] {
     {
       id: 'plus', name: 'Plus', icon: Sparkles, tagline: t('Untuk yang rutin menulis ulang.', 'For regular rewriting.'), quota: allowance('plus', t, freeCharacters),
       inherits: t('Semua di Gratis, plus:', 'Everything in Free, plus:'),
-      features: [perRun('plus', t), t('Kuota AI isi ulang tiap bulan', 'AI allowance refills every month'), t('Skills & gaya tulisan tersimpan', 'Saved Skills & writing styles')],
+      features: [perRun('plus', t), t('Kuota AI baru tiap periode paket', 'A fresh AI allowance every plan period'), t('Skills & gaya tulisan tersimpan', 'Saved Skills & writing styles')],
     },
     {
       id: 'pro', name: 'Pro', icon: Crown, tagline: t('Untuk dokumen panjang dan skripsi.', 'For long documents and theses.'), quota: allowance('pro', t, freeCharacters), popular: true,
@@ -54,7 +57,7 @@ function groups(t: T, freeCharacters: number): Array<{ title: string; rows: Arra
       title: t('Kuota AI', 'AI allowance'),
       rows: [
         { label: t('Karakter AI termasuk', 'Included AI characters'), cells: [t(`${numberFormat(freeCharacters, 'id')} sekali pakai`, `${numberFormat(freeCharacters, 'en')} one-time`), chars(PLAN_LIMITS.plus.includedCharacters, t), chars(PLAN_LIMITS.pro.includedCharacters, t), chars(PLAN_LIMITS.max.includedCharacters, t)] },
-        { label: t('Isi ulang tiap bulan', 'Refills every month'), cells: [false, true, true, true] },
+        { label: t('Kuota baru tiap periode paket', 'Fresh allowance every plan period'), cells: [false, true, true, true] },
         { label: t('Panjang teks sekali proses', 'Text length per run'), cells: TIERS.map((tier) => chars(PLAN_LIMITS[tier].runLimit, t)) as Cells },
       ],
     },
@@ -84,10 +87,11 @@ function faqs(t: T): Array<[string, string]> {
   return [
     [t('Bagaimana karakter AI dihitung?', 'How are AI characters counted?'), t('Yang dihitung adalah teks sumber yang benar-benar diproses — kalau kamu memilih 2.000 karakter dari dokumen 30.000 karakter, yang terpotong 2.000. Khusus AI Mode, yang dihitung adalah yang lebih besar antara teks sumber dan hasil yang dikeluarkan. Mengetik, menyimpan, impor/ekspor tanpa AI, dan membandingkan versi tidak memakai kuota.', 'It counts the source text actually processed — select 2,000 characters inside a 30,000-character document and 2,000 are charged. AI Mode is charged the larger of the source text and the generated result. Typing, saving, importing or exporting without AI, and comparing versions never use the allowance.')],
     [t('Kalau hasilnya gagal atau ditolak?', 'What if a run fails or is refused?'), t('Tidak ada karakter yang terpotong. Kegagalan provider, hasil yang ditolak pemeriksaan keamanan, dan perbaikan otomatis kami tanggung sendiri. Menekan “buat ulang” dihitung sebagai pemakaian baru.', 'Nothing is charged. Provider failures, results refused by the safety checks, and our own automatic repair are on us. Pressing “generate again” counts as new usage.')],
-    [t('Apa bedanya jatah Gratis dan paket berbayar?', 'How does the Free allowance differ from a paid plan?'), t(`Gratis mendapat ${numberFormat(PLAN_LIMITS.free.includedCharacters, 'id')} karakter sekali saja per akun, tidak diisi ulang. Paket berbayar diisi ulang setiap bulan.`, `Free gets ${numberFormat(PLAN_LIMITS.free.includedCharacters, 'en')} characters once per account and they are not refilled. Paid plans refill every month.`)],
-    [t('Sisa kuota dibawa ke bulan berikutnya?', 'Does unused allowance roll over?'), t('Tidak. Kuota langganan direset tiap bulan. Karakter tambahan yang kamu beli berlaku 12 bulan sejak pembelian dan baru dipakai setelah kuota langganan habis.', 'No. Subscription allowance resets every month. Characters you buy stay valid for 12 months from purchase and are only used after the subscription allowance is spent.')],
-    [t('Kalau kuota habis atau langganan berakhir?', 'What if the allowance runs out or the plan ends?'), t('Tulisanmu tetap bisa dibuka, diedit, disimpan, dan diekspor. Yang berhenti hanya fitur AI dan fitur berbayar, sampai kuota terisi lagi atau kamu memperpanjang. Tidak ada dokumen yang dihapus.', 'Your writing stays open, editable, saved, and exportable. Only the AI and paid features pause until the allowance refills or you renew. No document is ever deleted.')],
-    [t('Apakah perpanjangan otomatis?', 'Does it renew automatically?'), t('Belum. Perpanjangan dilakukan manual, tidak ada penarikan berulang, dan akses tetap berjalan sampai akhir periode yang sudah dibayar.', 'Not yet. Renewal is manual, there is no recurring charge, and access runs to the end of the period you paid for.')],
+    [t('Apa bedanya jatah Gratis dan paket berbayar?', 'How does the Free allowance differ from a paid plan?'), t(`Gratis mendapat ${numberFormat(PLAN_LIMITS.free.includedCharacters, 'id')} karakter sekali saja per akun, tidak diisi ulang. Paket berbayar memberi kuota baru untuk setiap periode yang dibayar.`, `Free gets ${numberFormat(PLAN_LIMITS.free.includedCharacters, 'en')} characters once per account and they are not refilled. Paid plans give a fresh allowance for every period you pay for.`)],
+    [t('Sisa kuota dibawa ke periode berikutnya?', 'Does unused allowance roll over?'), t('Tidak. Kuota paket berlaku untuk satu periode paket saja. Karakter tambahan yang kamu beli berlaku 12 bulan sejak pembelian dan baru dipakai setelah kuota paket habis.', 'No. Plan allowance lasts for one plan period only. Characters you buy stay valid for 12 months from purchase and are only used after the plan allowance is spent.')],
+    [t('Kalau kuota habis atau langganan berakhir?', 'What if the allowance runs out or the plan ends?'), t('Tulisanmu tetap bisa dibuka, diedit, disimpan, dan diekspor. Yang berhenti hanya fitur AI dan fitur berbayar, sampai kamu membeli periode baru. Tidak ada dokumen yang dihapus.', 'Your writing stays open, editable, saved, and exportable. Only the AI and paid features pause until you buy a new period. No document is ever deleted.')],
+    [t('Apakah perpanjangan otomatis?', 'Does it renew automatically?'), t('Tidak. Tidak ada penarikan berulang. Paket berlaku satu bulan kalender sejak pembayaran dicatat MKL, dan paket baru bisa dibeli setelah periode itu berakhir.', 'No. There is no recurring charge. A plan lasts one calendar month from when MKL records the payment, and a new plan can be bought once that period ends.')],
+    [t('Siapa yang memproses pembayaran?', 'Who processes the payment?'), t('MKL (Mari Kita Lembur). Kamu membayar di halaman MKL; TulisAI tidak menerima atau menyimpan data pembayaranmu, dan paket atau kuota baru berubah setelah MKL mengonfirmasi pembayaran.', 'MKL (Mari Kita Lembur). You pay on MKL’s page; TulisAI never receives or stores your payment details, and your plan or allowance changes only after MKL confirms the payment.')],
     [t('Apakah tulisan saya dipakai untuk melatih AI?', 'Is my writing used to train AI?'), t('Tidak. Tulisanmu hanya diproses untuk menghasilkan permintaan yang kamu jalankan.', 'No. Your writing is only processed to produce the request you run.')],
   ];
 }
@@ -103,10 +107,34 @@ const perThousand = (pack: TopUp) => Math.round((pack.priceIdr / pack.characters
 // The cheapest price per 1,000 characters is computed, so the "best value" tag cannot drift from the catalogue.
 const BEST_VALUE = TOP_UPS.reduce((best, pack) => (perThousand(pack) < perThousand(best) ? pack : best)).id;
 
-function TopUps({ t }: { t: T }) {
+const buyButton = (popular: boolean, compact = false) => `${compact ? 'mt-3 h-8 text-[12.5px]' : 'mt-4 h-9 text-[13px]'} inline-flex w-full items-center justify-center gap-1.5 rounded-full px-3 text-center font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 disabled:opacity-60 ${popular ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`;
+
+export type Availability = { product: CatalogProduct | null; loading: boolean; failed: boolean; onRetry: () => void };
+
+/**
+ * The one control that can start a purchase. What it offers comes from the
+ * server's catalog state; when it cannot buy it says why, in words, instead
+ * of rendering a button that looks usable.
+ */
+export function BuyControl({ availability, label, popular = false, compact = false, onBuy, t }: { availability: Availability; label: string; popular?: boolean; compact?: boolean; onBuy: (product: CatalogProduct) => void; t: T }) {
+  const { product, loading, failed, onRetry } = availability;
+  const note = `${compact ? 'mt-3 min-h-8' : 'mt-4 min-h-9'} flex items-center justify-center text-center text-[12px] leading-snug text-ink-500`;
+  if (!product) {
+    if (failed) return <button type="button" onClick={onRetry} className={buyButton(false, compact)}><RotateCw size={13} aria-hidden="true" />{t('Muat ulang status pembelian', 'Reload purchase status')}</button>;
+    return <p className={note}>{loading ? t('Memeriksa ketersediaan…', 'Checking availability…') : ''}</p>;
+  }
+  const blocked = blockedLabel(product.state, t);
+  if (blocked === null) return <button type="button" onClick={() => onBuy(product)} className={buyButton(popular, compact)}>{label}</button>;
+  if (product.state === 'link_required') return <a href="/settings#profil" className={buyButton(false, compact)}>{blocked}</a>;
+  if (product.state === 'purchase_open') return <a href="/settings#pembelian" className={buyButton(false, compact)}>{t('Lihat pembelian yang berjalan', 'View the purchase in progress')}</a>;
+  if (product.state === 'mkl_unavailable') return <button type="button" onClick={onRetry} className={buyButton(false, compact)}><RotateCw size={13} aria-hidden="true" />{blocked}</button>;
+  return <p className={note}>{blocked}</p>;
+}
+
+function TopUps({ t, availability, checkoutOpen, onBuy }: { t: T; availability: (characters: number) => Availability; checkoutOpen: boolean | null; onBuy: (product: CatalogProduct) => void }) {
   const rules = [
     t('Hanya menambah kuota AI — tidak membuka fitur paket lain', 'Adds AI allowance only — never unlocks another plan\'s features'),
-    t(`Dipakai setelah kuota bulanan habis, berlaku ${TOP_UP_VALIDITY_MONTHS} bulan`, `Used after the monthly allowance, valid for ${TOP_UP_VALIDITY_MONTHS} months`),
+    t(`Dipakai setelah kuota paket habis, berlaku ${TOP_UP_VALIDITY_MONTHS} bulan`, `Used after the plan allowance, valid for ${TOP_UP_VALIDITY_MONTHS} months`),
     t('Dibekukan saat langganan berakhir, aktif lagi saat berlangganan', 'Frozen when the plan ends, usable again once you resubscribe'),
   ];
   return (
@@ -116,10 +144,10 @@ function TopUps({ t }: { t: T }) {
           <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700"><Wallet size={16} aria-hidden="true" /></span>
           <div className="min-w-0">
             <h3 id="topup-title" className="text-[15px] font-semibold text-ink-900">{t('Tambahan karakter', 'Character top-up')}</h3>
-            <p className="mt-0.5 text-[12.5px] text-ink-500">{t('Untuk Plus, Pro, dan Max saat kuota bulanan habis sebelum waktunya.', 'For Plus, Pro, and Max when the monthly allowance runs out early.')}</p>
+            <p className="mt-0.5 text-[12.5px] text-ink-500">{t('Untuk Plus, Pro, dan Max saat kuota paket habis sebelum periodenya selesai.', 'For Plus, Pro, and Max when the plan allowance runs out before the period ends.')}</p>
           </div>
         </div>
-        <span className="self-start rounded-md border border-line bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink-600">{t('Dibuka setelah pembayaran aktif', 'Opens once payment is live')}</span>
+        {checkoutOpen === false && <span className="self-start rounded-md border border-line bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink-600">{t('Dibuka setelah pembayaran aktif', 'Opens once payment is live')}</span>}
       </header>
 
       <ul className="grid gap-3 p-4 sm:grid-cols-3">
@@ -133,7 +161,8 @@ function TopUps({ t }: { t: T }) {
               </div>
               <p className="mt-1.5 text-xl font-semibold tracking-tight text-ink-950 tabular-nums">{numberFormat(pack.characters, 'id')}<span className="ml-1 text-xs font-medium text-ink-500">{t('karakter', 'characters')}</span></p>
               <p className="mt-0.5 text-[14px] font-semibold text-ink-800 tabular-nums">Rp{numberFormat(pack.priceIdr, 'id')}</p>
-              <p className="mt-2 text-[11.5px] text-ink-500 tabular-nums">{t(`≈ Rp${numberFormat(perThousand(pack), 'id')} per 1.000 karakter`, `≈ Rp${numberFormat(perThousand(pack), 'id')} per 1,000 characters`)}</p>
+              <p className="mt-2 flex-1 text-[11.5px] text-ink-500 tabular-nums">{t(`≈ Rp${numberFormat(perThousand(pack), 'id')} per 1.000 karakter`, `≈ Rp${numberFormat(perThousand(pack), 'id')} per 1,000 characters`)}</p>
+              <BuyControl availability={availability(pack.characters)} compact t={t} onBuy={onBuy} label={t('Beli tambahan', 'Buy top-up')} />
             </li>
           );
         })}
@@ -146,20 +175,110 @@ function TopUps({ t }: { t: T }) {
   );
 }
 
+/**
+ * The last step before MKL. It collects only what MKL's checkout needs from
+ * the buyer that TulisAI does not already know from the linked MKL identity;
+ * price, period and characters are never sent from here.
+ */
+export function CheckoutPanel({ product, onBack }: { product: CatalogProduct; onBack: () => void }) {
+  const { t, locale } = useLocale();
+  const guard = useSessionGuard();
+  const en = locale === 'en';
+  const [phone, setPhone] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  // One deliberate purchase keeps one key, so a retry or a double submit replays it
+  // instead of opening a second order. A different phone is a different request.
+  const attempt = useRef<{ phone: string; key: string } | null>(null);
+  const access = product.kind === 'access';
+  const valid = phoneLooksValid(phone);
+  const rules = access ? [
+    t('Berlaku satu bulan kalender sejak MKL mencatat pembayaran.', 'Lasts one calendar month from when MKL records the payment.'),
+    t('Tanpa perpanjangan otomatis dan tanpa tagihan berulang.', 'No automatic renewal and no recurring charge.'),
+    t('Tulisanmu tetap milikmu apa pun status paketnya.', 'Your writing stays yours whatever the plan status.'),
+  ] : [
+    t(`Berlaku ${TOP_UP_VALIDITY_MONTHS} bulan sejak MKL mencatat pembelian.`, `Valid for ${TOP_UP_VALIDITY_MONTHS} months from when MKL records the purchase.`),
+    t('Dipakai setelah kuota paket habis, dan dibekukan saat paket berakhir.', 'Used after the plan allowance, and frozen when the plan ends.'),
+    t('Hanya menambah kuota AI, tidak membuka fitur paket lain.', 'Adds AI allowance only; it never unlocks another plan’s features.'),
+  ];
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!valid || busy) return;
+    const trimmed = phone.trim();
+    if (!attempt.current || attempt.current.phone !== trimmed) attempt.current = { phone: trimmed, key: newKey() };
+    setBusy(true); setError(null);
+    try { window.location.assign(await beginPurchase(product, trimmed, attempt.current.key)); }
+    catch (caught) { if (!guard(caught)) setError(caught); setBusy(false); }
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-lg">
+      <button type="button" onClick={onBack} disabled={busy} className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ink-600 hover:text-ink-900 disabled:opacity-50">
+        <ArrowLeft size={15} aria-hidden="true" />{t('Kembali ke paket', 'Back to plans')}
+      </button>
+      <section aria-labelledby="checkout-title" className="mt-3 rounded-2xl border border-line bg-white p-5">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">{access ? t('Paket bulanan', 'Monthly plan') : t('Tambahan karakter', 'Character top-up')}</p>
+        <h3 id="checkout-title" className="mt-1 text-lg font-semibold text-ink-950">{productName(product.planCode, t)}</h3>
+        <p className="mt-2 flex items-baseline gap-1">
+          <span className="text-[26px] font-semibold leading-none tracking-tight text-ink-950 tabular-nums">Rp{numberFormat(product.priceIdr, 'id')}</span>
+          {access && <span className="text-xs text-ink-500">{t('/ bulan', '/ month')}</span>}
+        </p>
+        <p className="mt-2 flex items-center gap-1.5 text-[13px] font-medium text-ink-800"><Gauge size={14} className="shrink-0 text-brand-700" aria-hidden="true" />
+          {access ? t(`${numberFormat(product.characters, 'id')} karakter AI untuk periode ini`, `${numberFormat(product.characters, 'en')} AI characters for this period`)
+            : t(`${numberFormat(product.characters, 'id')} karakter AI tambahan`, `${numberFormat(product.characters, 'en')} extra AI characters`)}
+        </p>
+        <ul className="mt-4 space-y-1.5 border-t border-line pt-3">
+          {rules.map((rule) => <li key={rule} className="flex items-start gap-2 text-[12.5px] leading-snug text-ink-600"><Check size={14} className="mt-px shrink-0 text-brand-600" aria-hidden="true" />{rule}</li>)}
+        </ul>
+      </section>
+
+      <form onSubmit={(event) => void submit(event)} className="mt-4 space-y-3" noValidate>
+        <div>
+          <FieldLabel htmlFor="buyer-phone" hint={t('Dipakai MKL untuk tagihan dan konfirmasi pembayaran.', 'MKL uses it for the invoice and payment confirmation.')}>{t('Nomor HP', 'Phone number')}</FieldLabel>
+          <input id="buyer-phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={32} placeholder="08…" className={`${inputClass} mt-1.5`}
+            value={phone} onChange={(event) => setPhone(event.target.value)} disabled={busy} aria-invalid={phone.trim() !== '' && !valid} />
+        </div>
+        {error !== null && <Alert tone="error" title={t('Pembelian belum dimulai', 'The purchase did not start')}>{errorText(error, en)}</Alert>}
+        <Button type="submit" variant="primary" loading={busy} disabled={!valid} className="w-full">{t('Lanjut ke MKL untuk membayar', 'Continue to MKL to pay')}</Button>
+        <p className="text-[12px] leading-relaxed text-ink-500">{t('Pembayaran diproses oleh MKL (Mari Kita Lembur). TulisAI tidak menerima atau menyimpan data pembayaranmu, dan paket atau kuota baru berubah setelah MKL mengonfirmasi pembayaran.', 'MKL (Mari Kita Lembur) processes the payment. TulisAI never receives or stores your payment details, and your plan or allowance changes only after MKL confirms the payment.')}</p>
+      </form>
+    </div>
+  );
+}
+
 export function PlansDialog({ onClose }: { onClose: () => void }) {
   const { t } = useLocale();
   const { usage } = useShell();
+  const guard = useSessionGuard();
   // An unlimited account (admin or override) is on no catalogue plan, so nothing is marked as its current plan.
   const unlimited = usage?.unlimited === true;
   const CURRENT: Tier | null = unlimited ? null : usage?.tier ?? 'free';
   const freeCharacters = usage && usage.tier === 'free' && !unlimited ? usage.characterLimit : FREE_CHARACTERS;
   const catalogue = plans(t, freeCharacters);
-  const [notice, setNotice] = useState('');
+  const [catalog, setCatalog] = useState<CommerceCatalog | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [checkout, setCheckout] = useState<CatalogProduct | null>(null);
+
+  const load = useCallback(async () => {
+    setFailed(false);
+    try { setCatalog(await loadCatalog()); }
+    catch (caught) { if (!guard(caught)) setFailed(true); }
+  }, [guard]);
+  useEffect(() => { void load(); }, [load]);
+
+  const availability = (find: (product: CatalogProduct) => boolean): Availability =>
+    ({ product: catalog?.products.find(find) ?? null, loading: catalog === null && !failed, failed, onRetry: () => { setCatalog(null); void load(); } });
+  const planAvailability = (planCode: PlanCode) => availability((product) => product.planCode === planCode);
+
+  if (checkout) {
+    return <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI allowance')}><CheckoutPanel product={checkout} onBack={() => { setCheckout(null); void load(); }} /></Modal>;
+  }
 
   return (
     <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI allowance')}>
       {unlimited && <Alert tone="info" className="mb-4" title={t('Akses AI tanpa batas', 'Unlimited AI access')}>{t('Akun ini tidak memakai kuota paket, jadi tidak ada paket yang ditandai aktif.', 'This account does not use plan allowance, so no plan is marked as active.')}</Alert>}
-      {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Pembayaran belum tersedia', 'Payment is not available yet')}>{t(`Paket ${notice} belum bisa dibeli karena pembayaran belum aktif. Tulisan dan kuotamu saat ini tidak berubah.`, `The ${notice} plan cannot be bought yet because payment is not live. Your writing and current allowance are unchanged.`)}</Alert>}
+      {catalog?.checkoutOpen === false && <Alert tone="info" className="mb-4" title={t('Pembayaran belum dibuka', 'Payment is not open yet')}>{t('Paket belum bisa dibeli. Tulisan dan kuotamu saat ini tidak berubah.', 'Plans cannot be bought yet. Your writing and current allowance are unchanged.')}</Alert>}
 
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {catalogue.map((plan) => {
@@ -196,17 +315,15 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
               ) : plan.id === 'free' ? (
                 <p className="mt-4 flex h-9 items-center justify-center text-[12.5px] text-ink-500">{t('Otomatis untuk setiap akun baru', 'Given to every new account')}</p>
               ) : (
-                <button type="button" onClick={() => setNotice(plan.name)}
-                  className={`mt-4 inline-flex h-9 w-full items-center justify-center rounded-full text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 ${plan.popular ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`}>
-                  {t(`Pilih ${plan.name}`, `Choose ${plan.name}`)}
-                </button>
+                <BuyControl availability={planAvailability(plan.id)} popular={plan.popular} t={t} onBuy={setCheckout} label={t(`Pilih ${plan.name}`, `Choose ${plan.name}`)} />
               )}
             </li>
           );
         })}
       </ul>
 
-      <TopUps t={t} />
+      <TopUps t={t} checkoutOpen={catalog?.checkoutOpen ?? null} onBuy={setCheckout}
+        availability={(characters) => availability((product) => product.kind === 'consumable' && product.characters === characters)} />
 
       <section aria-label={t('Perbandingan fitur', 'Feature comparison')} className="mt-10">
         <h3 className="text-center text-[15px] font-semibold text-ink-900">{t('Bandingkan semua fitur', 'Compare all features')}</h3>
@@ -258,8 +375,8 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
       </section>
 
       <footer className="mt-8 flex w-full flex-col gap-1.5 border-t border-line pt-4 text-[11.5px] text-ink-500 sm:flex-row sm:items-center sm:justify-between">
-        <p>{t('Harga dalam Rupiah per bulan. Perpanjangan manual, tanpa penarikan otomatis.', 'Prices in Rupiah per month. Renewal is manual, with no automatic charge.')}</p>
-        <p>{t('Kuota bulanan saat ini direset tiap awal bulan kalender (UTC).', 'The monthly allowance currently resets at the start of each calendar month (UTC).')}</p>
+        <p>{t('Harga dalam Rupiah per bulan. Tanpa perpanjangan dan penarikan otomatis.', 'Prices in Rupiah per month. No automatic renewal or charge.')}</p>
+        <p>{t('Periode paket dihitung MKL: satu bulan kalender sejak pembayaran dicatat.', 'MKL sets the plan period: one calendar month from when the payment is recorded.')}</p>
       </footer>
     </Modal>
   );

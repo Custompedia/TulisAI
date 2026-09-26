@@ -181,13 +181,39 @@ function isRequestedProductOffer(value: unknown, planCode: string, planVersion: 
   return offer.plan_code === planCode && offer.plan_version === planVersion;
 }
 
-export async function discoverOffer(config: CommerceConfig, planCode: string, planVersion: string, fetcher: typeof fetch = fetch): Promise<MklOffer> {
-  const product = productContract(planCode, planVersion); const body = record(await requestJson(config, "/app/v1/offers", { method: "GET" }, fetcher));
+async function readOffers(config: CommerceConfig, fetcher: typeof fetch): Promise<unknown[]> {
+  const body = record(await requestJson(config, "/app/v1/offers", { method: "GET" }, fetcher));
   if (!Array.isArray(body.offers)) throw new CommerceError("MKL_RESPONSE_INVALID", "MKL returned an invalid offers response.", 502);
-  const candidates = body.offers.filter((offer) => isRequestedProductOffer(offer, product.planCode, product.planVersion)).map((offer) => normalizeOffer(offer, config));
+  return body.offers;
+}
+
+function selectOffer(offers: readonly unknown[], config: CommerceConfig, planCode: B5PlanCode): MklOffer {
+  const candidates = offers.filter((offer) => isRequestedProductOffer(offer, planCode, B5_PLAN_VERSION)).map((offer) => normalizeOffer(offer, config));
   if (candidates.length === 0) throw new CommerceError("OFFER_NOT_AVAILABLE", "The requested MKL offer is not available.", 404);
   if (candidates.length !== 1) throw new CommerceError("OFFER_AMBIGUOUS", "MKL returned duplicate offers for one TulisAI product.", 409);
   return candidates[0]!;
+}
+
+export async function discoverOffer(config: CommerceConfig, planCode: string, planVersion: string, fetcher: typeof fetch = fetch): Promise<MklOffer> {
+  const product = productContract(planCode, planVersion);
+  return selectOffer(await readOffers(config, fetcher), config, product.planCode);
+}
+
+export const B5_PLAN_CODES = Object.keys(B5_PRODUCTS) as B5PlanCode[];
+
+/**
+ * Every TulisAI product from one read of MKL's catalog. Each product is judged
+ * exactly as `discoverOffer` judges it, and a product that breaks the locked
+ * contract fails alone: it never hides the others.
+ */
+export async function discoverOffers(config: CommerceConfig, fetcher: typeof fetch = fetch): Promise<Record<B5PlanCode, MklOffer | CommerceError>> {
+  const offers = await readOffers(config, fetcher);
+  const result = {} as Record<B5PlanCode, MklOffer | CommerceError>;
+  for (const planCode of B5_PLAN_CODES) {
+    try { result[planCode] = selectOffer(offers, config, planCode); }
+    catch (error) { if (error instanceof CommerceError) result[planCode] = error; else throw error; }
+  }
+  return result;
 }
 
 export async function startCheckout(config: CommerceConfig, input: { idToken: string; offerId: string; buyerName: string; buyerEmail: string; buyerPhone: string; idempotencyKey: string }, fetcher: typeof fetch = fetch) {
