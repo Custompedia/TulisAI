@@ -35,7 +35,7 @@ export function planStyleCommand(style: WritingStyle, selection: SelectionRange,
 }
 
 // A toolbar action is a plain run: the applied skill's sample, note and output shape never ride along.
-const plain = (base: Settings, patch: Partial<Settings>): Settings => ({ ...base, styleId: null, sample: '', extra: '', focus: [], format: defaults.format, length: defaults.length, customized: false, ...patch });
+export const plain = (base: Settings, patch: Partial<Settings>): Settings => ({ ...base, styleId: null, sample: '', extra: '', focus: [], format: defaults.format, length: defaults.length, customized: false, ...patch });
 
 // Humanize keeps the register of the mode the user is already writing in.
 const humanizeContext = (base: Settings) => (base.mode === 'academic' ? 'academic' : base.mode === 'professional' ? 'professional' : base.context);
@@ -49,6 +49,24 @@ export function planInstruction(instruction: string, selection: SelectionRange, 
   const length = selection.text.length;
   if (length > limits.runLimit) return tooLong(label, length, limits.runLimit, t, format);
   return { kind: 'generate', label, instruction: text, override: plain(base, { customized: true }) };
+}
+
+// The Asisten panel's quick actions: a format and length preset sent with this one run only. They ride as a
+// per-run override, like the toolbar actions, so they work below Max even though the server drops a stored
+// Sesuaikan block there. The mode the writer picked stays; the skill's sample and note do not ride along.
+export const QUICK_ACTIONS = ['summarize', 'expand', 'bullets', 'table'] as const;
+export type QuickAction = (typeof QUICK_ACTIONS)[number];
+export function quickActionOverride(action: QuickAction, base: Settings): Settings {
+  const shape: Record<QuickAction, Partial<Settings>> = {
+    summarize: { format: 'short_summary', length: 'same' },
+    expand: { format: 'paragraph', length: 'more_detailed' },
+    bullets: { format: 'bullets', length: 'same' },
+    table: { format: 'table', length: 'same' },
+  };
+  return plain(base, { mode: base.mode, customized: true, ...shape[action] });
+}
+export function quickActionLabel(action: QuickAction, t: T): string {
+  return { summarize: t('Ringkas', 'Summarize'), expand: t('Perluas', 'Expand'), bullets: t('Jadikan poin', 'Make bullets'), table: t('Jadikan tabel', 'Make a table') }[action];
 }
 
 // Turns a bubble-menu command into what the workspace should do; pure so it can be tested.

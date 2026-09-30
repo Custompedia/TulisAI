@@ -2,9 +2,9 @@
 import { useEffect, useEffectEvent, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, EllipsisVertical, FileCog, Highlighter, Indent, Italic,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, CaseSensitive, EllipsisVertical, FileCog, Highlighter, Indent, Italic,
   List, ListChecks, ListOrdered, Minus, Outdent, PaintRoller, PanelTop, Plus, Redo2, RemoveFormatting, Search, SeparatorHorizontal,
-  SpellCheck, Strikethrough, Subscript, Superscript, Underline, Undo2, UnfoldVertical, type LucideIcon,
+  SpellCheck, SquarePlus, Strikethrough, Subscript, Superscript, Underline, Undo2, UnfoldVertical, type LucideIcon,
 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { DEFAULT_FONT_POINTS } from '@/lib/docx/office-defaults';
@@ -163,60 +163,51 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
   const splitTrigger = 'flex h-8 w-4 shrink-0 items-center justify-center rounded-md transition-colors disabled:cursor-not-allowed disabled:opacity-40';
   const labelTrigger = (width: string) => `flex h-8 ${width} shrink-0 items-center justify-between gap-1 rounded-md px-2 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40`;
 
-  // Groups collapse into the ⋮ panel right to left as the toolbar narrows; each pair of classes must stay in step.
+  const sizeControls = <>
+    <Control icon={Minus} label={t('Perkecil ukuran font', 'Decrease font size')} shortcut={`${mod}+Shift+<`} disabled={off || (selectionFontSize(active) ?? DEFAULT_FONT_POINTS) <= 1} onRun={() => stepFontSize(active, -1)} />
+    <FontSizeField editor={active} disabled={off} />
+    <Control icon={Plus} label={t('Perbesar ukuran font', 'Increase font size')} shortcut={`${mod}+Shift+>`} disabled={off} onRun={() => stepFontSize(active, 1)} />
+  </>;
+  const fontPicker = (
+    <Popover label={t('Font', 'Font')} disabled={off} triggerClassName={labelTrigger('w-[116px]')} idleClassName={LABEL_IDLE}
+      trigger={<><span className="truncate" style={{ fontFamily: FONTS.find((font) => font.name === family)?.stack }}>{family ?? ''}</span><Chevron /></>}>
+      {(close) => <div className="w-56"><ChoiceList close={close} items={[
+        ...FONTS.map((font) => ({ key: font.name, label: font.name, style: { fontFamily: font.stack, fontSize: 14 }, checked: family === font.name, onSelect: () => chain().setFontFamily(font.stack).run() })),
+        { key: 'reset', label: t('Font bawaan', 'Default font'), checked: false, onSelect: () => chain().unsetFontFamily().run() },
+      ]} /></div>}
+    </Popover>
+  );
+  // A row of tools inside a dropdown, the same way the ⋮ panel shows the groups that no longer fit.
+  const toolPanel = (label: string, trigger: React.ReactNode, body: React.ReactNode) => (
+    <Popover label={label} disabled={off} role="dialog" focusFirst={false} scrollable={false} triggerClassName={labelTrigger('w-auto')} idleClassName={LABEL_IDLE} trigger={<>{trigger}<Chevron /></>}>
+      {() => <div className="flex w-max max-w-[min(22rem,calc(100vw-2rem))] flex-wrap items-center gap-1 p-0.5">{body}</div>}
+    </Popover>
+  );
+
+  // Order (UX plan, section 9): Urungkan/Ulangi/Cari · Gaya paragraf · B I U S · Tautan · Perataan, spasi, daftar,
+  // indentasi · Sisipkan ▾ · Tata letak ▾ · Aa ▾ · Zoom, ejaan, kuas · ⋮. Structure and layout come before the
+  // font controls so they stay on the bar at the default panel widths. Groups still collapse into ⋮ right to
+  // left as the toolbar narrows; each bar/panel pair of classes must stay in step.
   const groups: Array<{ id: string; bar: string; panel: string; divider: boolean; render: () => React.ReactNode }> = [
     { id: 'history', bar: '', panel: 'hidden', divider: false, render: () => <>
-      <Control icon={Search} label={t('Cari dan ganti', 'Find and replace')} shortcut={`${mod}+F`} active={!!find} onRun={() => (find ? setFind(null) : openFind(false))} />
       <Control icon={Undo2} label={t('Urungkan', 'Undo')} shortcut={`${mod}+Z`} disabled={off || !active.can().undo()} onRun={() => chain().undo().run()} />
       <Control icon={Redo2} label={t('Ulangi', 'Redo')} shortcut={`${mod}+Y`} disabled={off || !active.can().redo()} onRun={() => chain().redo().run()} />
+      <Control icon={Search} label={t('Cari dan ganti', 'Find and replace')} shortcut={`${mod}+F`} active={!!find} onRun={() => (find ? setFind(null) : openFind(false))} />
     </> },
-    { id: 'tools', bar: '@max-[813px]:hidden', panel: 'hidden @max-[813px]:flex', divider: false, render: () => <>
-      <Control icon={SpellCheck} label={spellOn ? t('Matikan periksa ejaan', 'Turn spell check off') : t('Nyalakan periksa ejaan', 'Turn spell check on')} active={spellOn} onRun={() => setSpellcheck(active.view, !spellOn)} />
-      <Control icon={PaintRoller} label={t('Salin format (klik dua kali untuk mengunci)', 'Paint format (double-click to lock)')} active={!!painter} disabled={off}
-        onRun={(event) => { if (event.detail >= 2) setPainter({ format: captureFormat(active), sticky: true }); else setPainter(painter ? null : { format: captureFormat(active), sticky: false }); }} />
-    </> },
-    { id: 'zoom', bar: '@max-[890px]:hidden', panel: 'hidden @max-[890px]:flex', divider: true, render: () => (
-      <Popover label={t('Perbesaran', 'Zoom')} triggerClassName={labelTrigger('w-[64px]')} idleClassName={LABEL_IDLE} trigger={<><span className="tabular-nums">{zoomLabel}</span><Chevron /></>}>
-        {(close) => <ChoiceList close={close} items={[
-          { key: 'fit', label: t('Pas lebar', 'Fit width'), checked: zoom === 'fit', onSelect: () => onZoom('fit') },
-          ...ZOOM_LEVELS.map((level) => ({ key: String(level), label: `${level}%`, checked: zoom === level, onSelect: () => onZoom(level) })),
-        ]} />}
-      </Popover>
-    ) },
-    { id: 'style', bar: '@max-[435px]:hidden', panel: 'hidden @max-[435px]:flex', divider: true, render: () => (
+    { id: 'style', bar: '@max-[420px]:hidden', panel: 'hidden @max-[420px]:flex', divider: true, render: () => (
       <Popover label={t('Gaya paragraf', 'Paragraph style')} disabled={off} triggerClassName={labelTrigger('w-[112px]')} idleClassName={LABEL_IDLE}
         trigger={<><span className="truncate">{styles.find((style) => style.value === blockStyle)?.label}</span><Chevron /></>}>
         {(close) => <div className="w-56"><ChoiceList close={close} items={styles.map((style) => ({ key: style.value, label: style.label, style: style.style, checked: style.value === blockStyle, onSelect: () => setBlockStyle(active, style.value) }))} /></div>}
       </Popover>
     ) },
-    { id: 'font', bar: '@max-[564px]:hidden', panel: 'hidden @max-[564px]:flex', divider: true, render: () => (
-      <Popover label={t('Font', 'Font')} disabled={off} triggerClassName={labelTrigger('w-[116px]')} idleClassName={LABEL_IDLE}
-        trigger={<><span className="truncate" style={{ fontFamily: FONTS.find((font) => font.name === family)?.stack }}>{family ?? ''}</span><Chevron /></>}>
-        {(close) => <div className="w-56"><ChoiceList close={close} items={[
-          ...FONTS.map((font) => ({ key: font.name, label: font.name, style: { fontFamily: font.stack, fontSize: 14 }, checked: family === font.name, onSelect: () => chain().setFontFamily(font.stack).run() })),
-          { key: 'reset', label: t('Font bawaan', 'Default font'), checked: false, onSelect: () => chain().unsetFontFamily().run() },
-        ]} /></div>}
-      </Popover>
-    ) },
-    { id: 'size', bar: '@max-[685px]:hidden', panel: 'hidden @max-[685px]:flex', divider: true, render: () => <>
-      <Control icon={Minus} label={t('Perkecil ukuran font', 'Decrease font size')} shortcut={`${mod}+Shift+<`} disabled={off || (selectionFontSize(active) ?? DEFAULT_FONT_POINTS) <= 1} onRun={() => stepFontSize(active, -1)} />
-      <FontSizeField editor={active} disabled={off} />
-      <Control icon={Plus} label={t('Perbesar ukuran font', 'Increase font size')} shortcut={`${mod}+Shift+>`} disabled={off} onRun={() => stepFontSize(active, 1)} />
-    </> },
     { id: 'marks', bar: '', panel: 'hidden', divider: true, render: () => <>
       <Control icon={Bold} label={t('Tebal', 'Bold')} shortcut={`${mod}+B`} active={editor.isActive('bold')} disabled={off} onRun={() => chain().toggleBold().run()} />
       <Control icon={Italic} label={t('Miring', 'Italic')} shortcut={`${mod}+I`} active={editor.isActive('italic')} disabled={off} onRun={() => chain().toggleItalic().run()} />
       <Control icon={Underline} label={t('Garis bawah', 'Underline')} shortcut={`${mod}+U`} active={editor.isActive('underline')} disabled={off} onRun={() => chain().toggleUnderline().run()} />
       <Control icon={Strikethrough} label={t('Coret', 'Strikethrough')} shortcut={`${mod}+Shift+S`} active={editor.isActive('strike')} disabled={off} onRun={() => chain().toggleStrike().run()} />
     </> },
-    { id: 'colors', bar: '@max-[745px]:hidden', panel: 'hidden @max-[745px]:flex', divider: false, render: () => <>
-      <ColorPicker icon={Baseline} label={t('Warna teks', 'Text colour')} value={textColor} fallback="#000000" resetLabel={t('Reset', 'Reset')} disabled={off}
-        onPick={(color) => chain().setColor(color).run()} onReset={() => chain().unsetColor().run()} />
-      <ColorPicker icon={Highlighter} label={t('Warna sorotan', 'Highlight colour')} value={highlight} fallback="transparent" resetLabel={t('Tidak ada', 'None')} resetIcon="none" disabled={off}
-        onPick={(color) => chain().unsetBackgroundColor().setHighlight({ color }).run()} onReset={() => chain().unsetHighlight().unsetBackgroundColor().run()} />
-    </> },
-    { id: 'link', bar: '@max-[930px]:hidden', panel: 'hidden @max-[930px]:flex', divider: true, render: () => <LinkPopover editor={active} disabled={off} /> },
-    { id: 'paragraph', bar: '@max-[1150px]:hidden', panel: 'hidden @max-[1150px]:flex', divider: true, render: () => <>
+    { id: 'link', bar: '@max-[462px]:hidden', panel: 'hidden @max-[462px]:flex', divider: true, render: () => <LinkPopover editor={active} disabled={off} /> },
+    { id: 'paragraph', bar: '@max-[675px]:hidden', panel: 'hidden @max-[675px]:flex', divider: true, render: () => <>
       <Popover label={t('Perataan', 'Align')} disabled={off} role="menu" trigger={<><AlignIcon size={15} aria-hidden="true" /><Chevron /></>}>
         {(close) => (
           <div className="flex gap-0.5">
@@ -245,7 +236,6 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
           ]} />
         </div>}
       </Popover>
-      <Control icon={ListChecks} label={t('Daftar periksa', 'Checklist')} shortcut={`${mod}+Shift+9`} active={editor.isActive('taskList')} disabled={off} onRun={() => chain().toggleTaskList().run()} />
       <span className="flex items-center">
         <Control icon={List} label={t('Daftar poin', 'Bulleted list')} shortcut={`${mod}+Shift+8`} active={editor.isActive('bulletList')} disabled={off} onRun={() => chain().toggleBulletList().run()} />
         <Popover label={t('Gaya poin', 'Bullet style')} disabled={off} triggerClassName={splitTrigger} trigger={<Chevron />}>
@@ -258,25 +248,52 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
           {(close) => <div className="w-44"><ChoiceList close={close} items={orderedChoices} /></div>}
         </Popover>
       </span>
+      <Control icon={ListChecks} label={t('Daftar periksa', 'Checklist')} shortcut={`${mod}+Shift+9`} active={editor.isActive('taskList')} disabled={off} onRun={() => chain().toggleTaskList().run()} />
     </> },
-    { id: 'indent', bar: '@max-[1252px]:hidden', panel: 'hidden @max-[1252px]:flex', divider: false, render: () => <>
+    { id: 'indent', bar: '@max-[740px]:hidden', panel: 'hidden @max-[740px]:flex', divider: false, render: () => <>
       <Control icon={Outdent} label={t('Kurangi indentasi', 'Decrease indent')} shortcut={`${mod}+[`} disabled={off || !canShiftIndent(active, -1)} onRun={() => shiftIndent(active, -1)} />
       <Control icon={Indent} label={t('Tambah indentasi', 'Increase indent')} shortcut={`${mod}+]`} disabled={off || !canShiftIndent(active, 1)} onRun={() => shiftIndent(active, 1)} />
-      <Control icon={RemoveFormatting} label={t('Hapus format', 'Clear formatting')} shortcut={`${mod}+\\`} disabled={off} onRun={() => clearFormatting(active)} />
     </> },
-    { id: 'insert', bar: '@max-[1390px]:hidden', panel: 'hidden @max-[1390px]:flex', divider: true, render: () => <>
-      <Control icon={Superscript} label={t('Superskrip', 'Superscript')} shortcut={`${mod}+.`} active={editor.isActive('superscript')} disabled={off} onRun={() => chain().toggleSuperscript().run()} />
-      <Control icon={Subscript} label={t('Subskrip', 'Subscript')} shortcut={`${mod}+,`} active={editor.isActive('subscript')} disabled={off} onRun={() => chain().toggleSubscript().run()} />
+    { id: 'insert', bar: '@max-[792px]:hidden', panel: 'hidden @max-[792px]:flex', divider: true, render: () => toolPanel(t('Sisipkan', 'Insert'), <><SquarePlus size={15} aria-hidden="true" /><span>{t('Sisipkan', 'Insert')}</span></>, <>
       <TableButton editor={active} disabled={off} />
-      <Control icon={Minus} label={t('Garis horizontal', 'Horizontal line')} disabled={off} onRun={() => chain().setHorizontalRule().run()} />
-      <Control icon={SeparatorHorizontal} label={t('Hentian halaman', 'Page break')} shortcut={`${mod}+Enter`} disabled={off} onRun={() => chain().setPageBreak().run()} />
-      <SpecialCharacterButton editor={active} disabled={off} />
       <FootnoteButton editor={active} disabled={off} />
       <TocButton editor={active} disabled={off} />
-    </> },
-    { id: 'page', bar: '@max-[1520px]:hidden', panel: 'hidden @max-[1520px]:flex', divider: true, render: () => <>
-      <Control icon={FileCog} label={t('Pengaturan halaman', 'Page setup')} disabled={disabled} onRun={onPageSetup} />
-      <Control icon={PanelTop} label={t('Header & footer', 'Header & footer')} disabled={disabled} onRun={onHeaderFooter} />
+      <Control icon={SeparatorHorizontal} label={t('Hentian halaman', 'Page break')} shortcut={`${mod}+Enter`} disabled={off} onRun={() => chain().setPageBreak().run()} />
+      <SpecialCharacterButton editor={active} disabled={off} />
+      {/* Ctrl+. is Mode fokus now, so superscript lives here without a shortcut. */}
+      <Control icon={Superscript} label={t('Superskrip', 'Superscript')} active={editor.isActive('superscript')} disabled={off} onRun={() => chain().toggleSuperscript().run()} />
+      <Control icon={Subscript} label={t('Subskrip', 'Subscript')} shortcut={`${mod}+,`} active={editor.isActive('subscript')} disabled={off} onRun={() => chain().toggleSubscript().run()} />
+      <Control icon={Minus} label={t('Garis horizontal', 'Horizontal line')} disabled={off} onRun={() => chain().setHorizontalRule().run()} />
+    </>) },
+    { id: 'layout', bar: '@max-[845px]:hidden', panel: 'hidden @max-[845px]:flex', divider: false, render: () => (
+      <Popover label={t('Tata letak', 'Layout')} disabled={disabled} triggerClassName={labelTrigger('w-auto')} idleClassName={LABEL_IDLE} trigger={<><FileCog size={15} aria-hidden="true" /><span>{t('Tata letak', 'Layout')}</span><Chevron /></>}>
+        {(close) => <div className="w-56"><ChoiceList close={close} checkable={false} items={[
+          { key: 'setup', icon: FileCog, label: t('Pengaturan halaman', 'Page setup'), onSelect: onPageSetup },
+          { key: 'running', icon: PanelTop, label: t('Header & footer', 'Header & footer'), onSelect: onHeaderFooter },
+        ]} /></div>}
+      </Popover>
+    ) },
+    { id: 'text', bar: '@max-[900px]:hidden', panel: 'hidden @max-[900px]:flex', divider: false, render: () => toolPanel(t('Font, ukuran, dan warna', 'Font, size and colour'), <CaseSensitive size={17} aria-hidden="true" />, <>
+      {fontPicker}
+      {sizeControls}
+      <ColorPicker icon={Baseline} label={t('Warna teks', 'Text colour')} value={textColor} fallback="#000000" resetLabel={t('Reset', 'Reset')} disabled={off}
+        onPick={(color) => chain().setColor(color).run()} onReset={() => chain().unsetColor().run()} />
+      <ColorPicker icon={Highlighter} label={t('Warna sorotan', 'Highlight colour')} value={highlight} fallback="transparent" resetLabel={t('Tidak ada', 'None')} resetIcon="none" disabled={off}
+        onPick={(color) => chain().unsetBackgroundColor().setHighlight({ color }).run()} onReset={() => chain().unsetHighlight().unsetBackgroundColor().run()} />
+      <Control icon={RemoveFormatting} label={t('Hapus format', 'Clear formatting')} shortcut={`${mod}+\\`} disabled={off} onRun={() => clearFormatting(active)} />
+    </>) },
+    { id: 'zoom', bar: '@max-[975px]:hidden', panel: 'hidden @max-[975px]:flex', divider: true, render: () => (
+      <Popover label={t('Perbesaran', 'Zoom')} triggerClassName={labelTrigger('w-[64px]')} idleClassName={LABEL_IDLE} trigger={<><span className="tabular-nums">{zoomLabel}</span><Chevron /></>}>
+        {(close) => <ChoiceList close={close} items={[
+          { key: 'fit', label: t('Pas lebar', 'Fit width'), checked: zoom === 'fit', onSelect: () => onZoom('fit') },
+          ...ZOOM_LEVELS.map((level) => ({ key: String(level), label: `${level}%`, checked: zoom === level, onSelect: () => onZoom(level) })),
+        ]} />}
+      </Popover>
+    ) },
+    { id: 'tools', bar: '@max-[1000px]:hidden', panel: 'hidden @max-[1000px]:flex', divider: false, render: () => <>
+      <Control icon={SpellCheck} label={spellOn ? t('Matikan periksa ejaan', 'Turn spell check off') : t('Nyalakan periksa ejaan', 'Turn spell check on')} active={spellOn} onRun={() => setSpellcheck(active.view, !spellOn)} />
+      <Control icon={PaintRoller} label={t('Salin format (klik dua kali untuk mengunci)', 'Paint format (double-click to lock)')} active={!!painter} disabled={off}
+        onRun={(event) => { if (event.detail >= 2) setPainter({ format: captureFormat(active), sticky: true }); else setPainter(painter ? null : { format: captureFormat(active), sticky: false }); }} />
     </> },
   ];
 
@@ -289,7 +306,7 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
           {group.render()}
         </div>
       ))}
-      <div className="ml-auto hidden shrink-0 items-center @max-[1520px]:flex">
+      <div className="ml-auto hidden shrink-0 items-center @max-[1000px]:flex">
         <span aria-hidden="true" className={DIVIDER} />
         <Popover label={t('Opsi lainnya', 'More options')} role="dialog" focusFirst={false} triggerClassName={CONTROL}
           trigger={<EllipsisVertical size={15} aria-hidden="true" />} align="end" scrollable={false}>

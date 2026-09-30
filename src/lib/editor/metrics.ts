@@ -48,3 +48,14 @@ export function wordDelta(before: string, after: string): { added: number; remov
   for (const part of parts) { if (part.added) added += words(part.value); if (part.removed) removed += words(part.value); }
   return { added, removed };
 }
+
+// Spoken aloud (a script or caption read on camera) at about 130 words a minute, a comfortable pace for
+// Indonesian and English voice-over; reading stays at 200 words a minute (readingMinutes).
+export const SPEAKING_WPM = 130;
+export function speakingSeconds(text: string): number { const words = countWords(text); return words ? Math.max(1, Math.round((words / SPEAKING_WPM) * 60)) : 0; }
+// "45 dtk", "1 mnt 20 dtk", "3 mnt": short enough for the status bar.
+export function formatDuration(seconds: number, t: (id: string, en: string) => string): string {
+  if (seconds < 60) return `${seconds} ${t('dtk', 's')}`;
+  const minutes = Math.floor(seconds / 60); const rest = seconds % 60;
+  return rest ? `${minutes} ${t('mnt', 'min')} ${rest} ${t('dtk', 's')}` : `${minutes} ${t('mnt', 'min')}`;
+}

@@ -38,10 +38,12 @@ function MenuAction({ icon: Icon, label, onRun, disabled }: { icon: LucideIcon; 
 
 // Hidden while an inline result is open so the two never stack on the same text.
 // `stylesLocked`: the account has no saved_styles, so skills are listed with a padlock and open the plans instead.
-type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; styles: WritingStyle[]; stylesLocked: boolean; onCommand: (command: SelectionCommand) => void; onStyle: (style: WritingStyle) => void; onUpgrade: () => void };
+type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; styles: WritingStyle[]; stylesLocked: boolean; onCommand: (command: SelectionCommand) => void; onStyle: (style: WritingStyle) => void; onUpgrade: () => void;
+  // The kind of writing puts its likeliest action first (Lebih singkat for a caption); every action stays.
+  order?: InlineAction[] };
 const INLINE: Array<[InlineAction, LucideIcon]> = [['alternatives', Shuffle], ['shorter', Minimize2], ['clearer', ScanText], ['formal', BriefcaseBusiness], ['natural', Smile]];
 
-export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles, stylesLocked, onCommand, onStyle, onUpgrade }: Props) {
+export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles, stylesLocked, onCommand, onStyle, onUpgrade, order }: Props) {
   const { t, locale } = useLocale();
   const [more, setMore] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -89,7 +91,7 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles,
           ) : (
             <div className="flex items-center gap-0.5">
               <div className="scrollbar-thin flex min-w-0 items-center gap-0.5 overflow-x-auto">
-                {INLINE.map(([command, icon]) => <Action key={command} icon={icon} label={commandLabel(command, t)} disabled={disabled || overInline} title={overInline ? hint : undefined} onRun={run(command)} />)}
+                {(order ? [...INLINE].sort(([a], [b]) => order.indexOf(a) - order.indexOf(b)) : INLINE).map(([command, icon]) => <Action key={command} icon={icon} label={commandLabel(command, t)} disabled={disabled || overInline} title={overInline ? hint : undefined} onRun={run(command)} />)}
               </div>
               <span aria-hidden="true" className="mx-0.5 h-5 w-px shrink-0 bg-line" />
               <button type="button" aria-label={t('Aksi lainnya', 'More actions')} title={t('Aksi lainnya', 'More actions')} aria-haspopup="menu" aria-expanded={more} onMouseDown={keep} onClick={() => setMore(!more)}

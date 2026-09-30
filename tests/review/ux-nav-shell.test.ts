@@ -262,7 +262,9 @@ describe('keyboard shortcuts', () => {
     const keys = shortcutGroups(id).flatMap((group) => group.items.map((item) => item.keys.join('+')));
     expect(keys).toContain('Mod+K');
     expect(keys).toContain('Mod+S');
-    expect(keys).not.toContain('Mod+.');
+    // Mode fokus and the Perintah AI dock are real bindings since UX 1c.
+    expect(keys).toContain('Mod+.');
+    expect(keys).toContain('Mod+/');
   });
 });
 
