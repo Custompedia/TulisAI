@@ -61,14 +61,14 @@ export const pickCustom = (settings: Settings): CustomFields => ({ format: setti
 // Format, audience, length, emphasis and (optionally) the note; shared by the panel and the style dialog.
 // The reader is hidden for modes that already name their own; a locked note stays visible as a Max row instead of
 // a field the server would empty on every run.
-export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true, describe = false, mode, noteLocked = false, onUpgrade }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean; describe?: boolean; mode?: Mode; noteLocked?: boolean; onUpgrade?: () => void }) {
+export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true, describe = false, mode, noteLocked = false, onUpgrade, docType }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean; describe?: boolean; mode?: Mode; noteLocked?: boolean; onUpgrade?: () => void; docType?: string | null }) {
   const { t } = useLocale();
   const id = useId();
   return (
     <>
       <div>
         <FieldLabel htmlFor={`${id}-fmt`}>{t('Format', 'Format')}</FieldLabel>
-        <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, format: value })} options={formatOptions(t).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
+        <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, format: value })} options={formatOptions(t, docType, draft.format).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
       </div>
       {(!mode || usesAudience(mode)) && (
         <div>
@@ -111,7 +111,7 @@ export function CustomFields({ draft, onChange, disabled, embedded = false, show
 }
 
 // `sessionNote` is shown on plans whose Sesuaikan block the server does not keep, so the limit is said out loud.
-export function CustomizePanel({ settings, onChange, disabled, defaultOpen = false, embedded = false, onClose, noteLocked = false, onUpgrade, sessionNote }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; defaultOpen?: boolean; embedded?: boolean; onClose?: () => void; noteLocked?: boolean; onUpgrade?: () => void; sessionNote?: string }) {
+export function CustomizePanel({ settings, onChange, disabled, defaultOpen = false, embedded = false, onClose, noteLocked = false, onUpgrade, sessionNote, docType }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; defaultOpen?: boolean; embedded?: boolean; onClose?: () => void; noteLocked?: boolean; onUpgrade?: () => void; sessionNote?: string; docType?: string | null }) {
   const { t } = useLocale();
   const id = useId();
   const [open, setOpen] = useState(embedded || defaultOpen);
@@ -133,7 +133,7 @@ export function CustomizePanel({ settings, onChange, disabled, defaultOpen = fal
       {open && (
         <div id={`${id}-panel`} className={`grid gap-x-5 gap-y-4 ${embedded ? 'md:grid-cols-2' : 'border-t border-line px-3 pb-3.5 pt-3'}`}>
           {sessionNote && !embedded && <p className="text-xs leading-relaxed text-ink-500">{sessionNote}</p>}
-          <CustomFields draft={draft} onChange={setDraft} disabled={disabled} embedded={embedded} mode={settings.mode} noteLocked={noteLocked} onUpgrade={onUpgrade} />
+          <CustomFields draft={draft} onChange={setDraft} disabled={disabled} embedded={embedded} mode={settings.mode} noteLocked={noteLocked} onUpgrade={onUpgrade} docType={docType} />
           <div className={`flex flex-wrap items-center justify-between gap-2 ${embedded ? 'border-t border-line pt-3.5 md:col-span-2' : ''}`}>
             <Button size="sm" variant="ghost" icon={RotateCcw} disabled={disabled} onClick={reset}>{t('Reset', 'Reset')}</Button>
             <div className="flex gap-2">

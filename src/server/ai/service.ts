@@ -76,9 +76,10 @@ async function settleTelemetry(id: string, charge: number) {
 async function cleanExpired(ownerId: string) {
   await runtime().DB.prepare("UPDATE transformations SET source_text='',output_json='{}',runtime_json='{}',anchor_json=NULL,status='expired' WHERE id IN (SELECT id FROM transformations WHERE owner_id=? AND status IN ('preview','applied','discarded') AND expires_at<=? ORDER BY expires_at LIMIT 100)").bind(ownerId, Date.now()).run();
 }
-function requestedFormat(promptId: PromptId, controls: RuntimeInput): 'bullets'|'numbered_list'|'table'|undefined {
+// A script or a thread is one line per spoken idea or post, so each line goes back as its own paragraph.
+function requestedFormat(promptId: PromptId, controls: RuntimeInput): 'paragraph'|'bullets'|'numbered_list'|'table'|undefined {
   if (promptId === 'P07_INLINE_ALTERNATIVES') return undefined;
-  return ({poin:'bullets',bernomor:'numbered_list',tabel:'table'} as const)[String(controls.request?.format) as 'poin'|'bernomor'|'tabel'];
+  return ({poin:'bullets',bernomor:'numbered_list',tabel:'table',script:'paragraph',thread:'paragraph'} as const)[String(controls.request?.format) as 'poin'|'bernomor'|'tabel'|'script'|'thread'];
 }
 // How an applied result goes back into the document. A list or table request keeps its shape. Otherwise a rewrite
 // (P01–P06) or an instruction (P08) over several paragraphs, or one line that came back as several, goes back as

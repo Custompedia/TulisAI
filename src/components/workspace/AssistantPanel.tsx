@@ -287,7 +287,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
                     <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
                   </div>
                 </div>
-                <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings}
+                <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings} docType={docType}
                   noteLocked={noteLocked} onUpgrade={onUpgrade} sessionNote={sessionOnly ? t('Tidak tersimpan setelah notebook ditutup. Menyimpannya di notebook mulai paket Plus.', 'Not kept after the notebook is closed. Keeping it in the notebook starts on Plus.') : undefined} /></div>
               </>
             )}

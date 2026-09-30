@@ -18,7 +18,7 @@ export const sentences = (text: string): string[] => {
 export const paragraphCount = (text: string): number => text.split('\n').filter((line) => line.trim()).length;
 
 // Formats whose own shape decides the paragraph count, so the source count is not the rule.
-export const LIST_FORMATS = new Set(['poin', 'bernomor', 'tabel', 'ringkasan', 'email']);
+export const LIST_FORMATS = new Set(['poin', 'bernomor', 'tabel', 'ringkasan', 'email', 'script', 'thread']);
 export const paragraphsPreserved = (source: string, output: string, format?: string) => (format && LIST_FORMATS.has(format)) || paragraphCount(source) === paragraphCount(output);
 
 export const SIMPLIFY_MIN_RATIO = 0.85;
@@ -29,8 +29,9 @@ export const LENGTH_BANDS: Record<string, Band> = { "lebih singkat": { min: 0.5,
 export const LENGTH_MIN_WORDS = 10;
 export function lengthBand(promptId: string, request: { format?: string; length?: string } | undefined): Band | null {
   if (request?.format === 'ringkasan') return LENGTH_BANDS.ringkasan!;
-  // An email adds a greeting and a sign-off, so its length is not comparable to the source.
-  if (request?.format === 'email') return null;
+  // An email adds a greeting and a sign-off, and a script or a thread re-breaks every line, so their length is not
+  // comparable to the source.
+  if (request?.format === 'email' || request?.format === 'script' || request?.format === 'thread') return null;
   if (request?.length && LENGTH_BANDS[request.length]) return LENGTH_BANDS[request.length]!;
   return promptId === 'P01_STANDARD_REWRITE' || promptId === 'P08_CUSTOM_TRANSFORM' ? LENGTH_BANDS.default! : null;
 }

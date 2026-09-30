@@ -98,12 +98,13 @@ const TRAILING = /^\s*(%|persen|percent|ribu|rb|juta|jt|miliar|milyar|triliun|tr
 // a dropped or a fabricated figure — "one of the reasons" is not a quantity.
 export type NumericToken = { raw: string; values: string[]; kind: 'digits' | 'words' };
 
-// Layout, not content: a leading "1." or "2)" marker, and an inline enumeration that really is one
-// (at least two markers on the line, counting up from the first). Stripping runs on both sides of the
-// comparison, so a number that is a marker in both is simply never compared.
+// Layout, not content: a leading "1." or "2)" marker, a thread's leading "1/" (a bare slash before a space, never a
+// fraction like "1/2"), and an inline enumeration that really is one (at least two markers on the line, counting up
+// from the first). Stripping runs on both sides of the comparison, so a number that is a marker in both is simply
+// never compared.
 export function stripListMarkers(text: string): string {
   return text.split('\n').map((line) => {
-    const withoutLeading = line.replace(/^[ \t]*(?:[-*•]\s*)?\d{1,3}[.)][ \t]+/u, '');
+    const withoutLeading = line.replace(/^[ \t]*(?:[-*•]\s*)?\d{1,3}[.)][ \t]+/u, '').replace(/^[ \t]*\d{1,2}\/[ \t]+/u, '');
     const markers = [...withoutLeading.matchAll(/(^|\s)(\d{1,2})[.)]([ \t]+)/gu)];
     if (markers.length < 2) return withoutLeading;
     const numbers = markers.map((match) => Number(match[2]));
