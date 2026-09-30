@@ -7,7 +7,11 @@ export type AdminUser = {
   id: string; name: string; email: string; username: string | null; image: string | null; role: Role; tier: Tier; emailVerified: boolean; createdAt: string; updatedAt: string;
   banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; charactersUsed: number; characterScope: 'account' | 'period'; unlimited: boolean;
   requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
+  plan: AdminPlan;
 };
+export type PaidPlan = Exclude<Tier, 'free'>;
+// The running local access period. `tier` above is already the effective tier (this plan, else the legacy column).
+export type AdminPlan = { code: PaidPlan | null; source: 'admin' | 'payment' | null; periodEnd: string | null; paidThrough: string | null };
 export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; freeCharacterAllowance: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
 export type AuditEntry = { id: string; actorId: string; actorName: string | null; targetUserId: string | null; targetName: string | null; action: string; details: Record<string, unknown>; createdAt: string };
 export type UsageEntry = { id: string; operation: string; promptId: string | null; status: string; sourceCharacters: number | null; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; errorCode: string | null; createdAt: string; completedAt: string | null };
@@ -24,7 +28,7 @@ export type AiMetrics = {
   byError: Array<{ errorCode: string; count: number }>;
   topUsers: Array<{ id: string; name: string; email: string; role: Role; tier: Tier; requests: number; failed: number; tokens: number }>;
 };
-export const ADMIN_ACTIONS = ['user.create', 'user.update', 'user.role', 'user.ban', 'user.unban', 'user.password', 'user.delete', 'session.revoke', 'session.revoke-all'] as const;
+export const ADMIN_ACTIONS = ['user.create', 'user.update', 'user.role', 'user.ban', 'user.unban', 'user.password', 'user.delete', 'session.revoke', 'session.revoke-all', 'plan.admin.activated', 'plan.admin.extended', 'plan.admin.replaced', 'plan.admin.ended'] as const;
 export const sortLabel = (sort: UserSort, t: T) => ({ newest: t('Terbaru bergabung', 'Newest'), oldest: t('Terlama bergabung', 'Oldest'), name: t('Nama A–Z', 'Name A–Z'), usage: t('AI terbanyak bulan ini', 'Most AI this month'), active: t('Terakhir aktif', 'Recently active') })[sort];
 export const promptLabel = (promptId: string) => ({ P01_STANDARD_REWRITE: 'Parafrase', P02_ACADEMIC: 'Akademik', P03_HUMANIZER: 'Humanize', P04_PROFESSIONAL: 'Profesional', P05_CREATIVE: 'Kreatif', P06_SIMPLIFY: 'Sederhanakan', P07_INLINE_ALTERNATIVES: 'Alternatif inline', P08_CUSTOM_TRANSFORM: 'Sesuaikan', P09_QUALITY_EVALUATION: 'Analisis kualitas', P10_REPAIR: 'Perbaikan', generate: 'Rewrite', repair: 'Perbaikan', analyze: 'Analisis' } as Record<string, string>)[promptId] ?? promptId;
 
@@ -35,6 +39,8 @@ export const actionLabel = (action: string, t: T) => ({
   'user.create': t('Membuat akun', 'Created account'), 'user.update': t('Mengubah data', 'Updated details'), 'user.role': t('Mengubah role', 'Changed role'), 'user.ban': t('Menonaktifkan akun', 'Disabled account'),
   'user.unban': t('Mengaktifkan akun', 'Enabled account'), 'user.password': t('Mengganti password', 'Set a new password'), 'user.delete': t('Menghapus akun', 'Deleted account'),
   'session.revoke': t('Mencabut satu sesi', 'Revoked a session'), 'session.revoke-all': t('Mencabut semua sesi', 'Revoked all sessions'),
+  'plan.admin.activated': t('Mengaktifkan paket', 'Activated a plan'), 'plan.admin.extended': t('Memperpanjang paket', 'Extended the plan'),
+  'plan.admin.replaced': t('Mengganti paket', 'Replaced the plan'), 'plan.admin.ended': t('Mengakhiri paket', 'Ended the plan'),
 }[action] ?? action);
 export const statusLabel = (status: string, t: T) => ({ completed: t('Selesai', 'Completed'), failed: t('Gagal', 'Failed'), reserved: t('Berjalan', 'Running') }[status] ?? status);
 export const operationLabel = (operation: string, t: T) => ({ generate: t('Rewrite', 'Rewrite'), repair: t('Perbaikan', 'Repair'), analyze: t('Analisis', 'Analysis') }[operation] ?? operation);
@@ -46,6 +52,11 @@ export const detailSummary = (entry: AuditEntry, t: T): string => {
     case 'user.create': return `${String(d.email ?? '')} · ${roleLabel((d.role as Role) ?? 'user')} · ${String(d.tier ?? 'free')}`;
     case 'user.update': { const changes = (d.changes ?? {}) as Record<string, unknown>; return Object.entries(changes).map(([key, value]) => `${key}: ${value === null ? '—' : String(value)}`).join(', '); }
     case 'user.delete': return String(d.email ?? '');
+    case 'plan.admin.activated': case 'plan.admin.extended': case 'plan.admin.replaced': {
+      const plan = tierLabel(d.plan as Tier, t); const until = typeof d.periodEnd === 'string' ? d.periodEnd.slice(0, 10) : '';
+      return `${plan}${until ? ` · ${t('sampai', 'until')} ${until}` : ''}${d.note ? ` · ${String(d.note)}` : ''}`;
+    }
+    case 'plan.admin.ended': return String(d.reason ?? '');
     default: return '';
   }
 };

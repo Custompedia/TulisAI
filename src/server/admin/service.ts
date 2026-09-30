@@ -7,6 +7,7 @@ import { planLimits } from '@/lib/plans';
 import { writeAudit } from '../audit';
 import { assertMklAccountDeletable, getMklLinkByUserId } from '../identity/links';
 import { walletSummary } from '../usage/wallet';
+import { PAID_PLANS, type PaidPlan } from '../access/periods';
 
 export const RoleSchema = z.enum(['user', 'admin']);
 export const TierSchema = z.enum(TIERS);
@@ -20,7 +21,7 @@ export const UserPatchSchema = z.object({
 }).refine((value) => Object.keys(value).length > 0, { message: 'Nothing to update.' });
 export const CreateUserSchema = z.object({
   name: z.string().trim().min(1).max(100), email: z.string().trim().email().max(200), username: z.string().trim().min(3).max(30).regex(/^[a-z0-9._]+$/),
-  password: z.string().min(10).max(128), role: RoleSchema.default('user'), tier: TierSchema.default('free'), emailVerified: z.boolean().default(true),
+  password: z.string().min(10).max(128), role: RoleSchema.default('user'), emailVerified: z.boolean().default(true),
 });
 export const ActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('set-role'), role: RoleSchema }),
@@ -28,6 +29,8 @@ export const ActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('unban') }),
   z.object({ action: z.literal('set-password'), newPassword: z.string().min(10).max(128) }),
   z.object({ action: z.literal('revoke-sessions'), sessionToken: z.string().min(1).optional() }),
+  z.object({ action: z.literal('activate-plan'), plan: z.enum(PAID_PLANS), note: z.string().trim().max(200).nullable().default(null) }),
+  z.object({ action: z.literal('end-plan'), reason: z.string().trim().min(3).max(200) }),
 ]);
 export type Role = z.infer<typeof RoleSchema>;
 export type UserPatch = z.infer<typeof UserPatchSchema>;
@@ -36,7 +39,10 @@ export type AdminUser = {
   id: string; name: string; email: string; username: string | null; image: string | null; role: Role; tier: Tier; emailVerified: boolean; createdAt: string; updatedAt: string;
   banned: boolean; banReason: string | null; banExpires: string | null; aiLimitOverride: number | null; aiCharacterLimitOverride: number | null; adminNote: string | null; requestLimit: number; characterLimit: number; charactersUsed: number; characterScope: 'account' | 'period'; unlimited: boolean;
   requestsThisMonth: number; failedThisMonth: number; tokensThisMonth: number; lastActiveAt: string | null; documents: number;
+  plan: AdminPlan;
 };
+// The running local access period, if any. `tier` above is the effective tier: this plan, else the legacy column.
+export type AdminPlan = { code: PaidPlan | null; source: 'admin' | 'payment' | null; periodEnd: string | null; paidThrough: string | null };
 export type AdminSummary = { period: string; users: number; admins: number; banned: number; tiers: Record<Tier, number>; requestsThisMonth: number; charactersThisMonth: number; failedThisMonth: number; tokensThisMonth: number; monthlyLimit: number; freeCharacterAllowance: number; tierLimits: Record<Tier, number>; tierCharacterLimits: Record<Tier, number>; aiEnabled: boolean; model: string };
 export type AuditEntry = { id: string; actorId: string; actorName: string | null; targetUserId: string | null; targetName: string | null; action: string; details: Record<string, unknown>; createdAt: string };
 export type UsageEntry = { id: string; operation: string; promptId: string | null; status: string; sourceCharacters: number | null; inputTokens: number | null; outputTokens: number | null; latencyMs: number | null; errorCode: string | null; createdAt: string; completedAt: string | null };
@@ -45,12 +51,13 @@ export type UserFilter = { q?: string; role?: 'user' | 'admin'; tier?: Tier; sta
 export const USER_SORTS: UserSort[] = ['newest', 'oldest', 'name', 'usage', 'active'];
 export type PageInfo = { page: number; pageSize: number; total: number; pages: number };
 
-type Row = { id: string; name: string; email: string; username: string | null; image: string | null; role: string | null; tier: string | null; email_verified: number; created_at: number; updated_at: number; banned: number; ban_reason: string | null; ban_expires: number | null; ai_limit_override: number | null; ai_character_limit_override: number | null; admin_note: string | null; requests: number | null; characters: number | null; failed: number | null; tokens: number | null; last_active: number | null; documents: number | null };
+type Row = { id: string; name: string; email: string; username: string | null; image: string | null; role: string | null; tier: string | null; email_verified: number; created_at: number; updated_at: number; banned: number; ban_reason: string | null; ban_expires: number | null; ai_limit_override: number | null; ai_character_limit_override: number | null; admin_note: string | null; requests: number | null; characters: number | null; failed: number | null; tokens: number | null; last_active: number | null; documents: number | null;
+  plan_code: string | null; plan_source: 'admin' | 'payment' | null; plan_period_end: string | null; plan_paid_through: string | null };
 
 const iso = (value: number | null | undefined) => (value === null || value === undefined ? null : new Date(value).toISOString());
 const activeBan = (row: { banned: number; ban_expires: number | null }) => row.banned === 1 && (row.ban_expires === null || row.ban_expires > Date.now());
 function toUser(row: Row): AdminUser {
-  const role: Role = isAdminRole(row.role) ? 'admin' : 'user'; const tier = asTier(row.tier);
+  const role: Role = isAdminRole(row.role) ? 'admin' : 'user'; const tier = asTier(row.plan_code ?? row.tier);
   const positive = (value: number | null) => (typeof value === 'number' && value > 0 ? value : null);
   const override = positive(row.ai_limit_override); const characterOverride = positive(row.ai_character_limit_override);
   // Mirrors entitlement(): a plain free account spends one allowance for its whole life, so its usage is not a monthly figure.
@@ -59,19 +66,27 @@ function toUser(row: Row): AdminUser {
     id: row.id, name: row.name, email: row.email, username: row.username, image: row.image, role, tier, emailVerified: row.email_verified === 1, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
     banned: activeBan(row), banReason: row.ban_reason, banExpires: iso(row.ban_expires), aiLimitOverride: override, aiCharacterLimitOverride: characterOverride, adminNote: row.admin_note, requestLimit: override ?? tierLimit(tier), characterLimit: characterOverride ?? characterLimit(tier), unlimited: role === 'admin',
     charactersUsed: row.characters ?? 0, characterScope: scope, requestsThisMonth: row.requests ?? 0, failedThisMonth: row.failed ?? 0, tokensThisMonth: row.tokens ?? 0, lastActiveAt: iso(row.last_active), documents: row.documents ?? 0,
+    plan: { code: (row.plan_code as PaidPlan | null) ?? null, source: row.plan_source, periodEnd: row.plan_period_end, paidThrough: row.plan_paid_through },
   };
 }
 
+// Evaluated inside SQL so every query keeps its existing bind positions.
+const NOW_MS = "(CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER))";
+const PLAN_JOIN = `LEFT JOIN access_periods ap ON ap.id = (SELECT c.id FROM access_periods c WHERE c.owner_id=u.id AND c.status='active'
+    AND c.period_start_ms<=${NOW_MS} AND c.period_end_ms>${NOW_MS} ORDER BY c.period_start_ms DESC LIMIT 1)`;
 const USER_SELECT = `
   SELECT u.id, u.name, u.email, u.username, u.image, u.role, u.tier, u.email_verified, u.created_at, u.updated_at, u.banned, u.ban_reason, u.ban_expires, u.ai_limit_override, u.ai_character_limit_override, u.admin_note,
-    l.requests, l.characters, l.failed, l.tokens, l.last_active, d.documents
+    l.requests, l.characters, l.failed, l.tokens, l.last_active, d.documents,
+    ap.plan_code, ap.source AS plan_source, ap.period_end AS plan_period_end,
+    (SELECT MAX(q.period_end) FROM access_periods q WHERE q.owner_id=u.id AND q.status='active' AND q.period_end_ms>${NOW_MS}) AS plan_paid_through
   FROM user u
   LEFT JOIN (
     SELECT owner_id, COUNT(1) AS requests, COALESCE(SUM(charge_characters),0) AS characters, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed,
       SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens, MAX(created_at) AS last_active
     FROM usage_ledger WHERE period_key=? GROUP BY owner_id
   ) l ON l.owner_id=u.id
-  LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents GROUP BY owner_id) d ON d.owner_id=u.id`;
+  LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents GROUP BY owner_id) d ON d.owner_id=u.id
+  ${PLAN_JOIN}`;
 
 async function withWalletCharacters(users: AdminUser[]): Promise<AdminUser[]> {
   const wallets = await Promise.all(users.map((user) => walletSummary(user.id)));
@@ -98,7 +113,7 @@ const ORDER: Record<UserSort, string> = { newest: 'u.created_at DESC, u.id DESC'
 const USER_WHERE = `
     WHERE (? IS NULL OR lower(u.name) LIKE ? OR lower(u.email) LIKE ? OR lower(COALESCE(u.username,'')) LIKE ?)
       AND (? IS NULL OR (CASE WHEN ? = 'admin' THEN (','||COALESCE(u.role,'')||',') LIKE '%,admin,%' ELSE (','||COALESCE(u.role,'')||',') NOT LIKE '%,admin,%' END))
-      AND (? IS NULL OR u.tier = ?)
+      AND (? IS NULL OR COALESCE(ap.plan_code, u.tier) = ?)
       AND (? IS NULL OR (CASE WHEN ? = 'banned' THEN (u.banned = 1 AND (u.ban_expires IS NULL OR u.ban_expires > ?)) ELSE NOT (u.banned = 1 AND (u.ban_expires IS NULL OR u.ban_expires > ?)) END))`;
 
 // Page-number pagination (the user table is small and the admin wants numbered pages); search plus role/tier/status filters and a sort.
@@ -107,7 +122,7 @@ export async function listUsers(filter: UserFilter = {}, page = 1): Promise<{ su
   const term = (filter.q ?? '').trim().toLowerCase().slice(0, 100); const like = term ? `%${term}%` : null;
   const roleFilter = filter.role ?? null; const tierFilter = filter.tier ?? null; const statusFilter = filter.status ?? null; const now = Date.now();
   const where = [like, like, like, like, roleFilter, roleFilter, tierFilter, tierFilter, statusFilter, statusFilter, now, now];
-  const count = await runtime().DB.prepare(`SELECT COUNT(1) AS n FROM user u ${USER_WHERE}`).bind(...where).first<{ n: number }>();
+  const count = await runtime().DB.prepare(`SELECT COUNT(1) AS n FROM user u ${PLAN_JOIN} ${USER_WHERE}`).bind(...where).first<{ n: number }>();
   const total = count?.n ?? 0; const info = pageInfo(Math.min(page, Math.max(1, Math.ceil(total / PAGE_LIMIT))), total);
   const rows = await runtime().DB.prepare(`${USER_SELECT} ${USER_WHERE} ORDER BY ${ORDER[filter.sort ?? 'newest']} LIMIT ? OFFSET ?`)
     .bind(period, ...where, PAGE_LIMIT, (info.page - 1) * PAGE_LIMIT).all<Row>();
@@ -117,9 +132,10 @@ export async function listUsers(filter: UserFilter = {}, page = 1): Promise<{ su
 async function summary(period: string): Promise<AdminSummary> {
   const now = Date.now();
   const [users, usage] = await Promise.all([
-    runtime().DB.prepare(`SELECT COUNT(1) AS users, SUM(CASE WHEN (','||COALESCE(role,'')||',') LIKE '%,admin,%' THEN 1 ELSE 0 END) AS admins,
-      SUM(CASE WHEN banned = 1 AND (ban_expires IS NULL OR ban_expires > ?) THEN 1 ELSE 0 END) AS banned,
-      SUM(CASE WHEN tier='plus' THEN 1 ELSE 0 END) AS plus, SUM(CASE WHEN tier='pro' OR tier='team' THEN 1 ELSE 0 END) AS pro, SUM(CASE WHEN tier='max' THEN 1 ELSE 0 END) AS max FROM user`).bind(now)
+    runtime().DB.prepare(`SELECT COUNT(1) AS users, SUM(CASE WHEN (','||COALESCE(u.role,'')||',') LIKE '%,admin,%' THEN 1 ELSE 0 END) AS admins,
+      SUM(CASE WHEN u.banned = 1 AND (u.ban_expires IS NULL OR u.ban_expires > ?) THEN 1 ELSE 0 END) AS banned,
+      SUM(CASE WHEN COALESCE(ap.plan_code, u.tier)='plus' THEN 1 ELSE 0 END) AS plus, SUM(CASE WHEN COALESCE(ap.plan_code, u.tier) IN ('pro','team') THEN 1 ELSE 0 END) AS pro,
+      SUM(CASE WHEN COALESCE(ap.plan_code, u.tier)='max' THEN 1 ELSE 0 END) AS max FROM user u ${PLAN_JOIN}`).bind(now)
       .first<{ users: number; admins: number | null; banned: number | null; plus: number | null; pro: number | null; max: number | null }>(),
     runtime().DB.prepare(`SELECT COUNT(1) AS requests, COALESCE(SUM(charge_characters),0) AS characters, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed, SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens FROM usage_ledger WHERE period_key=?`).bind(period)
       .first<{ requests: number; characters: number | null; failed: number | null; tokens: number | null }>(),
@@ -169,7 +185,8 @@ export async function updateUser(userId: string, patch: UserPatch): Promise<Admi
   const sets: string[] = []; const values: unknown[] = [];
   if (patch.name !== undefined) { sets.push('name=?'); values.push(patch.name); }
   if (patch.emailVerified !== undefined) { sets.push('email_verified=?'); values.push(patch.emailVerified ? 1 : 0); }
-  if (patch.tier !== undefined) { sets.push('tier=?'); values.push(patch.tier); }
+  // Paid access is granted through access periods ("Atur paket"), never by editing the legacy tier column.
+  if (patch.tier !== undefined) throw new RequestError('TIER_READ_ONLY', 'The tier cannot be edited directly. Use the plan controls to grant or end a plan.', 422);
   if (patch.aiLimitOverride !== undefined) { sets.push('ai_limit_override=?'); values.push(patch.aiLimitOverride); }
   if (patch.aiCharacterLimitOverride !== undefined) { sets.push('ai_character_limit_override=?'); values.push(patch.aiCharacterLimitOverride); }
   if (patch.adminNote !== undefined) { sets.push('admin_note=?'); values.push(patch.adminNote || null); }
@@ -179,9 +196,6 @@ export async function updateUser(userId: string, patch: UserPatch): Promise<Admi
   return getUser(userId);
 }
 
-export async function setTier(userId: string, tier: Tier): Promise<void> {
-  await runtime().DB.prepare('UPDATE user SET tier=?, updated_at=? WHERE id=?').bind(tier, Date.now(), userId).run();
-}
 
 export const audit = writeAudit;
 

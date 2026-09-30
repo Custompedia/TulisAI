@@ -85,7 +85,7 @@ describe("B4 Unicode and safe Free cutover", () => {
 
   it("reconciles only demonstrably unused legacy Free accounts and leaves ambiguous evidence pending", () => {
     const legacy = new DatabaseSync(":memory:"); legacy.exec("PRAGMA foreign_keys=ON");
-    for (const name of migrationFiles().filter((name) => name !== "0013_b4_character_wallet.sql")) legacy.exec(readFileSync(join("migrations", name), "utf8"));
+    for (const name of migrationFiles().filter((name) => name < "0013_b4_character_wallet.sql")) legacy.exec(readFileSync(join("migrations", name), "utf8"));
     legacy.exec("INSERT INTO user (id,name,email,tier,created_at,updated_at) VALUES ('unused','U','unused@test','free',1,1),('used','U','used@test','free',1,1),('override','U','override@test','free',1,1)");
     legacy.exec("INSERT INTO usage_ledger (id,owner_id,idempotency_key,operation,status,period_key,request_id,charge_characters,created_at) VALUES ('x','used','x','generate','completed','2026-08','x',0,1)");
     legacy.exec("UPDATE user SET ai_character_limit_override=99999 WHERE id='override'");

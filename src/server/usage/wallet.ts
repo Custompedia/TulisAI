@@ -1,4 +1,5 @@
 import { runtime } from "../runtime";
+import { activeAccessPeriod, LOCAL_APP_KEY, LOCAL_PLAN_VERSION } from "../access/periods";
 import { CHARACTER_MEASUREMENT_VERSION } from "./measurement";
 
 export const FREE_GRANT_AMOUNT = 3_000;
@@ -19,11 +20,16 @@ export class WalletError extends Error {
   }
 }
 
+/**
+ * The paid authority a wallet spends against. `local` is a TulisAI access
+ * period (admin grant or direct payment); `mkl` is the dormant B3 projection,
+ * still honoured for any pre-retirement link. Local wins when both exist.
+ */
 type Projection = {
-  identity_link_id: string; entitlement_id: string; plan_code: PaidPlan; plan_version: string;
-  period_start: string; period_end: string; access_deadline: string; scope_revision: number;
-  authority_payload_hash: string; application_app_key: string; catalog_item_id: string;
-  fresh_until: number; invalidated_at: number | null;
+  source: "local" | "mkl";
+  identity_link_id: string | null; entitlement_id: string; plan_code: PaidPlan; plan_version: string;
+  period_start: string; period_end: string; access_deadline: string; scope_revision: number | null;
+  authority_payload_hash: string | null; application_app_key: string; catalog_item_id: string | null;
 };
 type ReservationRow = {
   id: string; owner_id: string; idempotency_key: string; request_fingerprint: string; operation: string;
@@ -57,7 +63,11 @@ const positiveInteger = (value: number, field: string) => {
 };
 
 async function activeProjection(ownerId: string, now: number): Promise<Projection | null> {
-  const row = await runtime().DB.prepare(`SELECT p.identity_link_id,p.entitlement_id,p.plan_code,p.plan_version,p.period_start,p.period_end,
+  const local = await activeAccessPeriod(ownerId, now);
+  if (local) return { source: "local", identity_link_id: null, entitlement_id: local.id, plan_code: local.plan_code, plan_version: LOCAL_PLAN_VERSION,
+    period_start: local.period_start, period_end: local.period_end, access_deadline: local.period_end, scope_revision: null,
+    authority_payload_hash: null, application_app_key: LOCAL_APP_KEY, catalog_item_id: null };
+  const row = await runtime().DB.prepare(`SELECT 'mkl' AS source,p.identity_link_id,p.entitlement_id,p.plan_code,p.plan_version,p.period_start,p.period_end,
       p.access_deadline,p.scope_revision,p.authority_payload_hash,p.application_app_key,p.catalog_item_id,p.fresh_until,p.invalidated_at
     FROM mkl_entitlement_projection p JOIN external_identity_link l ON l.id=p.identity_link_id AND l.user_id=p.user_id
       AND l.issuer=p.issuer AND l.subject=p.subject AND l.organization_id=p.organization_id
@@ -85,7 +95,7 @@ export async function ensureFreeGrant(ownerId: string, now = Date.now()): Promis
   }
 }
 
-/** Exactly-once issuance from the persisted B3 projection, never from local tier state. */
+/** Exactly-once issuance per paid authority period (local access period or legacy B3 projection), never from local tier state. */
 export async function issueIncludedGrantFromProjection(ownerId: string, now = Date.now()): Promise<string | null> {
   const projection = await activeProjection(ownerId, now);
   if (!projection?.entitlement_id || !(projection.plan_code in INCLUDED_AMOUNTS)) return null;
@@ -190,13 +200,17 @@ export async function reserveCharacters(input: ReserveInput): Promise<{ reservat
   const eligible = await candidates(input.ownerId, mode, projection, now);
   const plan = allocate(eligible, hold);
   const id = crypto.randomUUID(); const lease = now + EXECUTION_LEASE_MS; const statements: D1PreparedStatement[] = [];
-  const authorityGuard = mode === "paid" ? `EXISTS (SELECT 1 FROM mkl_entitlement_projection p JOIN external_identity_link l
+  const localGuard = `EXISTS (SELECT 1 FROM access_periods ap WHERE ap.owner_id=? AND ap.id=? AND ap.status='active'
+    AND ap.period_start_ms<=? AND ap.period_end_ms>?)`;
+  const authorityGuard = mode === "paid" && projection!.source === "local" ? localGuard : mode === "paid" ? `EXISTS (SELECT 1 FROM mkl_entitlement_projection p JOIN external_identity_link l
     ON l.id=p.identity_link_id AND l.user_id=p.user_id AND l.issuer=p.issuer AND l.subject=p.subject AND l.organization_id=p.organization_id
     WHERE p.user_id=? AND p.entitlement_id=? AND p.scope_revision=? AND p.authority_payload_hash=? AND p.invalidated_at IS NULL
       AND p.fresh_until>? AND p.period_start<=? AND p.access_deadline>?)`
     : `EXISTS (SELECT 1 FROM character_wallet_account a JOIN character_grants g ON g.owner_id=a.owner_id AND g.kind='free'
       WHERE a.owner_id=? AND a.free_grant_state IN ('issued','reconciled') AND g.state='active')`;
-  const guardValues = mode === "paid"
+  const guardValues = mode === "paid" && projection!.source === "local"
+    ? [input.ownerId, projection!.entitlement_id, now, now]
+    : mode === "paid"
     ? [input.ownerId, projection!.entitlement_id, projection!.scope_revision, projection!.authority_payload_hash, now, new Date(now).toISOString(), new Date(now).toISOString()]
     : [input.ownerId];
   statements.push(runtime().DB.prepare(`INSERT INTO character_reservations (id,owner_id,idempotency_key,request_fingerprint,operation,
