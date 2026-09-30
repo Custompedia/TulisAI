@@ -11,7 +11,7 @@ import { LoadingBlock } from '@/components/ui/Spinner';
 import { hasFeature, PLAN_LIMITS, type Feature, type PlanLimits, type Tier } from '@/lib/plans';
 
 export type SessionUser = { id: string; name: string; email: string; username?: string | null; image?: string | null; role?: 'user' | 'admin' };
-export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: UseCase; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; onboarded: boolean; updatedAt: string | null };
+export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: UseCase; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; defaultCanvas?: 'text' | 'page'; onboarded: boolean; updatedAt: string | null };
 export type WalletSummary = {
   mode: 'free' | 'paid' | 'unavailable';
   free: { original: number; remaining: number; state: string } | null;

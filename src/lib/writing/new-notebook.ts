@@ -9,7 +9,8 @@ export type NewOptions = { title?: string; language?: WritingLanguage; color?: s
 
 // The body POST /api/documents gets for a skeleton or an empty notebook. Pure, so the gates can be tested:
 // the canvas flag is only sent when the account has advanced_notebook, because create refuses it otherwise.
-export function newNotebookBody(kind: NewKind, options: NewOptions, context: { defaultMode: string; writingLanguage: WritingLanguage; humanizerContext: string; locale: 'id' | 'en'; advancedNotebook: boolean; now: Date }) {
+// `defaultPaged` is the account's Kanvas bawaan; an explicit `options.paged` from the dialog wins.
+export function newNotebookBody(kind: NewKind, options: NewOptions, context: { defaultMode: string; writingLanguage: WritingLanguage; humanizerContext: string; locale: 'id' | 'en'; advancedNotebook: boolean; now: Date; defaultPaged?: boolean }) {
   const language = options.language ?? context.writingLanguage;
   const contentLanguage = language === 'en' || language === 'id' ? language : context.locale;
   const type = kind === 'blank' ? null : kind;
@@ -17,7 +18,7 @@ export function newNotebookBody(kind: NewKind, options: NewOptions, context: { d
   const source: DocSource = type ? 'skeleton' : 'blank';
   const preferences = clampPreferenceValues({
     ...settings, ...(type ? { docType: type } : {}), docSource: source,
-    ...(options.paged && context.advancedNotebook ? { [ADVANCED_PREFERENCE]: true } : {}),
+    ...((options.paged ?? context.defaultPaged) && context.advancedNotebook ? { [ADVANCED_PREFERENCE]: true } : {}),
   });
   return {
     title: (options.title?.trim() || defaultTitle(type, context.now, context.locale)).slice(0, 180),

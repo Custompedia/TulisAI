@@ -8,7 +8,10 @@ import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { setHash, useHash } from '@/lib/client/hash';
 import { settingsRoute, type SettingsTab } from '@/lib/navigation/sections';
-import { useSessionGuard, useShell, type UserSettings } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard, useShell, type UserSettings } from '@/components/app/AppShell';
+import { useRequiredTierName } from '@/components/app/PaidLock';
+import { showLockedFeature } from '@/components/app/shell-events';
+import { requiredTierFor } from '@/lib/plans';
 import { useAccountNav } from '@/components/app/ContextSidebar';
 import { Button } from '@/components/ui/Button';
 import { Toast } from '@/components/ui/Toast';
@@ -43,6 +46,8 @@ function SettingsView() {
   const router = useRouter();
   const guard = useSessionGuard();
   const { user, settings, setSettings, refresh } = useShell();
+  const { has } = useEntitlements();
+  const pagedTier = useRequiredTierName('advanced_notebook');
   const hash = useHash();
   const route = settingsRoute(hash);
   const tab: SettingsTab = 'tab' in route ? route.tab : 'profil';
@@ -173,6 +178,13 @@ function SettingsView() {
                 <p className="text-sm font-semibold text-ink-900">{t('Konteks Humanize', 'Humanize context')}</p>
                 <p className="mt-0.5 text-[13px] text-ink-500">{t('Register bawaan saat memakai mode Humanize.', 'The default register for the Humanize mode.')}</p>
                 <div className="mt-2.5 max-w-sm"><Segmented label={t('Konteks Humanize', 'Humanize context')} value={form.humanizerContext} onChange={(value) => setForm({ ...form, humanizerContext: value })} options={contextOptions(t).map(({ value, label }) => ({ value: value as UserSettings['humanizerContext'], label }))} /></div>
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-ink-900">{t('Kanvas bawaan', 'Default canvas')}</p>
+                <p className="mt-0.5 text-[13px] text-ink-500">{t('Kanvas yang dipakai notebook baru. Teks untuk menulis bebas, Halaman untuk tata letak dokumen.', 'The canvas new notebooks open on. Text for free writing, Page for document layout.')}</p>
+                <div className="mt-2.5 max-w-sm"><Segmented label={t('Kanvas bawaan', 'Default canvas')} value={form.defaultCanvas ?? 'text'} onChange={(value) => setForm({ ...form, defaultCanvas: value })} onLocked={() => showLockedFeature(requiredTierFor('advanced_notebook'))}
+                  options={[{ value: 'text', label: t('Teks', 'Text') }, { value: 'page', label: t('Halaman', 'Page'), locked: !has('advanced_notebook') && form.defaultCanvas !== 'page', lockedHint: t(`Halaman — buka dengan ${pagedTier}`, `Page — unlock with ${pagedTier}`) }]} /></div>
+                {form.defaultCanvas === 'page' && !has('advanced_notebook') && <p className="mt-1.5 text-[13px] text-amber-800">{t(`Halaman butuh paket ${pagedTier}. Notebook baru dibuka di Teks sampai paketmu aktif lagi.`, `Page needs ${pagedTier}. New notebooks open on Text until your plan is active again.`)}</p>}
               </div>
               <div>
                 <p className="text-sm font-semibold text-ink-900">{t('Penggunaan utama', 'Main use')}</p>

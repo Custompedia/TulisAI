@@ -18,7 +18,8 @@ import { Toast } from '@/components/ui/Toast';
 import { requestSummary } from '@/components/writing/modes';
 import { StyleMark } from '@/components/writing/StyleMark';
 import { AppearanceFields } from './AppearancePicker';
-import { useEntitlements } from './AppShell';
+import { useEntitlements, useShell } from './AppShell';
+import { opensPaged } from '@/lib/writing/preferences';
 import { PaidLock, useRequiredTierName } from './PaidLock';
 import { showLockedFeature } from './shell-events';
 import { useCreateNotebook, type NewKind } from './new-writing';
@@ -38,6 +39,7 @@ const CARD = 'group relative flex min-h-[76px] w-full flex-col items-start gap-1
 export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImport }: Props) {
   const { t, locale } = useLocale();
   const { has } = useEntitlements();
+  const { settings: prefs } = useShell();
   const { styles, loading: stylesLoading } = useWritingStyles();
   const { create, busy, error, clearError } = useCreateNotebook();
   const [step, setStep] = useState<Step>(initialStep);
@@ -95,7 +97,7 @@ export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImpor
               </div>
             )
           ) : options ? (
-            <OptionsForm kind={options} busy={busy === options} canPaged={has('advanced_notebook')} pagedTier={pagedTier} defaultName={defaultTitle(options === 'blank' ? null : options, new Date(), locale)}
+            <OptionsForm kind={options} busy={busy === options} canPaged={has('advanced_notebook')} defaultPaged={opensPaged(prefs.defaultCanvas, has('advanced_notebook'))} pagedTier={pagedTier} defaultName={defaultTitle(options === 'blank' ? null : options, new Date(), locale)}
               onCreate={(value) => void create(options, value)} />
           ) : (
             <>
@@ -159,12 +161,13 @@ function ActionCard({ icon: Icon, label, hint, locked, disabled, onPick }: { ico
 type OptionValue = { title: string; language: WritingLanguage; color: string | null; icon: string | null; paged: boolean };
 
 // Title, icon & colour, language and the Halaman canvas; the canvas flag is only offered, and sent, with advanced_notebook.
-function OptionsForm({ kind, busy, canPaged, pagedTier, defaultName, onCreate }: { kind: NewKind; busy: boolean; canPaged: boolean; pagedTier: string; defaultName: string; onCreate: (value: OptionValue) => void }) {
+function OptionsForm({ kind, busy, canPaged, defaultPaged, pagedTier, defaultName, onCreate }: { kind: NewKind; busy: boolean; canPaged: boolean; defaultPaged: boolean; pagedTier: string; defaultName: string; onCreate: (value: OptionValue) => void }) {
   const { t } = useLocale();
   const [name, setName] = useState(defaultName);
   const [language, setLanguage] = useState<WritingLanguage>('auto');
   const [appearance, setAppearance] = useState<NotebookAppearance>({ color: null, icon: null });
-  const [paged, setPaged] = useState(false);
+  // Starts on the account's Kanvas bawaan; the checkbox still decides for this one notebook.
+  const [paged, setPaged] = useState(defaultPaged);
   const Icon = KIND_ICONS[kind];
   return (
     <form id="new-writing-options" onSubmit={(event) => { event.preventDefault(); onCreate({ title: name, language, color: appearance.color, icon: appearance.icon, paged: canPaged && paged }); }} className="space-y-5">

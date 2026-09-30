@@ -5,6 +5,7 @@ import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
 import { guardedPush } from '@/lib/client/navigation-guard';
 import { newNotebookBody, type NewKind, type NewOptions } from '@/lib/writing/new-notebook';
+import { opensPaged } from '@/lib/writing/preferences';
 import { useEntitlements, useSessionGuard, useShell } from './AppShell';
 import { showPlanNotice } from './shell-events';
 
@@ -24,7 +25,7 @@ export function useCreateNotebook() {
     if (busy) return false;
     setBusy(kind); setError('');
     try {
-      const body = newNotebookBody(kind, options, { defaultMode: prefs.defaultMode, writingLanguage: prefs.writingLanguage, humanizerContext: prefs.humanizerContext, locale, advancedNotebook: has('advanced_notebook'), now: new Date() });
+      const body = newNotebookBody(kind, options, { defaultMode: prefs.defaultMode, writingLanguage: prefs.writingLanguage, humanizerContext: prefs.humanizerContext, locale, advancedNotebook: has('advanced_notebook'), now: new Date(), defaultPaged: opensPaged(prefs.defaultCanvas, has('advanced_notebook')) });
       const doc = await request<{ id: string }>('/api/documents', 'POST', body, newKey());
       // The card keeps its spinner until the editor takes over; an unsaved-changes prompt hands control back.
       if (!guardedPush(router, `/notebooks/${doc.id}`)) setBusy(null);

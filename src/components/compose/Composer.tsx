@@ -19,6 +19,8 @@ import { useEntitlements, useSessionGuard, useShell } from '@/components/app/App
 import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
 import { COMPOSER_DRAFT_EVENT, COMPOSER_FOCUS_EVENT, COMPOSER_STYLE_EVENT, openPlans, showPlanNotice } from '@/components/app/shell-events';
 import { clampPreferenceValues, type DocSource } from '@/lib/writing/notebook-meta';
+import { opensPaged } from '@/lib/writing/preferences';
+import { ADVANCED_PREFERENCE } from '@/lib/plans';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -165,7 +167,8 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
       // A skill id without saved_styles is refused on create, so a locked account never sends one.
       // Every string is capped at create's 500 characters, so a long writing sample never turns into a 400.
       const source: DocSource = settings.styleId && !stylesLocked ? 'skill' : 'compose';
-      const preferences = clampPreferenceValues({ ...settings, ...(stylesLocked ? { styleId: null } : {}), docSource: source });
+      // Kanvas bawaan: Halaman only with the canvas, since create refuses the flag otherwise.
+      const preferences = clampPreferenceValues({ ...settings, ...(stylesLocked ? { styleId: null } : {}), docSource: source, ...(opensPaged(prefs.defaultCanvas, has('advanced_notebook')) ? { [ADVANCED_PREFERENCE]: true } : {}) });
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences }, newKey());
       try {
         if (autorun) {
