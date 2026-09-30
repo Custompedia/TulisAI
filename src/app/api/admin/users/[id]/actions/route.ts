@@ -2,6 +2,7 @@ import { jsonData } from "@/lib/contracts";
 import { auth, requireAdmin } from "@/server/auth/auth";
 import { handleRouteError, idempotencyKey, readJson } from "@/server/http";
 import { ActionSchema, assertBan, assertRoleChange, audit, getUser } from "@/server/admin/service";
+import { adminActivatePlan, adminEndPlan } from "@/server/access/periods";
 type Context = { params: Promise<{ id: string }> };
 
 // One endpoint for account lifecycle actions; each delegates to the Better Auth admin plugin and writes an audit entry.
@@ -17,6 +18,9 @@ export async function POST(request: Request, { params }: Context) {
       case "revoke-sessions":
         if (input.sessionToken) await auth().api.revokeUserSession({ headers, body: { sessionToken: input.sessionToken } }); else await auth().api.revokeUserSessions({ headers, body: { userId: id } });
         await audit(admin.id, id, input.sessionToken ? "session.revoke" : "session.revoke-all"); break;
+      // Plan grants audit themselves (plan.admin.*). Admins may receive plans too.
+      case "activate-plan": await adminActivatePlan({ actorId: admin.id, ownerId: id, plan: input.plan, note: input.note }); break;
+      case "end-plan": await adminEndPlan({ actorId: admin.id, ownerId: id, reason: input.reason }); break;
     }
     return jsonData(await getUser(id));
   } catch (error) { return handleRouteError(error); }

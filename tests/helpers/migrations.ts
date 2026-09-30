@@ -7,5 +7,9 @@ const DIR = 'migrations';
 export const migrationFiles = (): string[] => readdirSync(DIR).filter((name) => name.endsWith('.sql')).sort();
 
 export function applyMigrations(db: { exec: (sql: string) => unknown }): void {
-  for (const name of migrationFiles()) db.exec(readFileSync(join(DIR, name), 'utf8'));
+  // D1 applies each migration file inside one transaction, which is what lets
+  // `PRAGMA defer_foreign_keys` cover a table rebuild. Mirror that here.
+  for (const name of migrationFiles()) db.exec(`BEGIN;
+${readFileSync(join(DIR, name), 'utf8')}
+COMMIT;`);
 }

@@ -9,12 +9,12 @@ import { Alert } from '@/components/ui/Alert';
 import { FieldLabel, inputClass } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import { Modal } from '@/components/ui/Modal';
-import { TIERS, tierLabel, type AdminSummary, type AdminUser, type Role, type Tier } from './admin-shared';
+import { type AdminSummary, type AdminUser, type Role } from './admin-shared';
 
-type Form = { name: string; email: string; username: string; password: string; role: Role; tier: Tier; emailVerified: boolean };
-const EMPTY: Form = { name: '', email: '', username: '', password: '', role: 'user', tier: 'free', emailVerified: true };
+type Form = { name: string; email: string; username: string; password: string; role: Role; emailVerified: boolean };
+const EMPTY: Form = { name: '', email: '', username: '', password: '', role: 'user', emailVerified: true };
 
-export function CreateUserDialog({ summary, onClose, onCreated }: { summary: AdminSummary | null; onClose: () => void; onCreated: (user: AdminUser) => void }) {
+export function CreateUserDialog({ onClose, onCreated }: { summary?: AdminSummary | null; onClose: () => void; onCreated: (user: AdminUser) => void }) {
   const { t, locale } = useLocale();
   const guard = useSessionGuard();
   const [form, setForm] = useState<Form>(EMPTY);
@@ -23,7 +23,6 @@ export function CreateUserDialog({ summary, onClose, onCreated }: { summary: Adm
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((current) => ({ ...current, [key]: value }));
   const usernameOk = /^[a-z0-9._]{3,30}$/.test(form.username);
   const valid = form.name.trim().length > 0 && /\S+@\S+\.\S+/.test(form.email) && usernameOk && form.password.length >= 10 && form.password.length <= 128;
-  const limits = summary?.tierLimits;
 
   async function submit() {
     if (!valid) return;
@@ -46,7 +45,6 @@ export function CreateUserDialog({ summary, onClose, onCreated }: { summary: Adm
         <div><FieldLabel htmlFor="new-password" hint={t('10–128 karakter', '10–128 characters')}>{t('Password awal', 'Initial password')}</FieldLabel><input id="new-password" type="text" autoComplete="off" className={`${inputClass} font-mono`} value={form.password} maxLength={128} onChange={(event) => set('password', event.target.value)} /></div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div><FieldLabel htmlFor="new-role">Role</FieldLabel><HintSelect id="new-role" label="Role" value={form.role} onChange={(value) => set('role', value)} options={[{ value: 'user', label: 'User', hint: t('Akses biasa', 'Regular access') }, { value: 'admin', label: 'Admin', hint: t('Panel admin dan AI tanpa batas', 'Admin panel and unlimited AI') }]} /></div>
-          <div><FieldLabel htmlFor="new-tier">Tier</FieldLabel><HintSelect id="new-tier" label="Tier" value={form.tier} onChange={(value) => set('tier', value)} options={TIERS.map((tier) => ({ value: tier, label: tierLabel(tier, t), hint: limits ? `${limits[tier]} ${t('permintaan AI / bulan', 'AI requests / month')}` : undefined }))} /></div>
         </div>
         <label className="flex cursor-pointer items-center gap-2.5 text-sm text-ink-800"><input type="checkbox" checked={form.emailVerified} onChange={(event) => set('emailVerified', event.target.checked)} className="h-4 w-4 accent-brand-600" />{t('Tandai email sudah terverifikasi', 'Mark email as verified')}</label>
       </form>

@@ -2,6 +2,7 @@ import { ConfigurationError, runtime } from '../runtime';
 import { isAdminRole } from '../auth/auth';
 import { asTier, effectiveLimits, FEATURES, PLAN_LIMITS, TIERS, type Feature, type PlanLimits, type Tier } from '@/lib/plans';
 import { walletSummary, type WalletSummary } from './wallet';
+import { planState } from '../access/periods';
 
 export { TIERS, asTier };
 export type { Tier, Feature, PlanLimits };
@@ -17,7 +18,7 @@ export type UsageSummary = {
   access: AccessSummary;
   wallet: WalletSummary;
 };
-export type AccessAuthority = 'free' | 'mkl' | 'local_admin' | 'legacy_local' | 'support' | 'test';
+export type AccessAuthority = 'free' | 'payment' | 'admin_grant' | 'mkl' | 'local_admin' | 'legacy_local' | 'support' | 'test';
 export type AccessSummary = {
   tier: Tier; plan: Exclude<Tier, 'free'> | null; authority: AccessAuthority;
   commercialActive: boolean; topupEligible: boolean; features: readonly Feature[];
@@ -59,11 +60,12 @@ const featureList = (value: string): Feature[] => {
 };
 const iso = (value: number | null) => value === null ? null : new Date(value).toISOString();
 
-// One resolver owns commercial and non-commercial authority. A linked account
-// never falls back to user.tier when its MKL projection is absent or stale.
+// One resolver owns commercial and non-commercial authority. A local access
+// period wins; a linked account never falls back to user.tier when its MKL
+// projection is absent or stale.
 export async function entitlement(ownerId: string): Promise<Entitlement> {
   const db = runtime().DB; const now = Date.now();
-  const [row, grantsResult] = await Promise.all([
+  const [row, grantsResult, local] = await Promise.all([
     db.prepare(`SELECT u.role,u.tier,u.ai_limit_override,u.ai_character_limit_override,l.id AS link_id,
         p.scope_revision AS projection_revision,p.plan_code,p.period_start,p.period_end,p.access_deadline,
         p.verified_at,p.fresh_until,p.invalidated_at,p.invalidation_reason
@@ -72,6 +74,7 @@ export async function entitlement(ownerId: string): Promise<Entitlement> {
         AND p.issuer=l.issuer AND p.subject=l.subject AND p.organization_id=l.organization_id
       WHERE u.id=? LIMIT 1`).bind(ownerId).first<AuthorityRow>(),
     db.prepare("SELECT authority,capabilities_json FROM capability_grants WHERE user_id=? AND revoked_at IS NULL AND expires_at>?").bind(ownerId, now).all<GrantRow>(),
+    planState(ownerId, now),
   ]);
   const role = isAdminRole(row?.role) ? 'admin' : 'user'; const linked = Boolean(row?.link_id);
   const grantRows = grantsResult.results ?? []; const grantFeatures = [...new Set(grantRows.flatMap((grant) => featureList(grant.capabilities_json)))];
@@ -82,6 +85,9 @@ export async function entitlement(ownerId: string): Promise<Entitlement> {
   let tier: Tier; let authority: AccessAuthority; let commercialActive = false; let baseFeatures: readonly Feature[]; let unlimited = false;
   if (role === 'admin') {
     tier = 'max'; authority = 'local_admin'; unlimited = true; baseFeatures = FEATURES.filter((feature) => feature !== 'purchase_topup');
+  } else if (local.current) {
+    // A local access period (direct payment or admin grant) is the paid authority since MKL retired.
+    tier = local.current.plan_code; authority = local.current.source === 'payment' ? 'payment' : 'admin_grant'; commercialActive = true; baseFeatures = PLAN_LIMITS[tier].features;
   } else if (linked) {
     tier = projectionFresh ? projectedTier : 'free'; authority = projectionFresh ? 'mkl' : (grantAuthority ?? 'free'); commercialActive = projectionFresh; baseFeatures = PLAN_LIMITS[tier].features;
   } else {
@@ -92,13 +98,14 @@ export async function entitlement(ownerId: string): Promise<Entitlement> {
   const override = positive(row?.ai_limit_override); const characterOverride = positive(row?.ai_character_limit_override);
   // Admins resolve to the top plan, not to their tier column, so every limit matches the access they already have.
   const limits = { ...effectiveLimits(tier, unlimited), features };
-  const staleReason = linked && !projectionFresh ? (row?.invalidation_reason ?? (row?.projection_revision == null ? 'unverified' : (typeof freshUntil === 'number' && now >= freshUntil ? 'stale' : 'inactive'))) : null;
+  const localActive = role !== 'admin' && Boolean(local.current);
+  const staleReason = !localActive && linked && !projectionFresh ? (row?.invalidation_reason ?? (row?.projection_revision == null ? 'unverified' : (typeof freshUntil === 'number' && now >= freshUntil ? 'stale' : 'inactive'))) : null;
   const access: AccessSummary = {
     tier, plan: commercialActive && tier !== 'free' ? tier : null, authority, commercialActive,
-    topupEligible: commercialActive && features.includes('purchase_topup'), features, linked, fresh: projectionFresh,
+    topupEligible: commercialActive && features.includes('purchase_topup'), features, linked, fresh: localActive || projectionFresh,
     staleReason, projectionRevision: row?.projection_revision ?? null, verifiedAt: iso(row?.verified_at ?? null),
-    freshUntil: iso(row?.fresh_until ?? null), periodEnd: row?.period_end ?? null,
-    paidUntil: commercialActive && typeof freshUntil === 'number' ? new Date(Math.min(freshUntil, periodEnd)).toISOString() : null,
+    freshUntil: localActive ? null : iso(row?.fresh_until ?? null), periodEnd: localActive ? local.current!.period_end : row?.period_end ?? null,
+    paidUntil: localActive ? local.paidThrough : commercialActive && typeof freshUntil === 'number' ? new Date(Math.min(freshUntil, periodEnd)).toISOString() : null,
   };
   return {
     tier, role, unlimited, limits, override, characterOverride, access,

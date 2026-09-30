@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { Ban, CircleCheck, KeyRound, LogOut, RotateCw, Save, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
+import { Ban, CalendarPlus, CircleCheck, CircleSlash, KeyRound, LogOut, RotateCw, Save, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
+import { PLAN_LIMITS } from '@/lib/plans';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
 import { dateTime, numberFormat, relativeTime } from '@/lib/client/format';
@@ -12,14 +13,16 @@ import { FieldLabel, inputClass } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
-import { actionLabel, detailSummary, operationLabel, shortId, statusLabel, TIERS, tierLabel, type AdminSummary, type AdminUser, type Role, type SessionEntry, type Tier, type UsageEntry, type UserDetail } from './admin-shared';
+import { actionLabel, detailSummary, operationLabel, shortId, statusLabel, tierLabel, type AdminSummary, type AdminUser, type PaidPlan, type Role, type SessionEntry, type Tier, type UsageEntry, type UserDetail } from './admin-shared';
 
-type Tab = 'overview' | 'settings' | 'log' | 'sessions' | 'account';
+type Tab = 'overview' | 'plan' | 'settings' | 'log' | 'sessions' | 'account';
 type Props = { userId: string; summary: AdminSummary | null; onClose: () => void; onChange: (user: AdminUser) => void; onDeleted: (id: string) => void; notify: (notice: { tone: 'success' | 'error'; message: string }) => void };
-type Form = { name: string; emailVerified: boolean; role: Role; tier: Tier; aiLimitOverride: string; aiCharacterLimitOverride: string; adminNote: string };
-type Confirm = { kind: 'role'; role: Role } | { kind: 'ban' } | { kind: 'unban' } | { kind: 'password' } | { kind: 'revoke-all' } | { kind: 'delete' };
+type Form = { name: string; emailVerified: boolean; role: Role; aiLimitOverride: string; aiCharacterLimitOverride: string; adminNote: string };
+type Confirm = { kind: 'role'; role: Role } | { kind: 'ban' } | { kind: 'unban' } | { kind: 'password' } | { kind: 'revoke-all' } | { kind: 'delete' } | { kind: 'end-plan' };
+const PAID_PLANS: readonly PaidPlan[] = ['plus', 'pro', 'max'];
+const END_WORD = 'AKHIRI';
 
-const formOf = (user: AdminUser): Form => ({ name: user.name, emailVerified: user.emailVerified, role: user.role, tier: user.tier, aiLimitOverride: user.aiLimitOverride === null ? '' : String(user.aiLimitOverride), aiCharacterLimitOverride: user.aiCharacterLimitOverride === null ? '' : String(user.aiCharacterLimitOverride), adminNote: user.adminNote ?? '' });
+const formOf = (user: AdminUser): Form => ({ name: user.name, emailVerified: user.emailVerified, role: user.role, aiLimitOverride: user.aiLimitOverride === null ? '' : String(user.aiLimitOverride), aiCharacterLimitOverride: user.aiCharacterLimitOverride === null ? '' : String(user.aiCharacterLimitOverride), adminNote: user.adminNote ?? '' });
 
 export function StatusBadge({ user, t }: { user: AdminUser; t: (id: string, en: string) => string }) {
   return user.banned
@@ -49,6 +52,58 @@ function Section({ title, description, children, tone = 'default' }: { title: st
   );
 }
 
+type PlanPanelProps = { user: AdminUser; busy: boolean; onActivate: (plan: PaidPlan, note: string) => void; onEnd: (reason: string) => void };
+
+// "Atur paket", after Mari Rekap: one month at a time. The same plan extends after the last covered day;
+// another plan replaces the running period now. Admin accounts can receive plans too.
+function PlanPanel({ user, busy, onActivate, onEnd }: PlanPanelProps) {
+  const { t, locale } = useLocale();
+  const current = user.plan.code;
+  const [plan, setPlan] = useState<PaidPlan>(current ?? 'plus');
+  const [note, setNote] = useState('');
+  const [reason, setReason] = useState('');
+  const chars = (value: PaidPlan) => numberFormat(PLAN_LIMITS[value].includedCharacters, locale);
+  const price = (value: PaidPlan) => `Rp${numberFormat(PLAN_LIMITS[value].priceIdr, locale)}`;
+  const source = user.plan.source === 'payment' ? t('dibayar pengguna', 'paid by the user') : t('diberikan admin', 'granted by an admin');
+  const extended = Boolean(user.plan.paidThrough && user.plan.periodEnd && user.plan.paidThrough !== user.plan.periodEnd);
+  const outcome = !current
+    ? t(`${tierLabel(plan, t)} berlaku 1 bulan mulai sekarang dengan jatah ${chars(plan)} karakter AI.`, `${tierLabel(plan, t)} runs for 1 month from now with ${chars(plan)} AI characters.`)
+    : plan === current
+      ? t(`Menambah 1 bulan setelah ${dateTime(user.plan.paidThrough!, locale)}. Jatah bulan ini tidak berubah; jatah bulan baru diberikan saat periodenya mulai.`, `Adds 1 month after ${dateTime(user.plan.paidThrough!, locale)}. This month's allowance is unchanged; the new month's allowance starts with its period.`)
+      : t(`${tierLabel(current, t)} dan perpanjangannya berakhir sekarang. ${tierLabel(plan, t)} berlaku 1 bulan mulai sekarang dengan jatah ${chars(plan)} karakter AI.`, `${tierLabel(current, t)} and its renewals end now. ${tierLabel(plan, t)} runs for 1 month from now with ${chars(plan)} AI characters.`);
+  const actionText = !current ? t('Aktifkan paket', 'Activate plan') : plan === current ? t('Perpanjang 1 bulan', 'Extend 1 month') : t('Ganti paket', 'Replace plan');
+  return (
+    <div className="space-y-4">
+      <Section title={t('Paket berjalan', 'Current plan')}>
+        {current ? (
+          <div className="flex flex-wrap items-center gap-2 text-[14px] text-ink-900">
+            <TierBadge tier={current} t={t} />
+            <span>{source} · {t('berlaku sampai', 'valid until')} {dateTime(user.plan.periodEnd!, locale)}</span>
+            {extended && <span className="text-[13px] text-ink-500">({t('sudah diperpanjang sampai', 'already extended until')} {dateTime(user.plan.paidThrough!, locale)})</span>}
+          </div>
+        ) : <p className="text-[13px] text-ink-500">{t('Tidak ada paket berjalan. Akun memakai jatah Gratis.', 'No plan is running. The account uses the Free allowance.')}</p>}
+      </Section>
+      <Section title={t('Atur paket', 'Set plan')} description={t('Satu bulan setiap kali. Setiap perubahan tercatat di riwayat tindakan admin.', 'One month at a time. Every change is recorded in the admin action history.')}>
+        <div className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
+          <div><FieldLabel htmlFor="plan-code">{t('Paket', 'Plan')}</FieldLabel><HintSelect id="plan-code" label={t('Paket', 'Plan')} value={plan} onChange={setPlan} options={PAID_PLANS.map((value) => ({ value, label: tierLabel(value, t), hint: `${chars(value)} ${t('karakter / bulan', 'characters / month')} · ${price(value)}` }))} /></div>
+          <div><FieldLabel htmlFor="plan-note" hint={t('opsional', 'optional')}>{t('Catatan', 'Note')}</FieldLabel><input id="plan-note" className={inputClass} maxLength={200} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t('Mis. kompensasi gangguan, akun uji', 'E.g. outage credit, test account')} /></div>
+        </div>
+        <p className="mt-3 text-[13px] text-ink-700">{outcome}</p>
+        {current && plan !== current && user.plan.source === 'payment' && <div className="mt-3"><Alert tone="warning">{t('Paket ini dibayar pengguna. Sisa periodenya hangus jika diganti.', 'The user paid for this plan. Its remaining time is lost if you replace it.')}</Alert></div>}
+        <Button className="mt-3" variant="primary" icon={CalendarPlus} disabled={busy} onClick={() => onActivate(plan, note.trim())}>{actionText}</Button>
+      </Section>
+      {current && (
+        <Section tone="danger" title={t('Akhiri paket', 'End plan')} description={t('Paket berjalan dan semua perpanjangannya berakhir sekarang. Karakter top-up yang sudah dibeli tidak dihapus.', 'The running plan and all renewals end now. Purchased top-up characters are not removed.')}>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="min-w-0 flex-1"><FieldLabel htmlFor="plan-end-reason">{t('Alasan (wajib)', 'Reason (required)')}</FieldLabel><input id="plan-end-reason" className={inputClass} maxLength={200} value={reason} onChange={(event) => setReason(event.target.value)} /></div>
+            <Button variant="danger" icon={CircleSlash} disabled={busy || reason.trim().length < 3} onClick={() => onEnd(reason.trim())}>{t('Akhiri paket', 'End plan')}</Button>
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
 export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted, notify }: Props) {
   const { t, locale } = useLocale();
   const en = locale === 'en';
@@ -64,6 +119,8 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
   const [banDays, setBanDays] = useState<'0' | '7' | '30' | '90'>('0');
   const [password, setPassword] = useState('');
   const [deleteText, setDeleteText] = useState('');
+  const [endReason, setEndReason] = useState('');
+  const [endText, setEndText] = useState('');
   const [log, setLog] = useState<{ items: UsageEntry[]; nextCursor: string | null } | null>(null);
   const [logBusy, setLogBusy] = useState(false);
   const [formError, setFormError] = useState('');
@@ -96,7 +153,6 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
     const patch: Record<string, unknown> = {};
     if (form.name.trim() !== user.name) patch.name = form.name.trim();
     if (form.emailVerified !== user.emailVerified) patch.emailVerified = form.emailVerified;
-    if (form.tier !== user.tier) patch.tier = form.tier;
     if (override !== user.aiLimitOverride) patch.aiLimitOverride = override;
     if ((form.adminNote.trim() || null) !== (user.adminNote ?? null)) patch.adminNote = form.adminNote.trim() || null;
     if (!Object.keys(patch).length) return;
@@ -120,6 +176,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
     if (confirm.kind === 'unban') { await act({ action: 'unban' }, t('Akun diaktifkan kembali.', 'Account enabled again.')); return; }
     if (confirm.kind === 'password') { const ok = await act({ action: 'set-password', newPassword: password }, t('Password diganti dan semua sesi dicabut.', 'Password set and all sessions revoked.')); if (ok) setPassword(''); return; }
     if (confirm.kind === 'revoke-all') { await act({ action: 'revoke-sessions' }, t('Semua sesi dicabut.', 'All sessions revoked.')); return; }
+    if (confirm.kind === 'end-plan') { const ok = await act({ action: 'end-plan', reason: endReason }, t('Paket diakhiri.', 'Plan ended.')); if (ok) { setEndReason(''); setEndText(''); } return; }
     if (confirm.kind === 'delete') {
       setBusy('delete');
       try { await request(`/api/admin/users/${userId}`, 'DELETE', undefined, newKey()); notify({ tone: 'success', message: t(`Akun ${user.email} dihapus.`, `Account ${user.email} deleted.`) }); onDeleted(userId); onClose(); }
@@ -133,11 +190,11 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
   }
 
   const tabs: Array<{ id: Tab; label: string }> = [
-    { id: 'overview', label: t('Ringkasan', 'Overview') }, { id: 'settings', label: t('Pengaturan', 'Settings') }, { id: 'log', label: t('Log AI', 'AI log') }, { id: 'sessions', label: t('Sesi', 'Sessions') }, { id: 'account', label: t('Akun', 'Account') },
+    { id: 'overview', label: t('Ringkasan', 'Overview') }, { id: 'plan', label: t('Paket', 'Plan') }, { id: 'settings', label: t('Pengaturan', 'Settings') }, { id: 'log', label: t('Log AI', 'AI log') }, { id: 'sessions', label: t('Sesi', 'Sessions') }, { id: 'account', label: t('Akun', 'Account') },
   ];
   const limitText = (value: AdminUser) => (value.unlimited ? '∞' : numberFormat(value.requestLimit, locale));
   const dirty = !!user && !!form && JSON.stringify(form) !== JSON.stringify(formOf(user));
-  const confirmTitle: Record<Confirm['kind'], string> = { role: t('Ubah role?', 'Change role?'), ban: t('Nonaktifkan akun?', 'Disable account?'), unban: t('Aktifkan akun?', 'Enable account?'), password: t('Ganti password?', 'Set new password?'), 'revoke-all': t('Cabut semua sesi?', 'Revoke all sessions?'), delete: t('Hapus akun secara permanen?', 'Permanently delete account?') };
+  const confirmTitle: Record<Confirm['kind'], string> = { role: t('Ubah role?', 'Change role?'), ban: t('Nonaktifkan akun?', 'Disable account?'), unban: t('Aktifkan akun?', 'Enable account?'), password: t('Ganti password?', 'Set new password?'), 'revoke-all': t('Cabut semua sesi?', 'Revoke all sessions?'), delete: t('Hapus akun secara permanen?', 'Permanently delete account?'), 'end-plan': t('Akhiri paket?', 'End plan?') };
 
   return (
     <Modal title={user ? user.name : t('Detail pengguna', 'User details')} description={user ? `${user.email}${user.username ? ` · @${user.username}` : ''}` : undefined} size="2xl" onClose={onClose} busy={busy !== ''}
@@ -179,15 +236,18 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
             </div>
           )}
 
+          {tab === 'plan' && <PlanPanel user={user} busy={busy !== ''}
+            onActivate={(plan, note) => void act({ action: 'activate-plan', plan, note: note || null }, t(`Paket ${tierLabel(plan, t)} disimpan.`, `${tierLabel(plan, t)} plan saved.`))}
+            onEnd={(reason) => { setEndReason(reason); setEndText(''); setConfirm({ kind: 'end-plan' }); }} />}
+
           {tab === 'settings' && form && (
             <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
               {formError && <Alert tone="error" onDismiss={() => setFormError('')} dismissLabel={t('Tutup', 'Dismiss')}>{formError}</Alert>}
               <div className="grid gap-4 sm:grid-cols-2">
                 <div><FieldLabel htmlFor="u-name">{t('Nama', 'Name')}</FieldLabel><input id="u-name" className={inputClass} value={form.name} maxLength={100} onChange={(event) => setForm({ ...form, name: event.target.value })} /></div>
                 <div><FieldLabel htmlFor="u-role" hint={self ? t('role sendiri terkunci', 'own role is locked') : undefined}>Role</FieldLabel><HintSelect id="u-role" label="Role" value={form.role} disabled={self} onChange={(value) => setForm({ ...form, role: value })} options={[{ value: 'user', label: 'User', hint: t('Akses biasa, ikut batas tier', 'Regular access, tier limits apply') }, { value: 'admin', label: 'Admin', hint: t('Panel admin dan AI tanpa batas', 'Admin panel and unlimited AI') }]} /></div>
-                <div><FieldLabel htmlFor="u-tier">Tier</FieldLabel><HintSelect id="u-tier" label="Tier" value={form.tier} onChange={(value) => setForm({ ...form, tier: value })} options={TIERS.map((tier) => ({ value: tier, label: tierLabel(tier, t), hint: summary ? `${numberFormat(summary.tierLimits[tier], locale)} ${t('permintaan AI / bulan', 'AI requests / month')}` : undefined }))} /></div>
                 <div><FieldLabel htmlFor="u-chars" hint={t('legacy saja — bukan saldo wallet', 'legacy only — not wallet balance')}>{t('Override karakter lama', 'Legacy character override')}</FieldLabel><input id="u-chars" type="text" className={inputClass} value={form.aiCharacterLimitOverride || '—'} disabled readOnly /></div>
-                <div><FieldLabel htmlFor="u-limit" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Batas permintaan khusus / bulan', 'Custom request limit / month')}</FieldLabel><input id="u-limit" type="number" min={1} step={1} inputMode="numeric" className={inputClass} value={form.aiLimitOverride} placeholder={summary ? String(summary.tierLimits[form.tier]) : ''} onChange={(event) => setForm({ ...form, aiLimitOverride: event.target.value })} /></div>
+                <div><FieldLabel htmlFor="u-limit" hint={t('kosong = ikut tier', 'empty = follow tier')}>{t('Batas permintaan khusus / bulan', 'Custom request limit / month')}</FieldLabel><input id="u-limit" type="number" min={1} step={1} inputMode="numeric" className={inputClass} value={form.aiLimitOverride} placeholder={summary ? String(summary.tierLimits[user.tier]) : ''} onChange={(event) => setForm({ ...form, aiLimitOverride: event.target.value })} /></div>
               </div>
               <label className="flex cursor-pointer items-center gap-2.5 text-sm text-ink-800"><input type="checkbox" checked={form.emailVerified} onChange={(event) => setForm({ ...form, emailVerified: event.target.checked })} className="h-4 w-4 accent-brand-600" />{t('Email sudah terverifikasi', 'Email is verified')}</label>
               <div><FieldLabel htmlFor="u-note" hint={t('hanya terlihat oleh admin', 'visible to admins only')}>{t('Catatan admin', 'Admin note')}</FieldLabel><textarea id="u-note" rows={3} maxLength={500} className={`${inputClass} h-auto py-2`} value={form.adminNote} onChange={(event) => setForm({ ...form, adminNote: event.target.value })} /></div>
@@ -268,13 +328,17 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
       )}
 
       {confirm && user && (
-        <ConfirmDialog title={confirmTitle[confirm.kind]} tone={confirm.kind === 'delete' || confirm.kind === 'ban' ? 'danger' : 'primary'} busy={busy !== ''} disabled={confirm.kind === 'delete' && deleteText.trim().toLowerCase() !== user.email.toLowerCase()}
-          confirmLabel={{ role: t('Ya, ubah role', 'Yes, change role'), ban: t('Ya, nonaktifkan', 'Yes, disable'), unban: t('Ya, aktifkan', 'Yes, enable'), password: t('Ya, ganti', 'Yes, set it'), 'revoke-all': t('Ya, cabut semua', 'Yes, revoke all'), delete: t('Hapus permanen', 'Delete permanently') }[confirm.kind]} onClose={() => setConfirm(null)} onConfirm={() => void runConfirm()}>
+        <ConfirmDialog title={confirmTitle[confirm.kind]} tone={confirm.kind === 'delete' || confirm.kind === 'ban' || confirm.kind === 'end-plan' ? 'danger' : 'primary'} busy={busy !== ''} disabled={(confirm.kind === 'delete' && deleteText.trim().toLowerCase() !== user.email.toLowerCase()) || (confirm.kind === 'end-plan' && endText.trim().toUpperCase() !== END_WORD)}
+          confirmLabel={{ role: t('Ya, ubah role', 'Yes, change role'), ban: t('Ya, nonaktifkan', 'Yes, disable'), unban: t('Ya, aktifkan', 'Yes, enable'), password: t('Ya, ganti', 'Yes, set it'), 'revoke-all': t('Ya, cabut semua', 'Yes, revoke all'), delete: t('Hapus permanen', 'Delete permanently'), 'end-plan': t('Ya, akhiri', 'Yes, end it') }[confirm.kind]} onClose={() => setConfirm(null)} onConfirm={() => void runConfirm()}>
           {confirm.kind === 'role' && <p><b className="text-ink-900">{user.name}</b> {confirm.role === 'admin' ? t('akan bisa membuka panel ini, mengubah pengguna lain, dan memakai AI tanpa batas bulanan.', 'will be able to open this panel, manage other users, and use AI without the monthly limit.') : t('akan kehilangan akses panel admin dan kembali ke batas AI tier-nya.', 'will lose admin panel access and return to their tier’s AI limit.')}</p>}
           {confirm.kind === 'ban' && <p className="flex gap-2"><TriangleAlert size={16} className="mt-0.5 shrink-0 text-red-600" aria-hidden="true" /><span><b className="text-ink-900">{user.name}</b> {t('akan langsung keluar dari semua perangkat dan tidak bisa masuk', 'will be signed out everywhere and unable to sign in')} {banDays === '0' ? t('sampai diaktifkan lagi.', 'until enabled again.') : t(`selama ${banDays} hari.`, `for ${banDays} days.`)} {t('Alasan:', 'Reason:')} <i>{banReason.trim()}</i></span></p>}
           {confirm.kind === 'unban' && <p>{t('Ban dicabut dan pengguna bisa masuk kembali.', 'The ban is lifted and the user can sign in again.')}</p>}
           {confirm.kind === 'password' && <p>{t('Password akan diganti dan semua sesi aktif pengguna dicabut. Sampaikan password baru secara aman.', 'The password will be replaced and all active sessions revoked. Share the new password securely.')}</p>}
           {confirm.kind === 'revoke-all' && <p>{t('Pengguna akan keluar dari semua perangkat dan harus masuk ulang.', 'The user will be signed out of every device and must sign in again.')}</p>}
+          {confirm.kind === 'end-plan' && <>
+            <p>{t('Paket berjalan dan semua perpanjangannya berakhir sekarang. Alasan:', 'The running plan and every renewal end now. Reason:')} <i>{endReason}</i></p>
+            <label className="mt-4 block text-[13px] font-semibold text-ink-700">{t(`Ketik "${END_WORD}" untuk konfirmasi`, `Type "${END_WORD}" to confirm`)}<input className={`${inputClass} mt-1.5`} value={endText} onChange={(event) => setEndText(event.target.value)} autoComplete="off" /></label>
+          </>}
           {confirm.kind === 'delete' && <>
             <p>{t('Semua notebook, versi, dan catatan pemakaian akan hilang dan tidak bisa dipulihkan.', 'Every notebook, version, and usage record will be lost and cannot be recovered.')}</p>
             <label className="mt-4 block text-[13px] font-semibold text-ink-700">{t(`Ketik "${user.email}" untuk konfirmasi`, `Type "${user.email}" to confirm`)}<input className={`${inputClass} mt-1.5`} value={deleteText} onChange={(event) => setDeleteText(event.target.value)} autoComplete="off" /></label>

@@ -87,12 +87,14 @@ describe('admin service: listing', () => {
 });
 
 describe('admin service: updates and guards', () => {
-  it('updates tier, custom limit, note, name and verification', async () => {
+  it('updates custom limit, note, name and verification, and refuses direct tier edits', async () => {
     addUser('user-1', 'Budi');
-    const updated = await updateUser('user-1', { tier: 'plus', aiLimitOverride: 42, adminNote: 'VIP', name: 'Budi S.', emailVerified: true });
-    expect(updated).toMatchObject({ tier: 'plus', aiLimitOverride: 42, requestLimit: 42, adminNote: 'VIP', name: 'Budi S.', emailVerified: true });
-    expect(await updateUser('user-1', { aiLimitOverride: null, adminNote: '' })).toMatchObject({ aiLimitOverride: null, requestLimit: 500, adminNote: null });
-    await expect(updateUser('missing', { tier: 'pro' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    const updated = await updateUser('user-1', { aiLimitOverride: 42, adminNote: 'VIP', name: 'Budi S.', emailVerified: true });
+    expect(updated).toMatchObject({ tier: 'free', aiLimitOverride: 42, requestLimit: 42, adminNote: 'VIP', name: 'Budi S.', emailVerified: true, plan: { code: null } });
+    expect(await updateUser('user-1', { aiLimitOverride: null, adminNote: '' })).toMatchObject({ aiLimitOverride: null, requestLimit: 100, adminNote: null });
+    // Paid access is granted with plan controls (access periods), never by editing the legacy tier column.
+    await expect(updateUser('user-1', { tier: 'plus' })).rejects.toMatchObject({ code: 'TIER_READ_ONLY', status: 422 });
+    await expect(updateUser('missing', { adminNote: 'x' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(getUser('missing')).rejects.toMatchObject({ code: 'NOT_FOUND', status: 404 });
   });
   it('protects against self-demotion, self-ban, self-delete, deleting admins, and losing the last admin', async () => {
