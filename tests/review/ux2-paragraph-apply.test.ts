@@ -96,6 +96,16 @@ describe('UX 2: "Bagian ini" is the text between headings', () => {
     expect(sectionBodyAt(blocks, 10)).toEqual({ from: 17, to: 34, heading: 'Bab 1', next: 52 });
     expect(sectionBodyAt(blocks, 3)).toEqual({ from: 1, to: 8, heading: null, next: 17 });
   });
+  it('skips the outline sections that are still empty when picking the next one', () => {
+    const outline = [
+      { type: 'heading', text: 'Hook', pos: 0, size: 6 }, { type: 'paragraph', text: 'Isi hook', pos: 6, size: 10 },
+      { type: 'heading', text: 'Masalah', pos: 16, size: 9 }, { type: 'paragraph', text: '', pos: 25, size: 2 },
+      { type: 'heading', text: 'CTA', pos: 27, size: 5 }, { type: 'paragraph', text: 'Klik tautan', pos: 32, size: 13 },
+    ];
+    expect(sectionBodyAt(outline, 8)?.next).toBe(33);
+    expect(sectionBodyAt(outline, 26)).toEqual({ from: 26, to: 26, heading: 'Masalah', next: 33 });
+  });
+
   it('is empty for a heading with only a subheading under it, and has no next at the end', () => {
     expect(sectionBodyAt(blocks, 37)).toBeNull();
     expect(sectionBodyAt(blocks, 55)).toEqual({ from: 52, to: 60, heading: 'Sub 2.1', next: null });

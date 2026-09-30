@@ -63,8 +63,9 @@ export function outlineSections(blocks: Array<{ type: string; level?: number; te
 // "Bagian ini": the run of blocks between two headings that holds the caret (or follows the heading it sits on).
 // Headings are never part of it, so applying a multi-paragraph result keeps every heading in place; the run stops
 // at the next heading of any level so a subheading is never flattened either. Positions are ProseMirror offsets
-// just inside the first and last block. `next` is where the following section's text starts, for
-// "Pilih bagian berikutnya". Null when the caret's heading has no text under it.
+// just inside the first and last block. `next` is where the text of the next section that has any starts, for
+// "Pilih bagian berikutnya" (an outline's still-empty sections are skipped). Null when the caret's heading has no
+// block under it.
 export type SectionBody = { from: number; to: number; heading: string | null; next: number | null };
 type Block = { type: string; text: string; pos: number; size: number };
 export function sectionBodyAt(blocks: Block[], position: number): SectionBody | null {
@@ -78,8 +79,13 @@ export function sectionBodyAt(blocks: Block[], position: number): SectionBody | 
   while (end < blocks.length && blocks[end]!.type !== 'heading') end++;
   if (end <= start) return null;
   const heading = start > 0 ? blocks[start - 1]!.text.trim() || null : null;
-  let following = end;
-  while (following < blocks.length && blocks[following]!.type === 'heading') following++;
+  let next: number | null = null;
+  for (let cursor = end; cursor < blocks.length && next === null;) {
+    while (cursor < blocks.length && blocks[cursor]!.type === 'heading') cursor++;
+    const runStart = cursor;
+    while (cursor < blocks.length && blocks[cursor]!.type !== 'heading') cursor++;
+    if (blocks.slice(runStart, cursor).some((block) => block.text.trim())) next = blocks[runStart]!.pos + 1;
+  }
   const first = blocks[start]!; const last = blocks[end - 1]!;
-  return { from: first.pos + 1, to: last.pos + last.size - 1, heading, next: following < blocks.length ? blocks[following]!.pos + 1 : null };
+  return { from: first.pos + 1, to: last.pos + last.size - 1, heading, next };
 }
