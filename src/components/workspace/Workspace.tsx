@@ -423,6 +423,8 @@ export default function Workspace() {
     try {
       const updated = await promise;
       current.current = { ...base, ...updated }; setDoc(current.current);
+      // The save also took an automatic version (UX 3), so Riwayat shows it without a reload.
+      if (updated.autoVersion) void loadVersions().catch(() => undefined);
       if (stamp.current === savedStamp) dirty.current = false;
       if (metaStamp.current === savedMeta) metaDirty.current = false;
       if (!dirty.current && !metaDirty.current) { setSave('saved'); await del(cacheKey.current).catch(() => setSave('local-unavailable')); }

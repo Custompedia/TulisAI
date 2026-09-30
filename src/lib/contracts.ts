@@ -68,7 +68,7 @@ export type DraftInput = z.infer<typeof DraftSchema>;
 export type AnalyzeQualityInput = z.infer<typeof AnalyzeQualitySchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
-export type VersionDTO = { id: string; documentId: string; kind: "original" | "checkpoint" | "ai_apply" | "restore"; revision: number; createdAt: string; label: string | null; promptId?: string | null; scopeType?: string | null };
+export type VersionDTO = { id: string; documentId: string; kind: "original" | "checkpoint" | "ai_apply" | "restore" | "auto"; revision: number; createdAt: string; label: string | null; promptId?: string | null; scopeType?: string | null };
 
 export function apiError(code: string, message: string, status: number, details?: unknown) {
   return Response.json({ error: { code, message, ...(details === undefined ? {} : { details }) } }, { status });
