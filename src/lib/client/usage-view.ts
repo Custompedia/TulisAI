@@ -47,5 +47,6 @@ export function featureLabel(feature: Feature, t: T): string {
     case 'freeform_prompt': return t('Perintah AI', 'AI instructions');
     case 'persistent_personalization': return t('Catatan untuk AI tersimpan', 'Note for the AI kept');
     case 'style_reference': return t('Contoh tulisan di skill', 'Writing samples in skills');
+    case 'draft_from_brief': return t('Draf dari brief (AI)', 'Draft from brief (AI)');
   }
 }

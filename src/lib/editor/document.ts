@@ -80,6 +80,65 @@ export function replaceTextInDocument(document:unknown,from:number,to:number,rep
   const emit=(node:PMNode):EditorNode=>originals.get(node)??{...node.toJSON(),...(node.childCount?{content:Array.from({length:node.childCount},(_,index)=>emit(node.child(index)))}:{})};
   return EditorDocumentSchema.parse({type:'doc',content:Array.from({length:result.childCount},(_,index)=>emit(result.child(index)))});
 }
+// UX 3: blocks written by Draf dari brief go in as real editor nodes (paragraphs, subheadings, lists), never flattened.
+export type StructuredBlock = { type: 'paragraph' | 'heading' | 'bulletList' | 'orderedList'; text?: string; items?: string[]; level?: number };
+function structuredNode(block:StructuredBlock):EditorNode {
+  if(block.type==='heading')return {type:'heading',attrs:{level:Math.min(3,Math.max(1,block.level??2))},content:inline(block.text??'')};
+  if(block.type==='bulletList'||block.type==='orderedList')return {type:block.type,content:(block.items??[]).map(item=>({type:'listItem',content:[{type:'paragraph',content:inline(item)}]}))};
+  return {type:'paragraph',content:inline(block.text??'')};
+}
+// The top-level block a plain-text offset falls in. A leaf between blocks (a rule, a page break) counts as its own block.
+function topLevelIndex(doc:PMNode,at:number):number {
+  const {text,spans}=mapping(doc);
+  if(!Number.isInteger(at)||at<0||at>text.length)throw new Error('The insertion point no longer matches the document.');
+  const span=spans.find(item=>item.from<=at&&at<=item.to);
+  if(!span)throw new Error('The insertion point falls outside editable text.');
+  const $pos=doc.resolve(span.pmFrom+Math.min(at-span.from,span.to-span.from));
+  return Math.min($pos.index(0),doc.childCount-1);
+}
+const isEmptyParagraph=(node:PMNode|null|undefined)=>!!node&&node.type.name==='paragraph'&&node.content.size===0;
+export type DraftTarget = { index:number; kind:'heading'|'empty'; heading:{text:string;level:number}; outline:string[]; before:string; after:string };
+// Where Draf dari brief may write: on a heading whose section is still empty (the draft goes under it), or on an
+// empty line under a heading (the draft replaces that line, so it lands at the cursor). Null anywhere else, so a
+// draft never lands in the middle of text or above text that is already there.
+export function draftTarget(document:unknown,at:number):DraftTarget|null {
+  const doc=parsed(document);let index:number;
+  try{index=topLevelIndex(doc,at);}catch{return null;}
+  const blocks=Array.from({length:doc.childCount},(_,position)=>doc.child(position));
+  const texts=blocks.map(node=>node.textBetween(0,node.content.size,'\n',' ').trim());
+  const block=blocks[index]!;
+  let kind:'heading'|'empty';let headingIndex=-1;
+  if(block.type.name==='heading'){
+    kind='heading';headingIndex=index;
+    for(let next=index+1;next<blocks.length&&blocks[next]!.type.name!=='heading';next++)if(texts[next])return null;
+  } else if(isEmptyParagraph(block)){
+    kind='empty';
+    for(let previous=index-1;previous>=0;previous--)if(blocks[previous]!.type.name==='heading'){headingIndex=previous;break;}
+  } else return null;
+  if(headingIndex<0||!texts[headingIndex])return null;
+  const clipEnd=(value:string,size:number)=>value.length<=size?value:value.slice(value.length-size).replace(/^\S*\s/u,'');
+  const clipStart=(value:string,size:number)=>value.length<=size?value:value.slice(0,size).replace(/\s\S*$/u,'');
+  return {
+    index,kind,heading:{text:texts[headingIndex]!,level:Number(blocks[headingIndex]!.attrs.level)||2},
+    outline:blocks.flatMap((node,position)=>node.type.name==='heading'&&texts[position]?[texts[position]!]:[]).slice(0,60),
+    before:clipEnd(texts.slice(0,index).filter(Boolean).join('\n'),1000),
+    after:clipStart(texts.slice(index+1).filter(Boolean).join('\n'),600),
+  };
+}
+// Inserts the blocks at a draft target: an empty line is replaced, a heading gets them right under it (filling the
+// outline's own empty line when there is one). Every other block keeps its stored JSON exactly as it was.
+export function insertBlocksAt(document:unknown,at:number,blocks:StructuredBlock[]):EditorDocument {
+  const target=draftTarget(document,at);
+  if(!target)throw new Error('The insertion point no longer matches the document.');
+  const raw=EditorDocumentSchema.parse(document);const content:EditorNode[]=raw.content.length?[...raw.content]:[{type:'paragraph'}];
+  const nodes=blocks.filter(block=>block.type==='bulletList'||block.type==='orderedList'?(block.items??[]).some(item=>item.trim()):(block.text??'').trim()).map(structuredNode);
+  if(!nodes.length)throw new Error('The draft is empty.');
+  const doc=parsed(document);
+  const replaceAt=target.kind==='empty'?target.index:isEmptyParagraph(target.index+1<doc.childCount?doc.child(target.index+1):null)?target.index+1:-1;
+  if(replaceAt>=0)content.splice(replaceAt,1,...nodes);else content.splice(target.index+1,0,...nodes);
+  const result=EditorDocumentSchema.parse({type:'doc',content});parsed(result);
+  return result;
+}
 // True when a plain-text range runs across a block boundary. Block separators are the only newlines no inline
 // span covers (a hard break is its own span), so a range with one is several paragraphs, not one with line breaks.
 export function crossesBlocks(document:unknown,from:number,to:number):boolean {

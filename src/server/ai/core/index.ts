@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { changePercentage } from "@/lib/editor/metrics";
 import { EXTRA_LIMIT, FOCUS_LIMIT, PRESERVATION_CEILING, SAMPLE_LIMIT } from "@/lib/writing/settings";
-import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P03_ACTIVE, P08, P08_CONTROL_BLOCK, P09, P10, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
-import { responseSchemas, runtimeSchemas, titledResponseSchemas } from "./schemas";
+import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P01, P02, P03, P04, P05, P06, P07, P03_ACTIVE, P07_CREATOR_INTENTS, P07_CREATOR_RULES, P08, P08_CONTROL_BLOCK, P09, P10, P11, P11_ACADEMIC, PROMPTS, PROMPT_VERSION, REASONING_EFFORT, type Language } from "./prompts";
+import { DRAFT_MAX_BLOCKS, draftBriefFields, draftDocTypes, isCreatorIntent, responseSchemas, runtimeSchemas, titledResponseSchemas } from "./schemas";
+import { ACADEMIC_DOC_TYPES, buildDraftUserMessage, DOC_TYPE_LINE, sanitizeDraftValue, validateDraft, type DraftBlock, type DraftRuntime } from "./draft";
+import { BRIEF_VALUE_LIMIT } from "@/lib/writing/notebook-meta";
 import { compareNumericValues } from "./numeric";
 import { sanitizeInstruction } from "@/lib/writing/instruction";
 import { dropFragments, LIST_FORMATS, plainDashes, mergeWarnings as mergeWarningList, repairDrift, sampleEchoRuns, sampleEchoSeverity, simplifyLengthKept } from "./validators";
@@ -30,7 +32,7 @@ export const ENUM_MAP = {
   academic_context: { thesis: "skripsi", journal: "jurnal", general_academic: "umum" },
   humanizer_context: { academic: "akademik", professional: "profesional", general: "umum" },
   creativity_strength: { light: "ringan", balanced: "sedang", strong: "berani" },
-  intent: { alternatives: "alternatif", paraphrase: "alternatif", shorter: "lebih singkat", clearer: "lebih jelas", formal: "lebih formal", natural: "lebih natural" },
+  intent: { alternatives: "alternatif", paraphrase: "alternatif", shorter: "lebih singkat", clearer: "lebih jelas", formal: "lebih formal", natural: "lebih natural", catchy: "lebih catchy", hook: "jadikan hook", cta: "tambah cta" },
   simplify_for: { anak_sekolah: "anak sekolah" },
   request_audience: { lecturer: "dosen", professional: "profesional", client: "klien", general_public: "umum" },
   format: { paragraph: "paragraf", bullets: "poin", numbered_list: "bernomor", table: "tabel", short_summary: "ringkasan", summary: "ringkasan", email: "email", script: "script", thread: "thread" },
@@ -110,13 +112,32 @@ export function normalizeRuntime(id: PromptId, input: RuntimeInput): Record<stri
     required_protected_terms: get("requiredProtectedTerms", "required_protected_terms"), required_protected_citations: get("requiredProtectedCitations", "required_protected_citations"),
     locked_only: id === "P10_REPAIR" && get("lockedOnly", "locked_only") === true ? true : undefined,
   };
-  const defined = Object.fromEntries(Object.entries(candidate).filter(([, value]) => value !== undefined));
+  const draft = id === "P11_SECTION_DRAFT" ? draftControls(input) : {};
+  const defined = Object.fromEntries(Object.entries({ ...candidate, ...draft }).filter(([, value]) => value !== undefined));
   return runtimeSchemas[id].parse(defined) as Record<string, unknown>;
 }
 
-const CAPABILITY: Record<PromptId, string> = { P01_STANDARD_REWRITE: P01, P02_ACADEMIC: P02, P03_HUMANIZER: P03, P04_PROFESSIONAL: P04, P05_CREATIVE: P05, P06_SIMPLIFY: P06, P07_INLINE_ALTERNATIVES: P07, P08_CUSTOM_TRANSFORM: P08, P09_QUALITY_EVALUATION: P09, P10_REPAIR: P10 };
+// P11's controls. Everything the author wrote (brief, outline, section, surrounding text) is sanitised as data here,
+// before it can reach the user message; the kind of writing alone decides the academic guard.
+function draftControls(input: RuntimeInput): Record<string, unknown> {
+  const raw = record(input.brief) ?? {};
+  const docType = typeof input.doc_type === "string" && (draftDocTypes as readonly string[]).includes(input.doc_type) ? input.doc_type : "none";
+  const list = Array.isArray(input.outline) ? input.outline : [];
+  const context = (value: unknown) => sanitizeDraftValue(value, 1200) || null;
+  return {
+    doc_type: docType, academic: ACADEMIC_DOC_TYPES.has(docType), max_characters: input.max_characters,
+    brief: Object.fromEntries(draftBriefFields.map((field) => [field, sanitizeDraftValue(raw[field], BRIEF_VALUE_LIMIT)])),
+    outline: list.map((item) => sanitizeDraftValue(item, 200)).filter(Boolean).slice(0, 60),
+    section_heading: sanitizeDraftValue(input.section_heading, 200) || undefined,
+    context_before: context(input.context_before), context_after: context(input.context_after),
+  };
+}
 
-const BASE_OF: Partial<Record<PromptId, string>> = { P07_INLINE_ALTERNATIVES: BASE_INLINE, P08_CUSTOM_TRANSFORM: "", P09_QUALITY_EVALUATION: BASE_READONLY, P10_REPAIR: "" };
+const CAPABILITY: Record<PromptId, string> = { P01_STANDARD_REWRITE: P01, P02_ACADEMIC: P02, P03_HUMANIZER: P03, P04_PROFESSIONAL: P04, P05_CREATIVE: P05, P06_SIMPLIFY: P06, P07_INLINE_ALTERNATIVES: P07, P08_CUSTOM_TRANSFORM: P08, P09_QUALITY_EVALUATION: P09, P10_REPAIR: P10, P11_SECTION_DRAFT: P11 };
+
+const BASE_OF: Partial<Record<PromptId, string>> = { P07_INLINE_ALTERNATIVES: BASE_INLINE, P08_CUSTOM_TRANSFORM: "", P09_QUALITY_EVALUATION: BASE_READONLY, P10_REPAIR: "", P11_SECTION_DRAFT: "" };
+// A creator intent's option line joins P07's INTENT list only for that call, so the other intents send the same text as before.
+const capabilityOf = (id: PromptId, runtime: Record<string, unknown>) => (id === "P07_INLINE_ALTERNATIVES" && isCreatorIntent(runtime.intent) ? P07.replace(/^(- lebih natural = .*)$/m, (line) => `${line}\n${P07_CREATOR_INTENTS}`) : CAPABILITY[id]);
 export const languageOf = (runtime: Record<string, unknown>): Language => runtime.language === "en" ? "en" : "id";
 // Language blocks are chosen server-side so only the active language's rules and examples are sent.
 export function languageValues(id: PromptId, runtime: Record<string, unknown>): Record<string, string> {
@@ -129,9 +150,11 @@ export function buildSystemMessage(id: PromptId, runtime: Record<string, unknown
   const numbers = id === "P03_HUMANIZER" ? P03_ACTIVE[String(runtime.strength)] : undefined;
   const pick = (text: string) => selectOptions(text, runtime, numbers && new Set(numbers));
   const language = languageValues(id, runtime);
-  const values = { ...runtime, ...language, ...(language.language_rules ? { language_rules: pick(language.language_rules) } : {}) };
+  const values = { ...runtime, ...language, ...(language.language_rules ? { language_rules: pick(language.language_rules) } : {}), ...(id === "P11_SECTION_DRAFT" ? { doc_type_line: DOC_TYPE_LINE[String(runtime.doc_type)] ?? DOC_TYPE_LINE.none } : {}) };
   const base = BASE_OF[id] ?? BASE;
-  const parts = [...(base ? [fill(base, values)] : []), fill(pick(CAPABILITY[id]), values)];
+  const parts = [...(base ? [fill(base, values)] : []), fill(pick(capabilityOf(id, runtime)), values)];
+  if (id === "P07_INLINE_ALTERNATIVES" && isCreatorIntent(runtime.intent)) parts.push(P07_CREATOR_RULES);
+  if (id === "P11_SECTION_DRAFT" && runtime.academic === true) parts.push(P11_ACADEMIC);
   const request = record(runtime.request) as ControlRequest | undefined;
   // The dock instruction is the whole task for P08, so the panel control block (which keeps the rewrite rules in charge) is not added.
   const block = request && id !== "P08_CUSTOM_TRANSFORM" ? compileControlBlock(request) : "";
@@ -153,6 +176,7 @@ const titleRequestBlock = (value: unknown) => (value === true ? section("title_r
 export function buildUserMessage(id: PromptId, runtime: Record<string, unknown>): string {
   const strings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
   if (id === "P09_QUALITY_EVALUATION") return section("input", runtime.source_text);
+  if (id === "P11_SECTION_DRAFT") return buildDraftUserMessage(runtime as unknown as DraftRuntime);
   if (id === "P10_REPAIR") {
     const original = String(runtime.original_scope); const failed = String(runtime.failed_output);
     const { violations } = runtime.locked_only === true ? validateLockedTerms(original, failed, strings(runtime.required_protected_terms)) : validateProtectedContent(original, failed, strings(runtime.required_protected_terms), strings(runtime.required_protected_citations), true);
@@ -190,6 +214,7 @@ function clampResponse(value: unknown): unknown {
   if ("change_categories" in clamped) clamped.change_categories = clampList(clamped.change_categories, 3, 40, humanizeLabel);
   if (typeof clamped.suggested_title === "string") clamped.suggested_title = clamped.suggested_title.slice(0, 200);
   if (Array.isArray(clamped.alternatives)) clamped.alternatives = clamped.alternatives.slice(0, 5);
+  if (Array.isArray(clamped.blocks)) clamped.blocks = clamped.blocks.slice(0, DRAFT_MAX_BLOCKS);
   return clamped;
 }
 
@@ -204,6 +229,11 @@ export function validateAIResponse(id: PromptId, value: unknown, wantsTitle = fa
     return parsed;
   }
   if (id === "P09_QUALITY_EVALUATION") return parsed;
+  if (id === "P11_SECTION_DRAFT") {
+    const blocks = parsed.blocks as DraftBlock[];
+    if (!blocks.some((block) => block.text.trim() || block.items.some((item) => item.trim())) || JSON.stringify(blocks).length > 200000) throw new Error("P11 draft cannot be empty");
+    return parsed;
+  }
   const text = String(parsed.transformed_text ?? parsed.corrected_text ?? "");
   if (text.trim().length === 0 || text.length > 200000) throw new Error("AI output cannot be empty");
   return parsed;
@@ -225,6 +255,9 @@ export function echoesContext(option: string, selection: string, before: unknown
   const inOption = wordsOf(option).join(" "); const inSelection = wordsOf(selection).join(" ");
   return [wordsOf(before).slice(-2), wordsOf(after).slice(0, 2)].some((edge) => edge.length === 2 && inOption.includes(edge.join(" ")) && !inSelection.includes(edge.join(" ")));
 }
+// Creator guard: an option may not bring a link, an account, a hashtag or an emoji the selection does not have.
+const CREATOR_EXTRAS = /https?:\/\/\S+|www\.\S+|[@#][\p{L}\p{N}_]+|\p{Extended_Pictographic}/gu;
+export const addsCreatorExtras = (option: string, selection: string) => [...option.matchAll(CREATOR_EXTRAS)].some((match) => !selection.includes(match[0]));
 const INTENSIFIERS = new Set(["sangat", "amat", "sekali", "banget", "sungguh", "terlalu", "very", "really", "extremely", "highly", "truly"]);
 // Meaning guard: an option may not add an intensifier the selection does not have.
 export const addsIntensifier = (option: string, selection: string) => { const had = new Set(wordsOf(selection)); return wordsOf(option).some((word) => INTENSIFIERS.has(word) && !had.has(word)); };
@@ -260,6 +293,12 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   if (id !== "P10_REPAIR" && repairAttempt !== 0) throw new Error("repair attempt requires P10");
   const parsed = validateAIResponse(id, value);
   if (id === "P09_QUALITY_EVALUATION") return parsed;
+  // P11 has no source to preserve: its guard is that nothing specific is invented (./draft), checked against the
+  // brief, the outline and the surrounding text carried by the normalised runtime.
+  if (id === "P11_SECTION_DRAFT") {
+    try { const checked = validateDraft(parsed as { blocks: DraftBlock[]; warnings?: unknown }, runtime as unknown as DraftRuntime); return { ...parsed, blocks: checked.blocks, warnings: checked.warnings, repaired: checked.repaired, guarded: checked.guarded }; }
+    catch (error) { throw new OutputRejected(error instanceof Error ? error.message : "draft rejected", "draft"); }
+  }
   const list = (...values: unknown[]) => (values.find((item) => item !== undefined) ?? []) as string[];
   if (id === "P10_REPAIR") {
     const requiredCitations = list(runtime.requiredProtectedCitations, runtime.required_protected_citations);
@@ -282,7 +321,8 @@ export function validateGeneration(id: PromptId, original: string, value: unknow
   if (id === "P07_INLINE_ALTERNATIVES") {
     const options = parsed.alternatives as Array<{ text: string; variation_level: string }>;
     const before = runtime.contextBefore ?? runtime.context_before; const after = runtime.contextAfter ?? runtime.context_after;
-    const safe = options.filter((option) => !echoesContext(option.text, original, before, after) && !addsIntensifier(option.text, original) && !protectedTerms.some((term) => option.text.trim() === term.trim()) && validateProtectedContent(original, option.text, protectedTerms, protectedCitations, true).valid);
+    const creator = isCreatorIntent(lookup(ENUM_MAP.intent, runtime.intent ?? runtime.action));
+    const safe = options.filter((option) => !echoesContext(option.text, original, before, after) && !addsIntensifier(option.text, original) && !protectedTerms.some((term) => option.text.trim() === term.trim()) && validateProtectedContent(original, option.text, protectedTerms, protectedCitations, true).valid && (!creator || !addsCreatorExtras(option.text, original)));
     const kept: typeof options = [];
     for (const option of safe) if (capitalisationMatches(original, option.text) && !kept.some((other) => nearDuplicate(other.text, option.text))) kept.push(option);
     if (!kept.length) throw new Error("P07 returned no distinct alternatives");
@@ -314,7 +354,7 @@ export const placeholderTokens = (text: string) => text.match(/\[[^\[\]\n]{1,40}
 
 export type ViolationKind = "term" | "citation" | "number" | "placeholder";
 export type Violation = { required: string; found: string; kind: ViolationKind };
-export type RejectionCause = ViolationKind | "style" | "structure" | "other";
+export type RejectionCause = ViolationKind | "style" | "structure" | "draft" | "other";
 // Carries why an output was refused so the API can name the cause instead of one message for every case.
 // The message stays exactly what it used to be, so existing assertions and the ledger reason are unchanged.
 export class OutputRejected extends Error {
@@ -402,3 +442,4 @@ function usageOf(value: { usage?: Record<string, unknown> }) { return { inputTok
 export { mergeWarnings, sampleEcho, sampleEchoRuns, sampleEchoSeverity, softWarnings } from "./validators";
 export { PROMPTS, PROMPT_VERSION, REASONING_EFFORT, promptIds, responseSchemas, runtimeSchemas, titledResponseSchemas };
 export type { AIResponse, ControlRequest, PromptId, PromptDefinition, ProviderResult, RuntimeInput } from "./types";
+export { draftSourceText, draftText, DRAFT_MAX_REPAIRS, type DraftBlock, type DraftRuntime } from "./draft";

@@ -7,7 +7,7 @@ export type Tier = (typeof TIERS)[number];
 // 'team' was sold before the plan ladder was locked; rows still carrying it keep Pro's rights instead of dropping to free.
 const LEGACY_TIERS: Record<string, Tier> = { team: 'pro' };
 
-export const FEATURES = ['saved_styles', 'purchase_topup', 'advanced_notebook', 'docx_import', 'docx_export', 'freeform_prompt', 'persistent_personalization', 'style_reference'] as const;
+export const FEATURES = ['saved_styles', 'purchase_topup', 'advanced_notebook', 'docx_import', 'docx_export', 'freeform_prompt', 'persistent_personalization', 'style_reference', 'draft_from_brief'] as const;
 export type Feature = (typeof FEATURES)[number];
 
 export type PlanLimits = {
@@ -21,7 +21,10 @@ export type PlanLimits = {
   features: readonly Feature[];
 };
 
-const PLUS_FEATURES: readonly Feature[] = ['saved_styles', 'purchase_topup'];
+// Draf dari brief (UX 3) starts at Plus: it writes new text rather than reworking the writer's own, so it is a paid
+// generation, and its bounded hold (DRAFT_RESERVE_CHARACTERS) fits every paid run limit. Free sees it with a visible
+// lock. This is a recommendation the owner may move to another tier by editing this list.
+const PLUS_FEATURES: readonly Feature[] = ['saved_styles', 'purchase_topup', 'draft_from_brief'];
 const PRO_FEATURES: readonly Feature[] = [...PLUS_FEATURES, 'advanced_notebook', 'docx_import', 'docx_export'];
 const MAX_FEATURES: readonly Feature[] = [...PRO_FEATURES, 'freeform_prompt', 'persistent_personalization', 'style_reference'];
 
@@ -45,6 +48,13 @@ export const TOP_UP_VALIDITY_MONTHS = 12;
 // A free-form instruction can return more text than it was given, so the hold has to cover the longer of the two
 // before the provider is called; the settled charge is MAX(source, output) and never more than this hold.
 export const FREEFORM_RESERVE_FACTOR = 2;
+
+// Draf dari brief writes one section from the brief and the outline, so there is no source text to charge: it is
+// charged the exact characters of the validated draft. The hold is taken before the provider call and bounds the
+// output: the prompt asks for at most DRAFT_TARGET_CHARACTERS, and a draft longer than the hold is refused for zero
+// charge instead of being clamped, so settlement never has to extend the hold and never undercharges.
+export const DRAFT_TARGET_CHARACTERS = 1_200;
+export const DRAFT_RESERVE_CHARACTERS = 1_600;
 
 // Key inside a notebook's preferences that turns on advanced mode; shared so client and server agree on the name.
 export const ADVANCED_PREFERENCE = 'advanced';

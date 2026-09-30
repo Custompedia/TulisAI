@@ -2,14 +2,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { EXTRA_LIMIT } from "../../src/lib/writing/settings";
 import { addsIntensifier, buildMessages, buildSystemMessage, buildUserMessage, clipText, compileControlBlock, echoesContext, selectOptions, tidyText, validateProtectedContent, createOpenRouterProvider, exceedsPreservation, getPromptDefinition, normalizeRuntime, promptHash, PROMPT_VERSION, PROMPTS, promptIds, REASONING_EFFORT, validateGeneration } from "../../src/server/ai/core";
-import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P03_ACTIVE, P01, P01_LANGUAGE, P02, P02_LANGUAGE, P03, P03_LANGUAGE, P04, P04_LANGUAGE, P05, P05_LANGUAGE, P06, P06_LANGUAGE, P07, P07_LANGUAGE, P08, P08_CONTROL_BLOCK, P09, P10 } from "../../src/server/ai/core/prompts";
+import { BASE, BASE_INLINE, BASE_READONLY, LANGUAGE_RULES, OUTPUT_LANGUAGE, P03_ACTIVE, P01, P01_LANGUAGE, P02, P02_LANGUAGE, P03, P03_LANGUAGE, P04, P04_LANGUAGE, P05, P05_LANGUAGE, P06, P06_LANGUAGE, P07, P07_CREATOR_INTENTS, P07_CREATOR_RULES, P07_LANGUAGE, P08, P08_CONTROL_BLOCK, P09, P10, P11, P11_ACADEMIC } from "../../src/server/ai/core/prompts";
 
 const transform = (text: string, extra: Record<string, unknown> = {}) => ({ transformed_text: text, change_categories: [], warnings: [], no_change_needed: false, ...extra });
 
 describe("prompt registry v5", () => {
   it("copies every named text block from systemprompt.md verbatim", () => {
     const blocks = Object.fromEntries([...readFileSync("systemprompt.md", "utf8").matchAll(/^```text ([\w.-]+)\n([\s\S]*?)\n```$/gm)].map((match) => [match[1], match[2]]));
-    const registry: Record<string, string> = { BASE, BASE_INLINE, BASE_READONLY, "OUTPUT_LANGUAGE.id": OUTPUT_LANGUAGE.id, "OUTPUT_LANGUAGE.en": OUTPUT_LANGUAGE.en, P01, P02, P03, P04, P05, P06, P07, P08, P08_CONTROL_BLOCK, P09, P10, PROMPT_IDS: promptIds.join("\n") };
+    const registry: Record<string, string> = { BASE, BASE_INLINE, BASE_READONLY, "OUTPUT_LANGUAGE.id": OUTPUT_LANGUAGE.id, "OUTPUT_LANGUAGE.en": OUTPUT_LANGUAGE.en, P01, P02, P03, P04, P05, P06, P07, P07_CREATOR_INTENTS, P07_CREATOR_RULES, P08, P08_CONTROL_BLOCK, P09, P10, P11, P11_ACADEMIC, PROMPT_IDS: promptIds.join("\n") };
     for (const [name, table] of Object.entries({ P01: P01_LANGUAGE, P02: P02_LANGUAGE, P03: P03_LANGUAGE, P04: P04_LANGUAGE, P05: P05_LANGUAGE, P06: P06_LANGUAGE, P07: P07_LANGUAGE })) { registry[`${name}.id`] = table.id; registry[`${name}.en`] = table.en; }
     expect(Object.keys(blocks).sort()).toEqual(Object.keys(registry).sort());
     for (const [name, text] of Object.entries(registry)) expect(blocks[name], name).toBe(text);
@@ -100,6 +100,7 @@ describe("message assembly", () => {
       P04_PROFESSIONAL: { audience: "atasan" }, P05_CREATIVE: { creativity_strength: "strong" }, P06_SIMPLIFY: { target_audience: "anak_sekolah" }, P07_INLINE_ALTERNATIVES: { action: "alternatives" },
       P08_CUSTOM_TRANSFORM: { format: "table", length: "shorter", audience: "client", focus: ["clarity"], extra_request: "Singkat" }, P09_QUALITY_EVALUATION: { mode: "academic" },
       P10_REPAIR: { failedOutput: "Teks", originalScope: "Teks", requiredProtectedTerms: [], requiredProtectedCitations: [] },
+      P11_SECTION_DRAFT: { doc_type: "essay", max_characters: 1200, brief: { topic: "Topik" }, outline: ["Bab I"], section_heading: "Bab I" },
     };
     for (const id of promptIds) {
       const system = buildSystemMessage(id, normalizeRuntime(id, { ...common, ...inputs[id] }));

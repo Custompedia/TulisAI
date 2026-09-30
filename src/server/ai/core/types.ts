@@ -3,6 +3,7 @@ import { z } from "zod";
 export const promptIds = [
   "P01_STANDARD_REWRITE", "P02_ACADEMIC", "P03_HUMANIZER", "P04_PROFESSIONAL",
   "P05_CREATIVE", "P06_SIMPLIFY", "P07_INLINE_ALTERNATIVES", "P08_CUSTOM_TRANSFORM", "P09_QUALITY_EVALUATION", "P10_REPAIR",
+  "P11_SECTION_DRAFT",
 ] as const;
 export type PromptId = (typeof promptIds)[number];
 
