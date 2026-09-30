@@ -35,8 +35,11 @@ type Props = {
   docType?: string;
   // Ringkas · Perluas · Jadikan poin · Jadikan tabel, run once with the current mode.
   onQuickAction: (action: QuickAction) => void;
-  // The notebook has headings, tables or footnotes, which a whole-document run turns into paragraphs.
+  // The notebook (or, for "Bagian ini", the section) has headings, tables or footnotes, which a run turns into paragraphs.
   structured: boolean;
+  // Set while the scope is "Bagian ini": the heading it sits under and whether another section follows.
+  section?: { heading: string | null; hasNext: boolean } | null;
+  onNextSection?: () => void;
   // Nothing to work on yet: fewer than three words, or an outline that was never filled in.
   emptyDocument: boolean;
 };
@@ -119,7 +122,7 @@ function SkillTiles({ styles, activeId, disabled, full, locked, onPick, onEdit, 
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade, docType, onQuickAction, structured, emptyDocument }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade, docType, onQuickAction, structured, emptyDocument, section = null, onNextSection }: Props) {
   const { t, locale } = useLocale();
   const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<AssistantTab>(() => tabForSettings(settings));
@@ -160,7 +163,9 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   const mismatch = detected !== null && settings.language !== 'auto' && settings.language !== detected;
   const detectedName = nameOf(detected ?? 'id');
   const chosenName = settings.language === 'auto' ? '' : nameOf(settings.language);
-  const scopeLabel = scope === 'selection' ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document');
+  const scopeLabel = scope === 'selection' ? t('teks terpilih', 'selected text')
+    : scope === 'section' ? (section?.heading ? t(`bagian “${section.heading}”`, `section “${section.heading}”`) : t('bagian ini', 'this section'))
+    : t('seluruh dokumen', 'entire document');
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -294,21 +299,27 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
         {error && !generating && (
           <Alert tone="error" onDismiss={onDismissError} dismissLabel={t('Tutup', 'Dismiss')} actions={<Button size="sm" icon={RefreshCw} onClick={onRetry}>{t('Coba lagi', 'Retry')}</Button>}>{error}</Alert>
         )}
-        <SectionTitle aside={(scope === 'selection' || overLimit) && <span className={`text-[11px] tabular-nums ${overLimit ? 'font-semibold text-amber-700' : 'text-ink-500'}`}>{numberFormat(scopeChars, locale)}/{numberFormat(limit, locale)}</span>}>{t('Bagian yang diubah', 'Scope')}</SectionTitle>
+        <SectionTitle aside={(scope !== 'document' || overLimit) && <span className={`text-[11px] tabular-nums ${overLimit ? 'font-semibold text-amber-700' : 'text-ink-500'}`}>{numberFormat(scopeChars, locale)}/{numberFormat(limit, locale)}</span>}>{t('Bagian yang diubah', 'Scope')}</SectionTitle>
         <Segmented<Scope> size="sm" label={t('Bagian yang diubah', 'Scope')} value={scope} disabled={busy} onChange={onScope}
-          options={[{ value: 'selection', label: t('Teks terpilih', 'Selected text'), disabled: !hasSelection }, { value: 'document', label: t('Seluruh dokumen', 'Entire document') }]} />
+          options={[{ value: 'selection', label: t('Teks terpilih', 'Selected text'), disabled: !hasSelection }, { value: 'section', label: t('Bagian ini', 'This section') }, { value: 'document', label: t('Seluruh dokumen', 'Entire document') }]} />
         <p className={`flex items-center gap-1.5 text-xs ${needsSelection || overLimit ? 'text-amber-700' : 'text-ink-500'}`}>
           <TextSelect size={13} className="shrink-0" aria-hidden="true" />
           <span className="min-w-0 flex-1 truncate">
             {needsSelection ? t('Blok teks di editor terlebih dahulu.', 'Select text in the editor first.')
               : overLimit ? t(`Terlalu panjang — persingkat ${scope === 'selection' ? 'pilihan' : 'bagian ini'}.`, `Too long — shorten the ${scope === 'selection' ? 'selection' : 'scope'}.`)
+              : scope === 'section' && scopeWords === 0 ? t('Letakkan kursor di bagian yang berisi teks.', 'Put the cursor in a section with text.')
               : `${scopeLabel} · ${numberFormat(scopeWords, locale)} ${t('kata', 'words')}`}
           </span>
+          {scope === 'section' && section?.hasNext && onNextSection && (
+            <button type="button" disabled={busy} onClick={onNextSection} className="shrink-0 font-semibold text-brand-800 underline decoration-brand-300 underline-offset-2 hover:text-ink-900 disabled:opacity-50">{t('Pilih bagian berikutnya', 'Next section')}</button>
+          )}
         </p>
-        {scope === 'document' && structured && !emptyDocument && (
+        {scope !== 'selection' && structured && !emptyDocument && (
           <p className="flex gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-relaxed text-amber-900">
             <TriangleAlert size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
-            <span>{t('Judul, tabel, dan catatan kaki akan menjadi paragraf biasa. Olah per bagian: blok teksnya dulu.', 'Headings, tables and footnotes will become plain paragraphs. Work section by section: select the text first.')}</span>
+            <span>{scope === 'section'
+              ? t('Tabel dan catatan kaki di bagian ini akan menjadi paragraf biasa. Judulnya tetap.', 'Tables and footnotes in this section will become plain paragraphs. The heading stays.')
+              : t('Judul, tabel, dan catatan kaki akan menjadi paragraf biasa. Olah per bagian: pilih “Bagian ini”.', 'Headings, tables and footnotes will become plain paragraphs. Work section by section: choose “This section”.')}</span>
           </p>
         )}
         {emptyDocument && <p className="text-xs leading-relaxed text-ink-600">{t('AI Tulis Lab mengolah teks yang sudah ada. Tulis minimal 3 kata dulu.', 'Tulis Lab’s AI works on text that already exists. Write at least 3 words first.')}</p>}

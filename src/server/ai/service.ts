@@ -10,7 +10,7 @@ import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
 import { FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
-import {collapseBlankLines} from '@/lib/editor/document';
+import {collapseBlankLines, crossesBlocks} from '@/lib/editor/document';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
 import { countCodePoints, requestFingerprint, sha256 } from '../usage/measurement';
@@ -79,6 +79,17 @@ async function cleanExpired(ownerId: string) {
 function requestedFormat(promptId: PromptId, controls: RuntimeInput): 'bullets'|'numbered_list'|'table'|undefined {
   if (promptId === 'P07_INLINE_ALTERNATIVES') return undefined;
   return ({poin:'bullets',bernomor:'numbered_list',tabel:'table'} as const)[String(controls.request?.format) as 'poin'|'bernomor'|'tabel'];
+}
+// How an applied result goes back into the document. A list or table request keeps its shape. Otherwise a rewrite
+// (P01–P06) or an instruction (P08) over several paragraphs, or one line that came back as several, goes back as
+// paragraphs, not as line breaks inside one paragraph. A passage inside one paragraph with its own line breaks
+// keeps them, and P07 alternatives always replace inline.
+export function applyFormat(promptId: PromptId, sourceText: string, output: string, controls: RuntimeInput, spansParagraphs: boolean): 'paragraph'|'bullets'|'numbered_list'|'table'|undefined {
+  if (promptId === 'P07_INLINE_ALTERNATIVES') return undefined;
+  const requested = requestedFormat(promptId, controls);
+  if (requested) return requested;
+  if (spansParagraphs) return 'paragraph';
+  return !sourceText.includes('\n') && output.includes('\n') ? 'paragraph' : undefined;
 }
 // Paraphrase runs share one per-tier budget whether the scope is a selection or the whole notebook; inline actions keep their own small cap.
 export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLimits) {
@@ -276,8 +287,9 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
     const code = typed?.cause === 'term' ? 'AI_LOCKED_TERM_REJECTED' : typed?.cause === 'number' ? 'AI_NUMBER_REJECTED' : typed?.cause === 'citation' ? 'AI_CITATION_REJECTED' : 'AI_OUTPUT_REJECTED';
     throw new RequestError(code,'This preview no longer meets protected-content requirements.',422, typed?.token ? {token:typed.token} : undefined);
   }
-  // A dock instruction over several paragraphs gets its lines back as paragraphs, not as line breaks inside one.
-  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,collapseBlankLines(outputText(output,selectedAlternative)),preview.prompt_id==='P08_CUSTOM_TRANSFORM'&&preview.source_text.includes('\n')?'paragraph':requestedFormat(preview.prompt_id,controls));
+  const replacement=collapseBlankLines(outputText(output,selectedAlternative));
+  const spansParagraphs=anchor?crossesBlocks(document.document.content,anchor.from,anchor.to):true;
+  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,replacement,applyFormat(preview.prompt_id,preview.source_text,replacement,controls,spansParagraphs));
   return saveDocument(ownerId,preview.document_id,expectedRevision,{content},'ai_apply',null,{previewId,expectedLockIds:locks.map(lock=>lock.id),promptId:preview.prompt_id,scopeType:anchor?'selection':'document'});
 }
 export async function discardPreview(ownerId:string,previewId:string) {
