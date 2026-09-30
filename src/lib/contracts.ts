@@ -28,6 +28,15 @@ export const EditorDocumentSchema = z.preprocess(compactNode, z.object({ type: z
 const DocumentPreferencesSchema = z.record(z.string(), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null(), z.array(z.string().max(300)).max(20)]));
 export const DocumentCreateSchema = z.object({ title: z.string().trim().min(1).max(180).default("Untitled document"), content: EditorDocumentSchema.optional(), language: z.enum(["auto", "id", "en"]).default("auto"), preferences: DocumentPreferencesSchema.optional(), color: NotebookAppearanceSchema.shape.color.optional(), icon: NotebookAppearanceSchema.shape.icon.optional(), docxImportReceipt: z.string().uuid().optional() });
 export const DocumentPatchSchema = z.object({ title: z.string().trim().min(1).max(180).optional(), language: z.enum(["auto", "id", "en"]).optional(), preferences: DocumentPreferencesSchema.optional(), content: EditorDocumentSchema.optional(), expectedRevision: z.number().int().min(0) });
+// GET /api/documents: every filter is optional; an unknown mode or kind is refused rather than matching nothing.
+export const DocumentListQuerySchema = z.object({
+  q: z.string().max(100).optional(),
+  mode: z.enum(["standard", "academic", "humanize", "professional", "creative", "simplify"]).optional(),
+  docType: z.enum(["article", "script", "caption", "essay", "report", "email", "product", "story", "none"]).optional(),
+  sort: z.enum(["updated", "title", "created"]).optional(),
+  pinned: z.enum(["1", "true"]).optional(), trash: z.enum(["1", "true"]).optional(), counts: z.enum(["1", "true"]).optional(),
+});
+export const PinSchema = z.object({ pinned: z.boolean() });
 export const DocumentTitleSchema = z.object({ title: z.string().trim().min(1).max(180), expectedRevision: z.number().int().min(0) });
 export const AutosaveSchema = z.object({ content: EditorDocumentSchema, title: z.string().trim().min(1).max(180).optional(), language: z.enum(["auto", "id", "en"]).optional(), preferences: z.record(z.string(), z.unknown()).optional(), expectedRevision: z.number().int().min(0) });
 export const LockCreateSchema = z.object({ term: z.string().min(1).max(300).refine((term) => term.trim().length > 0, "A locked term cannot be blank.") });
@@ -51,7 +60,7 @@ export type DocumentCreateInput = z.infer<typeof DocumentCreateSchema>;
 export type GenerateInput = z.infer<typeof GenerateSchema>;
 export type AnalyzeQualityInput = z.infer<typeof AnalyzeQualitySchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;
-export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
+export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
 export type VersionDTO = { id: string; documentId: string; kind: "original" | "checkpoint" | "ai_apply" | "restore"; revision: number; createdAt: string; label: string | null; promptId?: string | null; scopeType?: string | null };
 
 export function apiError(code: string, message: string, status: number, details?: unknown) {

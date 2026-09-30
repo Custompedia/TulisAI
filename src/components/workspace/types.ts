@@ -1,7 +1,7 @@
 import type { JSONContent } from '@tiptap/core';
 import type { Settings } from '@/lib/writing/settings';
 
-export type Doc = { id: string; title: string; revision: number; language: 'auto' | 'id' | 'en'; content: JSONContent; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null };
+export type Doc = { id: string; title: string; revision: number; language: 'auto' | 'id' | 'en'; content: JSONContent; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean };
 export type VersionKind = 'original' | 'checkpoint' | 'ai_apply' | 'restore';
 export type Version = { id: string; kind: VersionKind; label: string | null; revision: number; createdAt: string; promptId?: string | null; scopeType?: string | null };
 export type Term = { id: string; term: string };

@@ -10,6 +10,7 @@ import { numberFormat, relativeTime } from '@/lib/client/format';
 import { clampDocPanelWidth, DOC_PANEL_MAX_WIDTH, DOC_PANEL_MIN_WIDTH } from '@/lib/navigation/doc-panel';
 import { BRIEF_KEYS, META_VALUE_LIMIT, WORD_TARGET_MAX, type BriefKey, type NotebookMeta } from '@/lib/writing/notebook-meta';
 import { docTypeShort, isDocType } from '@/lib/writing/doc-types';
+import { PICKER_SEARCH_DELAY_MS, searchQuery } from '@/lib/navigation/library';
 import type { Mode } from '@/lib/writing/settings';
 import type { DocumentSummary } from '@/components/app/AppShell';
 import { requestNewWriting } from '@/components/app/shell-events';
@@ -83,24 +84,31 @@ export function DocPanelContent({ editor, loaded, navigable, text, words, terms,
   );
 }
 
-// Ganti notebook ▾: search the 20 most recent, with "Tulis baru" at the bottom (the same dialog as everywhere).
+// Ganti notebook ▾: the 20 most recent, or a title search over every notebook on the server, with "Tulis baru"
+// at the bottom (the same dialog as everywhere).
 function Switcher({ docId, title }: { docId: string; title: string }) {
   const { t, locale } = useLocale();
   const [open, setOpen] = useState(false);
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
   const [query, setQuery] = useState('');
   const root = useRef<HTMLDivElement>(null);
+  const trimmed = query.trim();
   useEffect(() => {
     if (!open) return;
     let live = true;
-    request<{ items: DocumentSummary[] }>('/api/documents?limit=20').then((page) => { if (live) setDocs(page.items); }, () => { if (live) setDocs([]); });
+    const timer = setTimeout(() => {
+      request<{ items: DocumentSummary[] }>(`/api/documents?${searchQuery(trimmed, 20)}`).then((page) => { if (live) setDocs(page.items); }, () => { if (live) setDocs([]); });
+    }, trimmed ? PICKER_SEARCH_DELAY_MS : 0);
+    return () => { live = false; clearTimeout(timer); };
+  }, [open, trimmed]);
+  useEffect(() => {
+    if (!open) return;
     const onDown = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey);
-    return () => { live = false; document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
-  const term = query.trim().toLowerCase();
-  const shown = (docs ?? []).filter((doc) => doc.id !== docId && (!term || doc.title.toLowerCase().includes(term)));
+  const shown = (docs ?? []).filter((doc) => doc.id !== docId);
   return (
     <div ref={root} className="relative">
       <button type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}
@@ -111,11 +119,11 @@ function Switcher({ docId, title }: { docId: string; title: string }) {
         <div role="dialog" aria-label={t('Ganti notebook', 'Switch notebook')} className="absolute inset-x-0 top-full z-40 mt-1 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)] animate-fade-up">
           <div className="relative mb-1">
             <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
-            <input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t('Cari notebook', 'Search notebooks')} placeholder={t('Cari 20 terbaru…', 'Search the 20 latest…')} className={`${inputClass} h-8 pl-8 text-[13px]`} />
+            <input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t('Cari notebook', 'Search notebooks')} placeholder={t('Cari semua notebook…', 'Search all notebooks…')} className={`${inputClass} h-8 pl-8 text-[13px]`} />
           </div>
           <ul className="scrollbar-thin max-h-64 overflow-y-auto">
             {docs === null ? <li role="status" className="px-2.5 py-2 text-xs text-ink-500">{t('Memuat…', 'Loading…')}</li>
-              : shown.length === 0 ? <li className="px-2.5 py-2 text-xs text-ink-500">{t('Tidak ada notebook lain.', 'No other notebooks.')}</li>
+              : shown.length === 0 ? <li className="px-2.5 py-2 text-xs text-ink-500">{trimmed ? t(`Tidak ada notebook yang cocok dengan “${trimmed}”.`, `No notebooks match “${trimmed}”.`) : t('Tidak ada notebook lain.', 'No other notebooks.')}</li>
               : shown.map((doc) => (
                 <li key={doc.id}><Link href={`/notebooks/${doc.id}`} onClick={() => setOpen(false)} className="block rounded-lg px-2.5 py-1.5 transition-colors hover:bg-paper-deep">
                   <span className="block truncate text-[13px] font-medium text-ink-900">{doc.title}</span>

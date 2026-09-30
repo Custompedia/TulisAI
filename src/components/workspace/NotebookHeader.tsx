@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlignLeft, Check, ChevronDown, ChevronLeft, ClipboardCheck, Columns2, Copy, CopyPlus, Download, EllipsisVertical, Eye, FileCode2, FileCog, FileText,
   Focus, History, Lock, Palette, PanelTop, Plus, Save, Tags, Trash2, Type, type LucideIcon,
+  Pin, PinOff,
 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { DOC_TYPES, docTypeShort, type DocType } from '@/lib/writing/doc-types';
@@ -25,6 +26,8 @@ type Props = {
   canExport: boolean; exporting: boolean; pageSize: PageSize; onExportDocx: (size: PageSize) => void; onExportHtml: () => void;
   canCopy: boolean; onCopy: () => void; onCopyPlain: () => void;
   onPageSetup: () => void; onHeaderFooter: () => void; onFocus: () => void; onNew: () => void; onDuplicate: () => void; onAppearance: (anchor: HTMLElement | null) => void; onReview: () => void; onDelete: () => void;
+  // Sematkan: keeps the notebook in the library's "Disematkan" group.
+  pinned?: boolean; onPin?: (pinned: boolean) => void;
   onUpgrade: () => void;
 };
 
@@ -92,7 +95,7 @@ const PILL = 'inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border 
 // fold the right-hand controls into ⋯, so nothing the desktop offers is missing on a phone.
 export function NotebookHeader(props: Props) {
   const { title, onTitle, disabled, comparing, save, docType, onDocType, canAdvanced, advanced, onAdvanced, onSaveVersion, compareHint, onCompare, onHistory,
-    canExport, exporting, pageSize, onExportDocx, onExportHtml, canCopy, onCopy, onCopyPlain, onPageSetup, onHeaderFooter, onFocus, onNew, onDuplicate, onAppearance, onReview, onDelete, onUpgrade } = props;
+    canExport, exporting, pageSize, onExportDocx, onExportHtml, canCopy, onCopy, onCopyPlain, onPageSetup, onHeaderFooter, onFocus, onNew, onDuplicate, onAppearance, onReview, onDelete, onUpgrade, pinned = false, onPin } = props;
   const { t } = useLocale();
   const moreRef = useRef<HTMLDivElement>(null);
   const advancedTier = useRequiredTierName('advanced_notebook');
@@ -136,9 +139,10 @@ export function NotebookHeader(props: Props) {
     { key: 'notebook', items: [
       { key: 'duplicate', icon: CopyPlus, label: t('Duplikat notebook', 'Duplicate notebook'), disabled, onSelect: onDuplicate },
       { key: 'appearance', icon: Palette, label: t('Ubah ikon & warna', 'Change icon & colour'), onSelect: () => onAppearance(moreRef.current) },
+      ...(onPin ? [{ key: 'pin', icon: pinned ? PinOff : Pin, label: pinned ? t('Lepas sematan', 'Unpin') : t('Sematkan', 'Pin'), onSelect: () => onPin(!pinned) }] : []),
       { key: 'review', icon: Eye, label: t('Tinjau tulisan', 'Review writing'), onSelect: onReview },
     ] },
-    { key: 'delete', items: [{ key: 'delete', icon: Trash2, label: t('Hapus notebook', 'Delete notebook'), danger: true, onSelect: onDelete }] },
+    { key: 'delete', items: [{ key: 'delete', icon: Trash2, label: t('Pindahkan ke Sampah', 'Move to trash'), danger: true, onSelect: onDelete }] },
   ];
 
   return (

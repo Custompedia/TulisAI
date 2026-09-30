@@ -1,11 +1,12 @@
 'use client';
 import Link from 'next/link';
 import { useCallback, useRef, useState } from 'react';
-import { CopyPlus, MoreHorizontal, Palette, PencilLine, Trash2 } from 'lucide-react';
+import { ArchiveRestore, CopyPlus, MoreHorizontal, Palette, PencilLine, Pin, PinOff, Trash2 } from 'lucide-react';
 import { del } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { relativeTime } from '@/lib/client/format';
+import { notifyLibraryChanged } from '@/lib/navigation/library';
 import { asMode } from '@/lib/writing/settings';
 import { copyPreferences, storedParts } from '@/lib/writing/notebook-meta';
 import { notebookTone, parseNotebookIcon } from '@/lib/notebook/appearance';
@@ -38,13 +39,19 @@ export async function renameNotebook(id: string, title: string, revision: number
   }
 }
 
-// `view`: the library's Grid | Daftar choice; both share the same menu and dialogs.
-export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplicate }: { doc: DocumentSummary; view?: 'grid' | 'list'; onChange?: (doc: DocumentSummary) => void; onDelete?: (id: string) => void; onDuplicate?: (doc: DocumentSummary) => void }) {
+// What happened to a card that leaves the list: moved to the trash (the page offers Urungkan), taken out of the
+// trash, or deleted for good.
+export type CardRemoval = 'trashed' | 'restored' | 'purged';
+
+// `view`: the library's Grid | Daftar choice; both share the same menu and dialogs. A card from the trash list
+// (doc.deletedAt) does not open; its menu is Pulihkan and Hapus permanen.
+export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplicate }: { doc: DocumentSummary; view?: 'grid' | 'list'; onChange?: (doc: DocumentSummary) => void; onDelete?: (id: string, removal: CardRemoval) => void; onDuplicate?: (doc: DocumentSummary) => void }) {
   const { t, locale } = useLocale();
   const { user, refresh } = useShell();
   const { has } = useEntitlements();
   const guard = useSessionGuard();
-  const [dialog, setDialog] = useState<'rename' | 'delete' | 'appearance' | null>(null);
+  const [dialog, setDialog] = useState<'rename' | 'purge' | 'appearance' | null>(null);
+  const trashed = !!doc.deletedAt;
   const [name, setName] = useState(doc.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -57,7 +64,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
   const tone = toneClass[notebookTone(doc.color, doc.mode)];
   const trimmed = name.trim();
 
-  const open = (next: 'rename' | 'delete') => { setError(''); setName(doc.title); setDialog(next); };
+  const open = (next: 'rename' | 'purge') => { setError(''); setName(doc.title); setDialog(next); };
   const close = () => { if (!busy) setDialog(null); };
   const closePicker = useCallback(() => { setDialog(null); kebab.current?.querySelector('button')?.focus(); }, []);
 
@@ -67,7 +74,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
     setBusy(true); setError('');
     try {
       const saved = await renameNotebook(doc.id, trimmed, doc.revision);
-      onChange?.({ ...doc, title: saved.title, revision: saved.revision, updatedAt: saved.updatedAt }); setDialog(null); void refresh();
+      onChange?.({ ...doc, title: saved.title, revision: saved.revision, updatedAt: saved.updatedAt }); setDialog(null); void refresh(); notifyLibraryChanged();
     } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
     finally { setBusy(false); }
   }
@@ -80,18 +87,35 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
       const source = await request<StoredDoc>(`/api/documents/${doc.id}`);
       const preferences = copyPreferences(storedParts(source.preferences), { advancedNotebook: has('advanced_notebook'), savedStyles: has('saved_styles') });
       const copy = await request<StoredDoc>('/api/documents', 'POST', { title: `${source.title} (${t('salinan', 'copy')})`.slice(0, 180), content: source.content, language: source.language, preferences, ...(source.color ? { color: source.color } : {}), ...(source.icon ? { icon: source.icon } : {}) }, newKey());
-      onDuplicate?.({ id: copy.id, title: copy.title, language: copy.language, revision: copy.revision, mode: typeof copy.preferences?.mode === 'string' ? copy.preferences.mode : null, color: copy.color, icon: copy.icon, createdAt: copy.createdAt, updatedAt: copy.updatedAt });
-      void refresh();
+      onDuplicate?.({ id: copy.id, title: copy.title, language: copy.language, revision: copy.revision, mode: typeof copy.preferences?.mode === 'string' ? copy.preferences.mode : null, docType: typeof copy.preferences?.docType === 'string' ? copy.preferences.docType : null, pinned: false, color: copy.color, icon: copy.icon, createdAt: copy.createdAt, updatedAt: copy.updatedAt });
+      void refresh(); notifyLibraryChanged();
     } catch (caught) { if (!guard(caught) && !showPlanNotice(caught)) setError(errorText(caught, locale === 'en')); }
     finally { setBusy(false); }
   }
 
-  async function remove() {
+  // Hapus: into the trash straight away (the page offers Urungkan). Hapus permanen, from the trash only, asks first.
+  async function remove(permanent: boolean) {
     setBusy(true); setError('');
     try {
-      await request(`/api/documents/${doc.id}`, 'DELETE', {}, newKey());
-      await del(`writing-draft:${user.id}:${doc.id}`).catch(() => undefined);
-      setDialog(null); onDelete?.(doc.id); void refresh();
+      await request(`/api/documents/${doc.id}${permanent ? '?permanent=1' : ''}`, 'DELETE', {}, newKey());
+      if (permanent) await del(`writing-draft:${user.id}:${doc.id}`).catch(() => undefined);
+      setDialog(null); onDelete?.(doc.id, permanent ? 'purged' : 'trashed'); void refresh(); notifyLibraryChanged();
+    } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
+    finally { setBusy(false); }
+  }
+  async function restore() {
+    setBusy(true); setError('');
+    try {
+      await request(`/api/documents/${doc.id}/restore`, 'POST', {}, newKey());
+      onDelete?.(doc.id, 'restored'); void refresh(); notifyLibraryChanged();
+    } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
+    finally { setBusy(false); }
+  }
+  async function pin(pinned: boolean) {
+    setBusy(true); setError('');
+    try {
+      await request(`/api/documents/${doc.id}/pin`, 'PATCH', { pinned }, newKey());
+      onChange?.({ ...latest.current, pinned }); notifyLibraryChanged();
     } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
     finally { setBusy(false); }
   }
@@ -100,16 +124,21 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
     <Menu label={`${t('Opsi untuk', 'Options for')} ${doc.title}`} disabled={busy}
       triggerClassName={`grid h-8 w-8 place-items-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 ${view === 'grid' ? `bg-white/60 hover:bg-white ${tone.ink}` : 'text-ink-500 hover:bg-paper-deep hover:text-ink-900'}`}
       trigger={<MoreHorizontal size={17} aria-hidden="true" />}
-      items={[
+      items={trashed ? [
+        { label: t('Pulihkan', 'Restore'), icon: ArchiveRestore, onSelect: () => void restore() },
+        { label: t('Hapus permanen', 'Delete permanently'), icon: Trash2, tone: 'danger', onSelect: () => open('purge') },
+      ] : [
         { label: t('Ubah ikon & warna', 'Change icon & colour'), icon: Palette, onSelect: () => { appearance.clearError(); setDialog('appearance'); } },
         { label: t('Ganti nama', 'Rename'), icon: PencilLine, onSelect: () => open('rename') },
+        doc.pinned ? { label: t('Lepas sematan', 'Unpin'), icon: PinOff, onSelect: () => void pin(false) } : { label: t('Sematkan', 'Pin'), icon: Pin, onSelect: () => void pin(true) },
         { label: t('Duplikat', 'Duplicate'), icon: CopyPlus, onSelect: () => void duplicate() },
-        { label: t('Hapus', 'Delete'), icon: Trash2, tone: 'danger', onSelect: () => open('delete') },
+        { label: t('Hapus', 'Delete'), icon: Trash2, tone: 'danger', onSelect: () => void remove(false) },
       ]} />
   );
   const meta = (
     <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-ink-500">
-      <span className="truncate">{t('Diedit', 'Edited')} {relativeTime(doc.updatedAt, locale)}</span>
+      {doc.pinned && !trashed && <Pin size={12} aria-label={t('Disematkan', 'Pinned')} className="shrink-0 text-brand-700" />}
+      <span className="truncate">{trashed && doc.purgeAt ? t(`Dihapus permanen ${new Date(doc.purgeAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}`, `Deleted for good on ${new Date(doc.purgeAt).toLocaleDateString('en', { day: 'numeric', month: 'short' })}`) : <>{t('Diedit', 'Edited')} {relativeTime(doc.updatedAt, locale)}</>}</span>
       {mode && <><span aria-hidden="true">·</span><span className={`shrink-0 rounded-md border px-1.5 py-px text-[11px] font-semibold ${toneClass[modeTone[mode]].chip}`}>{modeLabel(mode, t)}</span></>}
     </p>
   );
@@ -121,7 +150,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
           <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${tone.fill} ${tone.ink}`}><NotebookIcon icon={doc.icon} mode={doc.mode} size={19} /></span>
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-ink-900">
-              <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:inset-0 after:z-10 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>
+              {trashed ? doc.title : <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:inset-0 after:z-10 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>}
             </h3>
             {meta}
           </div>
@@ -135,7 +164,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
           </div>
           <div className="px-0.5 pt-3">
             <h3 className="line-clamp-2 text-sm font-semibold leading-snug tracking-[-0.01em] text-ink-900">
-              <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:-inset-1.5 after:z-10 after:rounded-[18px] focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>
+              {trashed ? doc.title : <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:-inset-1.5 after:z-10 after:rounded-[18px] focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>}
             </h3>
             {meta}
           </div>
@@ -157,8 +186,8 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
           </form>
         </Modal>
       )}
-      {dialog === 'delete' && (
-        <ConfirmDialog title={t('Hapus notebook?', 'Delete notebook?')} tone="danger" busy={busy} confirmLabel={t('Hapus permanen', 'Delete permanently')} onClose={close} onConfirm={() => void remove()}>
+      {dialog === 'purge' && (
+        <ConfirmDialog title={t('Hapus permanen?', 'Delete permanently?')} tone="danger" busy={busy} confirmLabel={t('Hapus permanen', 'Delete permanently')} onClose={close} onConfirm={() => void remove(true)}>
           <p>{t('Notebook', 'The notebook')} <b className="text-ink-900">“{doc.title}”</b> {t('beserta semua versi dan pratinjaunya akan dihapus. Tindakan ini tidak bisa dibatalkan.', 'and all its versions and previews will be deleted. This cannot be undone.')}</p>
         </ConfirmDialog>
       )}

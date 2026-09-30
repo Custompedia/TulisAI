@@ -85,7 +85,7 @@ const USER_SELECT = `
       SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens, MAX(created_at) AS last_active
     FROM usage_ledger WHERE period_key=? GROUP BY owner_id
   ) l ON l.owner_id=u.id
-  LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents GROUP BY owner_id) d ON d.owner_id=u.id
+  LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents WHERE deleted_at IS NULL GROUP BY owner_id) d ON d.owner_id=u.id
   ${PLAN_JOIN}`;
 
 async function withWalletCharacters(users: AdminUser[]): Promise<AdminUser[]> {

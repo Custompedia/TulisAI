@@ -19,7 +19,9 @@ export type WalletSummary = {
   spendableTotal: number;
 };
 export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; charactersUsed: number; characterLimit: number; charactersRemaining: number; characterScope?: 'account' | 'period'; tier?: Tier; access?: { paidUntil: string | null }; limits?: PlanLimits; features?: Feature[]; wallet?: WalletSummary };
-export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
+// One row of GET /api/documents. docType and pinned arrived with the server-side library (UX 2); deletedAt and
+// purgeAt only on the trash list.
+export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; docType?: string | null; pinned?: boolean; color: string | null; icon: string | null; createdAt: string; updatedAt: string; deletedAt?: string; purgeAt?: string };
 
 type ShellState = { user: SessionUser; settings: UserSettings; usage: Usage | null };
 type Shell = ShellState & { setSettings: (settings: UserSettings) => void; refresh: () => Promise<void>; refreshUsage: () => Promise<void> };

@@ -1,4 +1,5 @@
 import { reapExpiredReservations } from "../usage/wallet";
+import { purgeExpiredTrash } from "../documents/service";
 type MaintenanceEnv = { DB: D1Database; DOCUMENTS: R2Bucket };
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -17,8 +18,8 @@ export async function sweepOrphanSnapshots(env: MaintenanceEnv, now = Date.now()
 }
 
 export async function runMaintenance(env: MaintenanceEnv, now = Date.now()) {
-  const [purged, sweep, walletReservationsReleased] = await Promise.all([
-    purgeExpiredPreviewPayloads(env, now), sweepOrphanSnapshots(env, now), reapExpiredReservations(now),
+  const [purged, sweep, walletReservationsReleased, trashPurged] = await Promise.all([
+    purgeExpiredPreviewPayloads(env, now), sweepOrphanSnapshots(env, now), reapExpiredReservations(now), purgeExpiredTrash(env, now),
   ]);
-  return { purged, walletReservationsReleased, ...sweep };
+  return { purged, walletReservationsReleased, trashPurged, ...sweep };
 }

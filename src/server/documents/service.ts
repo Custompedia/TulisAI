@@ -11,7 +11,7 @@ import { ADVANCED_PREFERENCE, hasFeature, PAGE_LAYOUT_PREFERENCES } from "@/lib/
 import { storedSettingsForAccess } from "../usage/premium";
 import { validDocxImportReceipt } from "./portability";
 
-type DocumentRow = { id: string; title: string; language: "auto" | "id" | "en"; preferences_json: string; revision: number; body_json: string | null; body_r2_key: string | null; original_version_id?: string | null; color?: string | null; icon?: string | null; created_at: number; updated_at: number };
+type DocumentRow = { id: string; title: string; language: "auto" | "id" | "en"; preferences_json: string; revision: number; body_json: string | null; body_r2_key: string | null; original_version_id?: string | null; color?: string | null; icon?: string | null; pinned_at?: number | null; created_at: number; updated_at: number };
 type VersionRow = { id: string; document_id: string; kind: VersionDTO["kind"]; revision: number; label: string | null; snapshot_r2_key: string; created_at: number; prompt_id: string | null; scope_type: string | null };
 const now = () => Date.now();
 const id = () => crypto.randomUUID();
@@ -45,9 +45,10 @@ async function checkedPreferences(ownerId: string, preferences: Record<string, u
   return next;
 }
 
-async function rowForOwner(documentId: string, ownerId: string): Promise<DocumentRow> { const row = await runtime().DB.prepare("SELECT id,title,language,preferences_json,revision,body_json,body_r2_key,original_version_id,color,icon,created_at,updated_at FROM documents WHERE id=? AND owner_id=?").bind(documentId, ownerId).first<DocumentRow>(); if (!row) throw new RequestError("NOT_FOUND", "Document not found.", 404); return row; }
+// A notebook in the trash is gone for every editor path (read, save, AI, export, versions); only restore and purge reach it.
+async function rowForOwner(documentId: string, ownerId: string): Promise<DocumentRow> { const row = await runtime().DB.prepare("SELECT id,title,language,preferences_json,revision,body_json,body_r2_key,original_version_id,color,icon,pinned_at,created_at,updated_at FROM documents WHERE id=? AND owner_id=? AND deleted_at IS NULL").bind(documentId, ownerId).first<DocumentRow>(); if (!row) throw new RequestError("NOT_FOUND", "Document not found.", 404); return row; }
 async function readBody(row: DocumentRow) { if (row.body_json) return parseBody(row.body_json); if (row.body_r2_key) return parseBody(await getSnapshot(row.body_r2_key)); throw new RequestError("DOCUMENT_CORRUPT", "Document body is unavailable.", 409); }
-async function dto(row: DocumentRow): Promise<DocumentDTO> { return { id: row.id, title: row.title, language: row.language, preferences: JSON.parse(row.preferences_json || "{}"), revision: row.revision, originalVersionId: row.original_version_id ?? null, color: row.color ?? null, icon: row.icon ?? null, content: await readBody(row), createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
+async function dto(row: DocumentRow): Promise<DocumentDTO> { return { id: row.id, title: row.title, language: row.language, preferences: JSON.parse(row.preferences_json || "{}"), revision: row.revision, originalVersionId: row.original_version_id ?? null, color: row.color ?? null, icon: row.icon ?? null, pinned: row.pinned_at !== null && row.pinned_at !== undefined, content: await readBody(row), createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() }; }
 
 export async function createDocument(ownerId: string, input: DocumentCreateInput): Promise<DocumentDTO> {
   const preferences = await checkedPreferences(ownerId, input.preferences, "reject");
@@ -71,10 +72,73 @@ export async function createDocument(ownerId: string, input: DocumentCreateInput
 }
 
 export async function getDocument(ownerId: string, documentId: string) { return dto(await rowForOwner(documentId, ownerId)); }
-export async function listDocuments(ownerId: string, cursor?: string, limit = 20) {
-  const bounded = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 50) : 20; const args: unknown[] = [ownerId]; let where = "owner_id=?";
-  if (cursor) { const [updatedAt, cursorId] = cursor.split(":"); if (!updatedAt || !cursorId || !/^\d+$/.test(updatedAt)) throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); where += " AND (updated_at < ? OR (updated_at = ? AND id < ?))"; args.push(Number(updatedAt), Number(updatedAt), cursorId); }
-  args.push(bounded + 1); const rows = await runtime().DB.prepare(`SELECT id,title,language,revision,color,icon,created_at,updated_at,json_extract(preferences_json,'$.mode') AS mode FROM documents WHERE ${where} ORDER BY updated_at DESC,id DESC LIMIT ?`).bind(...args).all<Omit<DocumentRow, "body_json" | "body_r2_key" | "preferences_json"> & { mode: string | null }>(); const results = rows.results ?? []; const page = results.slice(0, bounded); const last = page.at(-1); return { items: page.map((row) => ({ id: row.id, title: row.title, language: row.language, revision: row.revision, mode: typeof row.mode === "string" ? row.mode : null, color: row.color ?? null, icon: row.icon ?? null, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString() })), nextCursor: results.length > bounded && last ? `${last.updated_at}:${last.id}` : null };
+// The library list, filtered and sorted on the server (UX 2). `q` matches the title, `mode` the AI mode last used
+// (legacy "custom" counts as Parafrase), `docType` the kind of writing ("none" = no kind). `trash` lists the
+// trash instead, newest deletion first. `total` counts every match, not just this page; `counts` (on request)
+// gives the sidebar its groups. Keyset cursors per sort: "<value>:<id>", the title base64url-encoded.
+export const LIST_SORTS = ["updated", "title", "created"] as const;
+export type ListSort = (typeof LIST_SORTS)[number];
+export type ListFilter = { q?: string; mode?: string; docType?: string; sort?: ListSort; pinned?: boolean; trash?: boolean };
+export type LibraryCounts = { all: number; pinned: number; trash: number; docTypes: Record<string, number>; modes: Record<string, number> };
+export const TRASH_RETENTION_MS = 30 * 86_400_000;
+type ListRow = Omit<DocumentRow, "body_json" | "body_r2_key" | "preferences_json"> & { mode: unknown; doc_type: unknown; pinned_at: number | null; deleted_at: number | null };
+const encodeTitle = (value: string) => btoa(String.fromCharCode(...new TextEncoder().encode(value))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const decodeTitle = (value: string) => { try { return new TextDecoder().decode(Uint8Array.from(atob(value.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0))); } catch { throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); } };
+const likePattern = (value: string) => `%${value.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
+const DOC_TYPE_SQL = "json_extract(preferences_json,'$.docType')";
+const MODE_SQL = "json_extract(preferences_json,'$.mode')";
+
+function listWhere(ownerId: string, filter: ListFilter): { where: string[]; args: unknown[] } {
+  const where = ["owner_id=?", filter.trash ? "deleted_at IS NOT NULL" : "deleted_at IS NULL"]; const args: unknown[] = [ownerId];
+  if (filter.pinned && !filter.trash) where.push("pinned_at IS NOT NULL");
+  // Every word must appear in the title, in any order ("bab esai" finds "Esai — Bab 2").
+  for (const word of (filter.q ?? "").trim().slice(0, 100).split(/\s+/u).filter(Boolean).slice(0, 5)) { where.push("title LIKE ? ESCAPE '\\'"); args.push(likePattern(word)); }
+  if (filter.mode) { if (filter.mode === "standard") where.push(`${MODE_SQL} IN ('standard','custom')`); else { where.push(`${MODE_SQL}=?`); args.push(filter.mode); } }
+  if (filter.docType) { if (filter.docType === "none") where.push(`${DOC_TYPE_SQL} IS NULL`); else { where.push(`${DOC_TYPE_SQL}=?`); args.push(filter.docType); } }
+  return { where, args };
+}
+
+export async function libraryCounts(ownerId: string): Promise<LibraryCounts> {
+  const db = runtime().DB;
+  const [totals, types, modes] = await Promise.all([
+    db.prepare("SELECT SUM(CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END) AS active,SUM(CASE WHEN deleted_at IS NULL AND pinned_at IS NOT NULL THEN 1 ELSE 0 END) AS pinned,SUM(CASE WHEN deleted_at IS NOT NULL THEN 1 ELSE 0 END) AS trash FROM documents WHERE owner_id=?").bind(ownerId).first<{ active: number | null; pinned: number | null; trash: number | null }>(),
+    db.prepare(`SELECT ${DOC_TYPE_SQL} AS value,COUNT(1) AS n FROM documents WHERE owner_id=? AND deleted_at IS NULL GROUP BY value`).bind(ownerId).all<{ value: unknown; n: number }>(),
+    db.prepare(`SELECT ${MODE_SQL} AS value,COUNT(1) AS n FROM documents WHERE owner_id=? AND deleted_at IS NULL GROUP BY value`).bind(ownerId).all<{ value: unknown; n: number }>(),
+  ]);
+  const group = (rows: Array<{ value: unknown; n: number }>, rename: (value: string) => string = (value) => value) => {
+    const out: Record<string, number> = {};
+    for (const row of rows) { const key = typeof row.value === "string" && row.value ? rename(row.value) : "none"; out[key] = (out[key] ?? 0) + row.n; }
+    return out;
+  };
+  return { all: totals?.active ?? 0, pinned: totals?.pinned ?? 0, trash: totals?.trash ?? 0, docTypes: group(types.results ?? []), modes: group(modes.results ?? [], (value) => (value === "custom" ? "standard" : value)) };
+}
+
+export async function listDocuments(ownerId: string, cursor?: string, limit = 20, filter: ListFilter = {}) {
+  const bounded = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 50) : 20;
+  const sort: ListSort | "deleted" = filter.trash ? "deleted" : filter.sort ?? "updated";
+  const { where, args } = listWhere(ownerId, filter);
+  const total = await runtime().DB.prepare(`SELECT COUNT(1) AS n FROM documents WHERE ${where.join(" AND ")}`).bind(...args).first<{ n: number }>();
+  const column = { updated: "updated_at", created: "created_at", deleted: "deleted_at", title: "title" }[sort];
+  const page: string[] = [...where]; const pageArgs = [...args];
+  if (cursor) {
+    const split = cursor.lastIndexOf(":"); const value = cursor.slice(0, split); const cursorId = cursor.slice(split + 1);
+    if (split <= 0 || !cursorId) throw new RequestError("INVALID_CURSOR", "Cursor is invalid.");
+    if (sort === "title") { const title = decodeTitle(value); page.push("(title COLLATE NOCASE > ? OR (title COLLATE NOCASE = ? AND id > ?))"); pageArgs.push(title, title, cursorId); }
+    else { if (!/^\d+$/.test(value)) throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); page.push(`(${column} < ? OR (${column} = ? AND id < ?))`); pageArgs.push(Number(value), Number(value), cursorId); }
+  }
+  const order = sort === "title" ? "title COLLATE NOCASE ASC,id ASC" : `${column} DESC,id DESC`;
+  const rows = await runtime().DB.prepare(`SELECT id,title,language,revision,color,icon,created_at,updated_at,pinned_at,deleted_at,${MODE_SQL} AS mode,${DOC_TYPE_SQL} AS doc_type FROM documents WHERE ${page.join(" AND ")} ORDER BY ${order} LIMIT ?`).bind(...pageArgs, bounded + 1).all<ListRow>();
+  const results = rows.results ?? []; const items = results.slice(0, bounded); const last = items.at(-1);
+  const next = results.length > bounded && last ? `${sort === "title" ? encodeTitle(last.title) : sort === "deleted" ? last.deleted_at : sort === "created" ? last.created_at : last.updated_at}:${last.id}` : null;
+  return {
+    items: items.map((row) => ({
+      id: row.id, title: row.title, language: row.language, revision: row.revision, mode: typeof row.mode === "string" ? row.mode : null,
+      docType: typeof row.doc_type === "string" && row.doc_type ? row.doc_type : null, pinned: row.pinned_at !== null,
+      color: row.color ?? null, icon: row.icon ?? null, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(),
+      ...(row.deleted_at !== null ? { deletedAt: new Date(row.deleted_at).toISOString(), purgeAt: new Date(row.deleted_at + TRASH_RETENTION_MS).toISOString() } : {}),
+    })),
+    nextCursor: next, total: total?.n ?? 0,
+  };
 }
 
 export async function saveDocument(ownerId: string, documentId: string, expectedRevision: number, changes: { content?: unknown; title?: string }, kind: VersionDTO["kind"] = "checkpoint", label: string | null = null, options?: { previewId: string; expectedLockIds?: string[]; promptId?: string; scopeType?: "selection" | "document" }) {
@@ -98,7 +162,7 @@ export async function autosaveDocument(ownerId: string, documentId: string, expe
   const parsed = checkedContent(content); const current = await rowForOwner(documentId, ownerId);
   const oldPreferences = JSON.parse(current.preferences_json || "{}") as Record<string, unknown>;
   const preferences = await checkedPreferences(ownerId, metadata?.preferences, "strip", oldPreferences); const saved = now();
-  const result = await runtime().DB.prepare("UPDATE documents SET title=?,language=?,preferences_json=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=?")
+  const result = await runtime().DB.prepare("UPDATE documents SET title=?,language=?,preferences_json=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL")
     .bind(metadata?.title ?? current.title, metadata?.language ?? current.language, JSON.stringify(preferences ?? oldPreferences), snapshot(parsed), saved, documentId, ownerId, expectedRevision).run();
   if ((result.meta.changes ?? 0) !== 1) { const latest = await rowForOwner(documentId, ownerId); throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: latest.revision }); }
   return getDocument(ownerId, documentId);
@@ -107,18 +171,58 @@ export async function autosaveDocument(ownerId: string, documentId: string, expe
 // moves, so an editor open elsewhere with the old title gets a conflict instead of silently writing it back.
 export async function renameDocument(ownerId: string, documentId: string, expectedRevision: number, title: string) {
   const changed = now();
-  const result = await runtime().DB.prepare("UPDATE documents SET title=?,revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=?").bind(title, changed, documentId, ownerId, expectedRevision).run();
+  const result = await runtime().DB.prepare("UPDATE documents SET title=?,revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL").bind(title, changed, documentId, ownerId, expectedRevision).run();
   if ((result.meta.changes ?? 0) !== 1) { const latest = await rowForOwner(documentId, ownerId); throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: latest.revision }); }
   return { id: documentId, title, revision: expectedRevision + 1, updatedAt: new Date(changed).toISOString() };
 }
 // Cosmetic metadata only: no revision bump, no version, updated_at untouched.
-export async function updateAppearance(ownerId: string, documentId: string, appearance: NotebookAppearance) { const result = await runtime().DB.prepare("UPDATE documents SET color=?,icon=? WHERE id=? AND owner_id=?").bind(appearance.color, appearance.icon, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found.", 404); return { id: documentId, color: appearance.color, icon: appearance.icon }; }
+export async function updateAppearance(ownerId: string, documentId: string, appearance: NotebookAppearance) { const result = await runtime().DB.prepare("UPDATE documents SET color=?,icon=? WHERE id=? AND owner_id=? AND deleted_at IS NULL").bind(appearance.color, appearance.icon, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found.", 404); return { id: documentId, color: appearance.color, icon: appearance.icon }; }
 export async function listVersions(ownerId: string, documentId: string, cursor?: string, limit = 20) { await rowForOwner(documentId, ownerId); const bounded = Math.min(Math.max(limit, 1), 50); let sql = "SELECT id,document_id,kind,revision,label,snapshot_r2_key,created_at,prompt_id,scope_type FROM document_versions WHERE document_id=? AND owner_id=?"; const args: unknown[] = [documentId, ownerId]; if (cursor) { const [created, versionId] = cursor.split(":"); if (!created || !versionId || !/^\d+$/.test(created)) throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); sql += " AND (created_at < ? OR (created_at = ? AND id < ?))"; args.push(Number(created), Number(created), versionId); } sql += " ORDER BY created_at DESC,id DESC LIMIT ?"; args.push(bounded + 1); const rows = await runtime().DB.prepare(sql).bind(...args).all<VersionRow>(); const results = rows.results ?? []; const page = results.slice(0, bounded); const last = page.at(-1); return { items: page.map((row) => ({ id: row.id, documentId: row.document_id, kind: row.kind, revision: row.revision, label: row.label, promptId: row.prompt_id, scopeType: row.scope_type, createdAt: new Date(row.created_at).toISOString() })), nextCursor: results.length > bounded && last ? `${last.created_at}:${last.id}` : null }; }
-export async function getVersion(ownerId: string, documentId: string, versionId: string) { const row = await runtime().DB.prepare("SELECT id,document_id,kind,revision,label,snapshot_r2_key,created_at FROM document_versions WHERE id=? AND document_id=? AND owner_id=?").bind(versionId, documentId, ownerId).first<VersionRow>(); if (!row) throw new RequestError("NOT_FOUND", "Version not found.", 404); return { id: row.id, documentId: row.document_id, kind: row.kind, revision: row.revision, label: row.label, content: parseBody(await getSnapshot(row.snapshot_r2_key)), createdAt: new Date(row.created_at).toISOString() }; }
-export async function updateVersionLabel(ownerId: string, documentId: string, versionId: string, label: string) { const result = await runtime().DB.prepare("UPDATE document_versions SET label=? WHERE id=? AND document_id=? AND owner_id=?").bind(label, versionId, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Version not found.", 404); return getVersion(ownerId, documentId, versionId); }
+export async function getVersion(ownerId: string, documentId: string, versionId: string) { await rowForOwner(documentId, ownerId); const row = await runtime().DB.prepare("SELECT id,document_id,kind,revision,label,snapshot_r2_key,created_at FROM document_versions WHERE id=? AND document_id=? AND owner_id=?").bind(versionId, documentId, ownerId).first<VersionRow>(); if (!row) throw new RequestError("NOT_FOUND", "Version not found.", 404); return { id: row.id, documentId: row.document_id, kind: row.kind, revision: row.revision, label: row.label, content: parseBody(await getSnapshot(row.snapshot_r2_key)), createdAt: new Date(row.created_at).toISOString() }; }
+export async function updateVersionLabel(ownerId: string, documentId: string, versionId: string, label: string) { await rowForOwner(documentId, ownerId); const result = await runtime().DB.prepare("UPDATE document_versions SET label=? WHERE id=? AND document_id=? AND owner_id=?").bind(label, versionId, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Version not found.", 404); return getVersion(ownerId, documentId, versionId); }
 export async function createCheckpoint(ownerId: string, documentId: string, expectedRevision: number, label: string | null) { const existing = await rowForOwner(documentId, ownerId); return saveDocument(ownerId, documentId, expectedRevision, { content: await readBody(existing) }, "checkpoint", label ?? "Manual checkpoint"); }
 export async function restoreVersion(ownerId: string, documentId: string, versionId: string, expectedRevision: number) { const version = await runtime().DB.prepare("SELECT id,snapshot_r2_key FROM document_versions WHERE id=? AND document_id=? AND owner_id=?").bind(versionId, documentId, ownerId).first<{ id: string; snapshot_r2_key: string }>(); if (!version) throw new RequestError("NOT_FOUND", "Version not found.", 404); const current = await rowForOwner(documentId, ownerId); const latest = await runtime().DB.prepare("SELECT revision FROM document_versions WHERE document_id=? AND owner_id=? ORDER BY revision DESC LIMIT 1").bind(documentId, ownerId).first<{ revision: number }>(); if ((latest?.revision ?? -1) !== expectedRevision) { await saveDocument(ownerId, documentId, expectedRevision, { content: await readBody(current) }, "checkpoint", "Before restore"); expectedRevision += 1; } return saveDocument(ownerId, documentId, expectedRevision, { content: parseBody(await getSnapshot(version.snapshot_r2_key)) }, "restore", "Restored version"); }
 export async function currentText(ownerId: string, documentId: string) { const value = await getDocument(ownerId, documentId); return { document: value, text: documentText(value.content) }; }
-// D1 counts cascaded rows in meta.changes, so any positive count means the owned row was deleted.
-export async function deleteDocument(ownerId: string, documentId: string) { const rows = await runtime().DB.prepare("SELECT snapshot_r2_key FROM document_versions WHERE document_id=? AND owner_id=?").bind(documentId, ownerId).all<{ snapshot_r2_key: string }>(); const result = await runtime().DB.prepare("DELETE FROM documents WHERE id=? AND owner_id=?").bind(documentId, ownerId).run(); if ((result.meta.changes ?? 0) < 1) throw new RequestError("NOT_FOUND", "Document not found.", 404); await Promise.all((rows.results ?? []).map((row) => runtime().DOCUMENTS.delete(row.snapshot_r2_key))); }
+// Permanent delete: the row (versions, previews, locks and evidence cascade) and every R2 snapshot. Used by
+// "Hapus permanen" in the trash, the trash purge, the auto-discard of an untouched outline, and the admin and
+// account-deletion purges. D1 counts cascaded rows in meta.changes, so any positive count means it was deleted.
+export async function deleteDocument(ownerId: string, documentId: string) { if (!(await purgeDocument({ DB: runtime().DB, DOCUMENTS: runtime().DOCUMENTS }, ownerId, documentId))) throw new RequestError("NOT_FOUND", "Document not found.", 404); }
+type Storage = { DB: D1Database; DOCUMENTS: R2Bucket };
+async function purgeDocument(env: Storage, ownerId: string, documentId: string, onlyTrashedBefore?: number): Promise<boolean> {
+  const rows = await env.DB.prepare("SELECT snapshot_r2_key AS key FROM document_versions WHERE document_id=? AND owner_id=? UNION SELECT body_r2_key AS key FROM documents WHERE id=? AND owner_id=? AND body_r2_key IS NOT NULL").bind(documentId, ownerId, documentId, ownerId).all<{ key: string }>();
+  const guard = onlyTrashedBefore === undefined ? "" : " AND deleted_at IS NOT NULL AND deleted_at<?";
+  const result = await env.DB.prepare(`DELETE FROM documents WHERE id=? AND owner_id=?${guard}`).bind(documentId, ownerId, ...(onlyTrashedBefore === undefined ? [] : [onlyTrashedBefore])).run();
+  if ((result.meta.changes ?? 0) < 1) return false;
+  // A failed object delete is left to the orphan sweep: the rows that referenced it are gone.
+  const keys = (rows.results ?? []).map((row) => row.key).filter(Boolean);
+  if (keys.length) await env.DOCUMENTS.delete(keys).catch(() => undefined);
+  return true;
+}
+// Hapus moves a notebook to the trash for 30 days. Nothing else changes, so restoring gives back the same notebook.
+export async function trashDocument(ownerId: string, documentId: string) {
+  const deleted = now();
+  const result = await runtime().DB.prepare("UPDATE documents SET deleted_at=? WHERE id=? AND owner_id=? AND deleted_at IS NULL").bind(deleted, documentId, ownerId).run();
+  if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found.", 404);
+  return { id: documentId, deletedAt: new Date(deleted).toISOString(), purgeAt: new Date(deleted + TRASH_RETENTION_MS).toISOString() };
+}
+export async function restoreDocument(ownerId: string, documentId: string) {
+  const result = await runtime().DB.prepare("UPDATE documents SET deleted_at=NULL WHERE id=? AND owner_id=? AND deleted_at IS NOT NULL").bind(documentId, ownerId).run();
+  if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found in the trash.", 404);
+  return { id: documentId, restored: true };
+}
+// Sematkan: cosmetic like the appearance, so no revision, no version, and updated_at untouched.
+export async function setPinned(ownerId: string, documentId: string, pinned: boolean) {
+  const result = await runtime().DB.prepare("UPDATE documents SET pinned_at=? WHERE id=? AND owner_id=? AND deleted_at IS NULL").bind(pinned ? now() : null, documentId, ownerId).run();
+  if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found.", 404);
+  return { id: documentId, pinned };
+}
+// The hourly cron: notebooks in the trash for more than 30 days are purged with their snapshots, a bounded batch
+// per run so one tick never runs long. Each delete re-checks the age, so a restore racing the purge wins.
+export async function purgeExpiredTrash(env: Storage, at = now(), limit = 25): Promise<number> {
+  const cutoff = at - TRASH_RETENTION_MS;
+  const rows = await env.DB.prepare("SELECT id,owner_id FROM documents WHERE deleted_at IS NOT NULL AND deleted_at<? ORDER BY deleted_at,id LIMIT ?").bind(cutoff, limit).all<{ id: string; owner_id: string }>();
+  let purged = 0;
+  for (const row of rows.results ?? []) if (await purgeDocument(env, row.owner_id, row.id, cutoff)) purged++;
+  return purged;
+}
 export { replaceTextInDocument, plainTextDocument };

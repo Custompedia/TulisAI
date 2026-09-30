@@ -2,12 +2,14 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { ChevronsLeft, ChevronsRight, Copy, Gauge, KeyRound, LayoutList, Menu as MenuIcon, MoreHorizontal, PencilLine, PenLine, Plus, ScrollText, ShieldCheck, SlidersHorizontal, Sparkles, Trash2, UserRound, Users, Wallet, type LucideIcon } from 'lucide-react';
+import { ChevronsLeft, ChevronsRight, Copy, Gauge, KeyRound, LayoutList, Menu as MenuIcon, MoreHorizontal, PencilLine, PenLine, Pin, Plus, ScrollText, ShieldCheck, SlidersHorizontal, Sparkles, Tags, Trash2, UserRound, Users, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { useHash } from '@/lib/client/hash';
 import { tierName } from '@/lib/client/quota';
 import { useWritingStyles } from '@/lib/client/styles-store';
-import { libraryMode, modeCounts, useLibrary } from '@/lib/navigation/library';
+import { libraryFilter, LIBRARY_CHANGED_EVENT, modeCount, publishLibraryCounts, useLibraryCounts, type LibraryCounts } from '@/lib/navigation/library';
+import { request } from '@/lib/client/api';
+import { DOC_TYPES, docTypeShort, type DocType } from '@/lib/writing/doc-types';
 import { adminTabFromHash, settingsRoute, type Section } from '@/lib/navigation/sections';
 import { clampSidebarWidth, sidebarCookie, sidebarKeyStep, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH, type SidebarPreferences } from '@/lib/navigation/sidebar';
 import { STYLE_LIMIT } from '@/lib/writing/styles';
@@ -117,25 +119,38 @@ function NavRow({ href, icon: Icon, label, active, count, hash = false }: { href
 }
 
 // ── Notebook ──────────────────────────────────────────────────────────────────────────────────────
+// Every number here comes from the server (GET /api/documents?counts=1), so it is exact whatever the page has loaded.
 function NotebooksSidebar() {
   const { t } = useLocale();
   const params = useSearchParams();
-  const active = libraryMode(params.get('mode'));
-  const { entries, complete } = useLibrary();
-  // Counts only once every page is loaded; until then no number at all, never an estimate.
-  const counts = modeCounts(entries, complete);
+  const counts = useLibraryCounts();
+  const filter = libraryFilter(params);
+  useEffect(() => {
+    let live = true;
+    const load = () => { request<{ counts?: LibraryCounts }>('/api/documents?limit=1&counts=1').then((page) => { if (live && page.counts) publishLibraryCounts(page.counts); }, () => undefined); };
+    load();
+    window.addEventListener(LIBRARY_CHANGED_EVENT, load);
+    return () => { live = false; window.removeEventListener(LIBRARY_CHANGED_EVENT, load); };
+  }, []);
+  const plain = !filter.trash && !filter.pinned && !filter.mode && !filter.docType;
+  const types = counts ? [...DOC_TYPES.filter((type) => (counts.docTypes[type] ?? 0) > 0), ...((counts.docTypes.none ?? 0) > 0 ? ['none'] : [])] : [];
   return (
     <>
       <SidebarTitle>Notebook</SidebarTitle>
-      <NavRow href="/notebooks" icon={LayoutList} label={t('Semua notebook', 'All notebooks')} active={!active} count={counts && entries ? entries.length : null} />
+      <NavRow href="/notebooks" icon={LayoutList} label={t('Semua notebook', 'All notebooks')} active={plain} count={counts?.all ?? null} />
+      <NavRow href="/notebooks?pinned=1" icon={Pin} label={t('Disematkan', 'Pinned')} active={!!filter.pinned} count={counts?.pinned ?? null} />
+      {types.length > 0 && <GroupLabel>{t('Jenis', 'Kind')}</GroupLabel>}
+      <ul>
+        {types.map((type) => <li key={type}><NavRow href={`/notebooks?type=${type}`} icon={Tags} label={type === 'none' ? t('Tanpa jenis', 'No kind') : docTypeShort(type as DocType, t)} active={filter.docType === type} count={counts?.docTypes[type] ?? 0} /></li>)}
+      </ul>
       <GroupLabel>{t('Mode terakhir', 'Last mode')}</GroupLabel>
       <ul>
-        {MODES.map((mode) => <li key={mode}><NavRow href={`/notebooks?mode=${mode}`} icon={modeIcon[mode]} label={modeLabel(mode, t)} active={active === mode} count={counts ? counts[mode] : null} /></li>)}
+        {MODES.map((mode) => <li key={mode}><NavRow href={`/notebooks?mode=${mode}`} icon={modeIcon[mode]} label={modeLabel(mode, t)} active={filter.mode === mode} count={modeCount(counts, mode)} /></li>)}
       </ul>
-      <p className="mt-3 px-2.5 text-[12px] leading-snug text-ink-500">
-        {t('Mode AI yang terakhir dipakai di tiap notebook.', 'The AI mode last used in each notebook.')}
-        {!counts && ` ${t('Jumlah muncul setelah semua notebook dimuat.', 'Counts appear once every notebook is loaded.')}`}
-      </p>
+      <p className="mt-2 px-2.5 text-[12px] leading-snug text-ink-500">{t('Mode AI yang terakhir dipakai di tiap notebook.', 'The AI mode last used in each notebook.')}</p>
+      <div className="mt-4 border-t border-line pt-3">
+        <NavRow href="/notebooks?view=trash" icon={Trash2} label={t('Sampah (30 hari)', 'Trash (30 days)')} active={!!filter.trash} count={counts?.trash ?? null} />
+      </div>
     </>
   );
 }
