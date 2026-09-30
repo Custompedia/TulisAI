@@ -1,9 +1,10 @@
 'use client';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
-import { ArrowUp, Languages, List, Loader2, PencilSparkles, Square, X } from 'lucide-react';
+import { ArrowUp, Languages, List, ListOrdered, Loader2, Maximize2, PencilSparkles, Square, StepForward, X, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { INSTRUCTION_COUNTER_AT, INSTRUCTION_LIMIT } from '@/lib/writing/instruction';
+import { FREEFORM_RESERVE_FACTOR } from '@/lib/plans';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
 
@@ -11,7 +12,7 @@ type Props = {
   busy: boolean;
   locked: boolean;
   /** What the instruction will act on, resolved by the workspace: the selection, or the paragraph at the caret. */
-  target: { label: string; words: number } | null;
+  target: { label: string; words: number; chars?: number } | null;
   onSubmit: (instruction: string) => void;
   onUpgrade: () => void;
   /** Lets the workspace keep the target highlighted while focus sits in the field. */
@@ -21,12 +22,26 @@ type Props = {
   onStop?: () => void;
 };
 
-// Ready-made instructions that never make the text longer, so they stay inside the hold taken before the run.
-// Kembangkan and Lanjutkan wait for an output-based reservation (Fase 2).
+// Ready-made instructions. Every Perintah AI run holds FREEFORM_RESERVE_FACTOR x the target before the provider is
+// called and is charged MAX(source, output) up to that hold, so the chips that lengthen the text (grows) are safe:
+// a short balance is refused before the call, never after it. None of them may invent figures or citations.
 export const DOCK_CHIPS = [
-  { id: 'bullets', label: ['Jadikan poin', 'Make bullets'], instruction: ['Jadikan daftar poin tanpa menambah isi baru.', 'Turn this into a bulleted list without adding anything new.'] },
-  { id: 'english', label: ['Terjemahkan ke English', 'Translate to English'], instruction: ['Terjemahkan ke bahasa Inggris.', 'Translate this into English.'] },
+  { id: 'bullets', grows: false, label: ['Jadikan poin', 'Make bullets'], instruction: ['Jadikan daftar poin tanpa menambah isi baru.', 'Turn this into a bulleted list without adding anything new.'] },
+  { id: 'english', grows: false, label: ['Terjemahkan ke English', 'Translate to English'], instruction: ['Terjemahkan ke bahasa Inggris.', 'Translate this into English.'] },
+  { id: 'expand', grows: true, label: ['Kembangkan', 'Expand'], instruction: ['Kembangkan teks ini dengan penjelasan yang lebih lengkap, paling banyak dua kali panjangnya. Jangan menambah angka, data, nama, atau sitasi baru.', 'Expand this text with a fuller explanation, at most twice its length. Do not add new figures, data, names or citations.'] },
+  { id: 'continue', grows: true, label: ['Lanjutkan', 'Continue'], instruction: ['Pertahankan teks ini persis apa adanya, lalu lanjutkan dengan satu paragraf baru yang meneruskan alurnya, tidak lebih panjang dari teks aslinya. Jangan menambah angka, data, nama, atau sitasi baru.', 'Keep this text exactly as it is, then continue it with one new paragraph that follows its flow, no longer than the original. Do not add new figures, data, names or citations.'] },
+  { id: 'hooks', grows: true, label: ['3 versi hook', '3 hook versions'], instruction: ['Tulis 3 versi hook pembuka yang berbeda untuk teks ini sebagai daftar bernomor, masing-masing satu kalimat. Jangan menambah angka atau data baru.', 'Write 3 different opening hooks for this text as a numbered list, one sentence each. Do not add new figures or data.'] },
 ] as const;
+export type DockChip = (typeof DOCK_CHIPS)[number];
+const CHIP_ICONS: Record<DockChip['id'], LucideIcon> = { bullets: List, english: Languages, expand: Maximize2, continue: StepForward, hooks: ListOrdered };
+
+// The honest price line: every instruction may cost up to the reserve factor times the target, never more.
+export function dockCostText(chars: number | undefined, t: (id: string, en: string) => string, format: (value: number) => string): string {
+  const most = chars && chars > 0 ? chars * FREEFORM_RESERVE_FACTOR : null;
+  return most === null
+    ? t(`Biaya: hingga ${FREEFORM_RESERVE_FACTOR}× panjang teks terpilih`, `Cost: up to ${FREEFORM_RESERVE_FACTOR}× the selected text`)
+    : t(`Biaya: hingga ${FREEFORM_RESERVE_FACTOR}× panjang teks terpilih (maks. ${format(most)} karakter)`, `Cost: up to ${FREEFORM_RESERVE_FACTOR}× the selected text (at most ${format(most)} characters)`);
+}
 
 // A small rounded tab under the canvas that grows into the instruction field on hover or Ctrl+/; it shrinks back
 // on leave only while empty. Below Max it stays visible as "Perintah AI · Max" and explains itself.
@@ -144,14 +159,18 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
         </div>
         {open && !running && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line px-4 pb-2.5 pt-2">
-            {DOCK_CHIPS.map((chip) => (
-              <button key={chip.id} type="button" disabled={busy || locked || !target} onClick={() => { onSubmit(t(chip.instruction[0], chip.instruction[1])); setValue(''); collapse(); }}
-                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-white px-2.5 text-[12px] font-medium text-ink-700 transition-colors hover:border-line-strong hover:bg-paper disabled:opacity-40">
-                {chip.id === 'bullets' ? <List size={13} aria-hidden="true" /> : <Languages size={13} aria-hidden="true" />}{t(chip.label[0], chip.label[1])}
-              </button>
-            ))}
+            {DOCK_CHIPS.map((chip) => {
+              const Icon = CHIP_ICONS[chip.id];
+              return (
+                <button key={chip.id} type="button" disabled={busy || locked || !target} onClick={() => { onSubmit(t(chip.instruction[0], chip.instruction[1])); setValue(''); collapse(); }}
+                  title={chip.grows ? t(`Menambah panjang teks; biaya hingga ${FREEFORM_RESERVE_FACTOR}× panjang teks terpilih`, `Makes the text longer; costs up to ${FREEFORM_RESERVE_FACTOR}× the selected text`) : undefined}
+                  className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-white px-2.5 text-[12px] font-medium text-ink-700 transition-colors hover:border-line-strong hover:bg-paper disabled:opacity-40">
+                  <Icon size={13} aria-hidden="true" />{t(chip.label[0], chip.label[1])}
+                </button>
+              );
+            })}
             <span className="min-w-0 flex-1 text-right text-[11px] leading-snug text-ink-500">
-              {t('Perkiraan biaya: hingga 2× panjang teks terpilih', 'Estimated cost: up to 2× the selected text')} · {t('Angka dan sitasi bisa berubah', 'Numbers and citations may change')}
+              {dockCostText(target?.chars, t, (value) => numberFormat(value, locale))} · {t('Angka dan sitasi bisa berubah', 'Numbers and citations may change')}
             </span>
           </div>
         )}

@@ -9,7 +9,7 @@ import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejec
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
-import { type PlanLimits } from '@/lib/plans';
+import { FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
 import {collapseBlankLines} from '@/lib/editor/document';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
@@ -86,9 +86,18 @@ export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLi
   return Math.min(limits.runLimit, anchored ? limits.runLimit : AI_SCOPE_LIMIT);
 }
 
-const walletRequestError = (error: unknown): RequestError => error instanceof WalletError
-  ? new RequestError(error.code, error.message, error.status)
+// A refused Perintah AI hold says how much it needed, so the writer is told why a balance above the selection
+// length still was not enough.
+const walletRequestError = (error: unknown, quotaDetails?: Record<string, unknown>): RequestError => error instanceof WalletError
+  ? new RequestError(error.code, error.message, error.status, error.code === 'QUOTA_EXCEEDED' ? quotaDetails : undefined)
   : new RequestError('WALLET_UNAVAILABLE', 'The character wallet is temporarily unavailable.', 503);
+
+// Perintah AI may return more text than it was given (Kembangkan, Lanjutkan, 3 versi hook), and it is charged
+// MAX(source, output). The hold covers the most it can ever charge, FREEFORM_RESERVE_FACTOR x source, and is taken
+// before the provider is called: a short balance fails there, never after the provider was paid. The settled charge
+// is capped at that hold; anything longer is delivered but never charged beyond it.
+export const freeformHold = (sourceCharacters: number) => sourceCharacters * FREEFORM_RESERVE_FACTOR;
+export const freeformCharge = (sourceCharacters: number, outputCharacters: number, hold: number) => Math.min(Math.max(sourceCharacters, outputCharacters), hold);
 
 async function generationFingerprint(ownerId: string, input: GenerateInput, controls: Record<string, unknown>, instruction: string | null, sourceCharacters: number) {
   return requestFingerprint({
@@ -146,13 +155,14 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
   let mainUsageId = '';
   let mainProviderRequestId: string | null = null;
+  const mainHold = freeform ? freeformHold(sourceCharacters) : sourceCharacters;
   const call = async (promptId: PromptId, callKey: string, runtimeControls: RuntimeInput, repair=false, requiredTerms=trusted.protectedTerms) => {
     let usageId: string;
     if (repair) usageId = await reserveTelemetry(ownerId, callKey, promptId, sourceCharacters, rights, false);
     else {
       let wallet;
-      try { wallet = await reserveCharacters({ ownerId, idempotencyKey: callKey, fingerprint, operation: promptId, sourceCharacters }); }
-      catch (error) { throw walletRequestError(error); }
+      try { wallet = await reserveCharacters({ ownerId, idempotencyKey: callKey, fingerprint, operation: promptId, sourceCharacters, hold: mainHold }); }
+      catch (error) { throw walletRequestError(error, freeform ? { reserve: mainHold, factor: FREEFORM_RESERVE_FACTOR } : undefined); }
       if (!wallet.created) throw new RequestError(wallet.reservation.state === 'reserved' ? 'IDEMPOTENCY_PENDING' : 'IDEMPOTENCY_COMPLETE', 'This customer operation was already attempted.', 409);
       usageId = wallet.reservation.id; mainUsageId = usageId;
       try { await reserveTelemetry(ownerId, callKey, promptId, sourceCharacters, rights, true, usageId); }
@@ -226,9 +236,10 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
   // OD-11/AI Mode: ordinary operations charge exact source code points; AI
-  // Mode charges MAX(source, validated final output), extending the hold before
-  // the preview and settlement commit atomically.
-  const exactCharge = freeform ? Math.max(sourceCharacters, countCodePoints(outputText(output))) : sourceCharacters;
+  // Mode charges MAX(source, validated final output), capped by the hold taken
+  // before the provider call, so settlement never has to extend it. The preview
+  // and the settlement commit atomically, and the unused hold is released.
+  const exactCharge = freeform ? freeformCharge(sourceCharacters, countCodePoints(outputText(output)), mainHold) : sourceCharacters;
   const id=crypto.randomUUID();const expiry=Date.now()+DAY;
   const previewInsert = runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .bind(id,input.documentId,ownerId,input.promptId,PROMPT_VERSION,model(),input.expectedRevision,input.source.text,anchor?JSON.stringify(anchor):null,JSON.stringify({...controls,style_reference:undefined,style_reference_used:typeof controls.style_reference==='string'&&controls.style_reference.length>0,prompt_version:PROMPT_VERSION,reasoning_effort:REASONING_EFFORT[input.promptId]}),JSON.stringify(output),'preview',key,expiry,Date.now());

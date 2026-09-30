@@ -961,7 +961,7 @@ export default function Workspace() {
   // Recomputed per render so the dock always names the current target; cheap next to the editor itself.
   const dockRange = loaded ? instructionRange() : null;
   const instructionTarget = dockRange
-    ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text) }
+    ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text), chars: Array.from(dockRange.text).length }
     : null;
   const words = countWords(text);
   const spoken = isSpoken(meta.docType);

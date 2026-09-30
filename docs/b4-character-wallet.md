@@ -60,8 +60,15 @@ inside an atomic batch:
 
 - settlement moves required quantities from the first allocations and releases
   excess from the final allocations first;
-- a required increase (AI Mode output above source) obtains another guarded
-  allocation before preview persistence;
+- AI Mode (P08, Perintah AI) reserves `FREEFORM_RESERVE_FACTOR × source`
+  (2×) before the provider is called, so a short balance is refused with
+  `QUOTA_EXCEEDED` (details `reserve`, `factor`) before any provider cost.
+  It settles `MIN(MAX(source, output), hold)` and releases the rest, so it
+  never needs to extend at settlement (UX 2). Output longer than the hold is
+  delivered but charged at the hold; the dock says "hingga 2× panjang teks
+  terpilih". `extendReservation` remains for any operation settled above its
+  initial hold and obtains another guarded allocation before preview
+  persistence;
 - preview insertion and exact settlement commit in the same batch, so a billed
   preview cannot be missing and an unbilled preview cannot be delivered;
 - provider or validation failure releases every allocation and charges zero;
