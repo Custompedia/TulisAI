@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
 import { testEnv } from '../helpers/d1';
 
 const state = vi.hoisted(() => ({ env: {} as Record<string, unknown> }));
@@ -50,6 +51,18 @@ describe('UX 3: P11 prompt keeps the brief as data', () => {
     const article = buildMessages('P11_SECTION_DRAFT', normalizeRuntime('P11_SECTION_DRAFT', { language: 'en', doc_type: 'article', max_characters: 1200, brief: { topic: 'X' }, outline: ['A'], section_heading: 'A' }));
     expect(article[0]!.content).not.toContain('ACADEMIC GUARD');
     expect(article[0]!.content).toContain('Write the output in English.');
+  });
+});
+
+describe('UX 3: the smoke fixtures for P11 and the creator intents are well formed', () => {
+  it('normalises and composes every fixture without a live provider', () => {
+    const fixtures = JSON.parse(readFileSync('fixtures/prompt-ux3.json', 'utf8')) as Array<{ id: string; promptId: 'P11_SECTION_DRAFT' | 'P07_INLINE_ALTERNATIVES'; sourceText: string; runtime: Record<string, unknown> }>;
+    expect(fixtures.filter((item) => item.promptId === 'P11_SECTION_DRAFT').length).toBeGreaterThanOrEqual(4);
+    for (const fixture of fixtures) {
+      const [system, user] = buildMessages(fixture.promptId, normalizeRuntime(fixture.promptId, { ...fixture.runtime, sourceText: fixture.sourceText }));
+      expect(system!.content, fixture.id).not.toContain('{{');
+      expect(user!.content.length, fixture.id).toBeGreaterThan(0);
+    }
   });
 });
 
