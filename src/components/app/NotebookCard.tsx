@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { CopyPlus, MoreHorizontal, Palette, PencilLine, Trash2 } from 'lucide-react';
 import { del } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
-import { errorText, newKey, request } from '@/lib/client/api';
+import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { relativeTime } from '@/lib/client/format';
 import { asMode } from '@/lib/writing/settings';
 import { copyPreferences, storedParts } from '@/lib/writing/notebook-meta';
@@ -25,6 +25,18 @@ const BACK = 'M0 26Q0 0 26 0H118C134 0 142 5 150 15L158 25C165 33 171 36 184 36H
 const PAPER_LINES = { backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 13px, rgb(48 49 45 / 0.07) 13px 14px)', backgroundPosition: '0 18px' };
 
 type StoredDoc = { id: string; title: string; language: string; revision: number; content: unknown; preferences?: Record<string, unknown>; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
+
+type Renamed = { title: string; revision: number; updatedAt: string };
+// Title-only rename, so the library never adds a "Manual checkpoint". The list's revision may be stale (the notebook
+// was edited since the page loaded); a title touches no content, so it retries once on the revision the server names.
+export async function renameNotebook(id: string, title: string, revision: number): Promise<Renamed> {
+  try { return await request<Renamed>(`/api/documents/${id}/title`, 'PATCH', { title, expectedRevision: revision }, newKey()); }
+  catch (caught) {
+    const current = caught instanceof ApiError && caught.code === 'REVISION_CONFLICT' ? (caught.details as { currentRevision?: unknown } | undefined)?.currentRevision : undefined;
+    if (typeof current !== 'number' || current === revision) throw caught;
+    return request<Renamed>(`/api/documents/${id}/title`, 'PATCH', { title, expectedRevision: current }, newKey());
+  }
+}
 
 // `view`: the library's Grid | Daftar choice; both share the same menu and dialogs.
 export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplicate }: { doc: DocumentSummary; view?: 'grid' | 'list'; onChange?: (doc: DocumentSummary) => void; onDelete?: (id: string) => void; onDuplicate?: (doc: DocumentSummary) => void }) {
@@ -54,7 +66,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
     if (!trimmed || trimmed === doc.title) { setDialog(null); return; }
     setBusy(true); setError('');
     try {
-      const saved = await request<{ title: string; revision: number; updatedAt: string }>(`/api/documents/${doc.id}`, 'PATCH', { title: trimmed, expectedRevision: doc.revision }, newKey());
+      const saved = await renameNotebook(doc.id, trimmed, doc.revision);
       onChange?.({ ...doc, title: saved.title, revision: saved.revision, updatedAt: saved.updatedAt }); setDialog(null); void refresh();
     } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
     finally { setBusy(false); }
