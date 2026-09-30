@@ -14,7 +14,7 @@
     "test": "vitest run",
     "smoke": "tsx scripts/prompt-smoke.ts",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "wrangler d1 migrations apply AI_WRITING_DB --local",
+    "db:migrate:local": "wrangler d1 migrations apply tulisai --local",
     "cf:check": "wrangler deploy --dry-run",
     "cf:types": "wrangler types"
   },

@@ -21,7 +21,7 @@ const DAY = 86_400_000;
 const BURST_LIMIT = 10;
 const GUARD_BURST = `(SELECT COUNT(1) FROM usage_ledger WHERE owner_id=? AND created_at>?) < ${BURST_LIMIT}`;
 const GUARD_REQUESTS = '(SELECT COUNT(1) FROM usage_ledger WHERE {countable}) < ?';
-const model = () => runtime().OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna';
+const model = () => runtime().OPENROUTER_MODEL?.trim() || 'openai/gpt-6-luna';
 const outputText = (output: AIResponse, selectedAlternative?: number): string => {
   if (Array.isArray(output.alternatives)) {
     if (selectedAlternative === undefined || !output.alternatives[selectedAlternative]) throw new RequestError('INVALID_ALTERNATIVE', 'Choose an available alternative.');

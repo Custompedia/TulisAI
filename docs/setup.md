@@ -153,3 +153,13 @@ Set `BETTER_AUTH_URL` pada vars ke origin Worker/domain target dan daftarkan cal
 Sebelum update berikutnya, catat versi Worker aktif dan ambil backup D1 menggunakan `wrangler d1 export <database_name> --remote --output <backup.sql>` ke lokasi privat. Rollback Worker melalui `wrangler rollback <version-id>` tidak mengembalikan data D1/R2; migrasi data memerlukan rencana pemulihan tersendiri. Migrasi initial hanya dijalankan sekali dan belum memiliki migrasi destruktif.
 
 Setelah resource tersedia, verifikasi login/callback, CRUD dan restore akun uji, satu generate–preview–apply, kuota, ownership, penghapusan, dan cron pada staging. Build/dry-run lokal tidak menggantikan pemeriksaan ini.
+
+## Produksi — tulis.marikitalembur.com (30 September 2026)
+
+- Worker `tulisai` di akun Cloudflare Custompedia, hanya lewat custom domain `tulis.marikitalembur.com` (`workers_dev` dan preview URL mati, supaya Better Auth melihat satu origin).
+- D1 `tulisai` (`6b563c85-9817-4c3d-910c-00a29ab2aaa0`, APAC) dan R2 `tulisai-documents`.
+- AI aktif (`AI_PUBLIC_ENABLED="true"`) dengan model `openai/gpt-6-luna` lewat OpenRouter; secret `OPENROUTER_API_KEY` wajib ada di Worker.
+- Secret `BETTER_AUTH_SECRET` wajib. Login: email + password; Google baru aktif setelah `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` dipasang dan redirect URI `https://tulis.marikitalembur.com/api/auth/callback/google` didaftarkan.
+- Email belum dikonfigurasi (`EMAIL_FROM` masih placeholder), jadi reset password lewat email belum tersedia; admin bisa mengganti password pengguna dari panel admin.
+- Pembayaran tertutup (`TULISAI_COMMERCE_CHECKOUT_ENABLED="false"`, belum ada `MIDTRANS_SERVER_KEY`). Paket bisa diberikan admin lewat tab Paket.
+- Admin tidak di-bootstrap otomatis dan email admin tidak disimpan di repo (repo publik): akun dipromosikan satu per satu di D1 setelah pemiliknya mendaftar dan owner mengonfirmasi.
