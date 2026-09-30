@@ -8,6 +8,7 @@ import { type Mode, type Settings } from '@/lib/writing/settings';
 import { useEntitlements } from '@/components/app/AppShell';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { NotebookIcon } from '@/components/app/NotebookIcon';
+import { LockedFeatureRow, PaidLock } from '@/components/app/PaidLock';
 import { Alert } from '@/components/ui/Alert';
 import { Button, pillButton, pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Field';
@@ -26,6 +27,8 @@ type Props = {
   onGenerate: () => void; onRetry: () => void; onDismissError: () => void; children?: React.ReactNode; canGenerate: boolean; customizeRequest: number;
   styles: WritingStyle[]; stylesLoading: boolean; stylesError: string; onRetryStyles: () => void; onApplyStyle: (style: WritingStyle) => void; onCreateStyle: () => void; onEditStyle: (style: WritingStyle) => void; onSaveAsStyle: () => void;
   suggestion: WritingStyle | null; onDismissSuggestion: () => void;
+  // Opens the plans dialog from a locked control (skills, the Max note).
+  onUpgrade: () => void;
 };
 const ringClass: Record<ModeTone, string> = {
   green: 'ring-mode-green-ink/40', blue: 'ring-mode-blue-ink/40', orange: 'ring-mode-orange-ink/40', slate: 'ring-mode-slate-ink/40', pink: 'ring-mode-pink-ink/40', gold: 'ring-mode-gold-ink/40', gray: 'ring-mode-gray-ink/40',
@@ -64,8 +67,9 @@ function ModeTiles({ value, disabled, onChange }: { value: Mode; disabled: boole
 
 const TILE = 'group relative flex h-[60px] min-w-0 flex-col justify-between rounded-xl border py-2.5 pl-3 pr-8 text-left transition-colors disabled:opacity-50';
 
-// Skill tiles mirror the mode tiles; the pencil edits the skill without applying it.
-function SkillTiles({ styles, activeId, disabled, full, onPick, onEdit, onCreate }: { styles: WritingStyle[]; activeId: string | null; disabled: boolean; full: boolean; onPick: (style: WritingStyle) => void; onEdit: (style: WritingStyle) => void; onCreate: () => void }) {
+// Skill tiles mirror the mode tiles; the pencil edits the skill without applying it. A locked account sees the
+// same tiles with a padlock, and every click explains the plan instead of applying a skill the server would drop.
+function SkillTiles({ styles, activeId, disabled, full, locked, onPick, onEdit, onCreate, onUpgrade }: { styles: WritingStyle[]; activeId: string | null; disabled: boolean; full: boolean; locked: boolean; onPick: (style: WritingStyle) => void; onEdit: (style: WritingStyle) => void; onCreate: () => void; onUpgrade: () => void }) {
   const { t } = useLocale();
   return (
     <div className="grid grid-cols-2 gap-2">
@@ -73,29 +77,29 @@ function SkillTiles({ styles, activeId, disabled, full, onPick, onEdit, onCreate
         const name = notebookTone(style.color, style.settings.mode); const tone = toneClass[name]; const active = style.id === activeId;
         return (
           <div key={style.id} className="relative">
-            <button type="button" aria-pressed={active} disabled={disabled} title={`${style.name}${style.description ? ` · ${style.description}` : ''} · ${requestSummary(style.settings, t)}`} onClick={() => onPick(style)}
-              className={`${TILE} w-full ${active ? `${tone.fill} ${tone.edge} ring-1 ${ringClass[name]}` : `border-transparent ${tone.light} ${hoverClass[name]}`}`}>
+            <button type="button" aria-pressed={locked ? undefined : active} disabled={disabled} title={`${style.name}${style.description ? ` · ${style.description}` : ''} · ${requestSummary(style.settings, t)}`} onClick={() => (locked ? onUpgrade() : onPick(style))}
+              className={`${TILE} w-full ${locked ? 'border-transparent bg-paper text-ink-500 hover:border-line-strong' : active ? `${tone.fill} ${tone.edge} ring-1 ${ringClass[name]}` : `border-transparent ${tone.light} ${hoverClass[name]}`}`}>
               <NotebookIcon icon={style.icon} mode={style.settings.mode} size={16} className={tone.ink} />
               <span className={`truncate text-[13px] ${active ? 'font-semibold text-ink-900' : 'font-medium text-ink-800'}`}>{style.name}</span>
-              {active && <Check size={15} className={`absolute bottom-2.5 right-2 ${tone.ink}`} aria-hidden="true" />}
+              {active && !locked && <Check size={15} className={`absolute bottom-2.5 right-2 ${tone.ink}`} aria-hidden="true" />}
             </button>
-            <button type="button" disabled={disabled} onClick={() => onEdit(style)} aria-label={t(`Ubah skill ${style.name}`, `Edit skill ${style.name}`)} title={t('Ubah skill', 'Edit skill')}
+            {locked ? <span className="absolute right-2 top-2"><PaidLock size={13} /></span> : <button type="button" disabled={disabled} onClick={() => onEdit(style)} aria-label={t(`Ubah skill ${style.name}`, `Edit skill ${style.name}`)} title={t('Ubah skill', 'Edit skill')}
               className="absolute right-1 top-1 grid h-6 w-6 place-items-center rounded-md text-ink-400 transition-colors hover:bg-white/70 hover:text-ink-900 focus-visible:bg-white/70 focus-visible:text-ink-900 disabled:opacity-40">
               <PencilLine size={13} aria-hidden="true" />
-            </button>
+            </button>}
           </div>
         );
       })}
-      <button type="button" disabled={disabled || full} onClick={onCreate} title={full ? t(`Maksimal ${STYLE_LIMIT} skill tersimpan.`, `You can save at most ${STYLE_LIMIT} skills.`) : t('Buat skill baru', 'Create a new skill')}
+      {!locked && <button type="button" disabled={disabled || full} onClick={onCreate} title={full ? t(`Maksimal ${STYLE_LIMIT} skill tersimpan.`, `You can save at most ${STYLE_LIMIT} skills.`) : t('Buat skill baru', 'Create a new skill')}
         className={`${TILE} border-dashed border-line-strong bg-white text-ink-600 hover:border-ink-300 hover:text-ink-900`}>
         <Plus size={16} className="text-ink-400" aria-hidden="true" />
         <span className="truncate text-[13px] font-medium">{t('Buat skill', 'Create skill')}</span>
-      </button>
+      </button>}
     </div>
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade }: Props) {
   const { t, locale } = useLocale();
   const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<AssistantTab>(() => tabForSettings(settings));
@@ -121,7 +125,10 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   }
   const languageName = detected === 'id' ? 'Indonesia' : detected === 'en' ? 'English' : t('belum jelas', 'unclear');
   // One per-tier budget covers both scopes: a paraphrase run is a paraphrase run.
-  const { limits } = useEntitlements();
+  const { limits, has } = useEntitlements();
+  const stylesLocked = !has('saved_styles');
+  // Below Max the server keeps no Sesuaikan block and empties the note, so both say so up front.
+  const sessionOnly = !has('persistent_personalization');
   const limit = limits.runLimit;
   const overLimit = scopeChars > limit;
   const needsSelection = scope === 'selection' && !hasSelection;
@@ -165,7 +172,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
                 <Segmented<'mode' | 'skills'> size="sm" label={t('Pilih mode atau skill', 'Choose a mode or a skill')} value={tab} disabled={busy} onChange={chooseTab}
                   options={[{ value: 'mode', label: 'Mode' }, { value: 'skills', label: 'Skills' }]} />
               </div>
-              {tab === 'skills' && (
+              {tab === 'skills' && !stylesLocked && (
                 <button type="button" onClick={onSaveAsStyle} disabled={busy || stylesLoading || styles.length >= STYLE_LIMIT} className={pillButton}
                   title={styles.length >= STYLE_LIMIT ? t(`Maksimal ${STYLE_LIMIT} skill tersimpan.`, `You can save at most ${STYLE_LIMIT} skills.`) : t('Simpan pengaturan ini sebagai skill', 'Save these settings as a skill')}>
                   <BookmarkPlus size={13} aria-hidden="true" />{t('Simpan sebagai skill', 'Save as skill')}
@@ -183,6 +190,10 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               </div>
             ) : stylesError ? (
               <Alert tone="error" actions={<Button size="sm" icon={RefreshCw} onClick={onRetryStyles}>{t('Coba lagi', 'Retry')}</Button>}>{stylesError}</Alert>
+            ) : stylesLocked && styles.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-line-strong bg-paper/60 px-3.5 py-3">
+                <LockedFeatureRow feature="saved_styles" label={t('Skill tersimpan', 'Saved skills')} onUpgrade={onUpgrade} />
+              </div>
             ) : styles.length === 0 ? (
               <div className="rounded-xl border border-dashed border-line-strong bg-paper/60 px-3.5 py-3">
                 <p className="text-xs leading-relaxed text-ink-500">{t('Belum ada skill tersimpan. Simpan pengaturan yang sering dipakai agar bisa dipanggil sekali klik.', 'No saved skills yet. Save the settings you use often to apply them in one click.')}</p>
@@ -190,8 +201,9 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               </div>
             ) : (
               <>
-                <SkillTiles styles={styles} activeId={settings.styleId} disabled={busy} full={styles.length >= STYLE_LIMIT} onPick={onApplyStyle} onEdit={onEditStyle} onCreate={onCreateStyle} />
-                {!activeStyle && <p className="mt-2 text-xs leading-relaxed text-ink-500">{t('Pilih satu skill untuk dipakai di notebook ini.', 'Pick a skill to use in this notebook.')}</p>}
+                {stylesLocked && <LockedFeatureRow className="mb-2" feature="saved_styles" label={t('Skill tersimpan', 'Saved skills')} onUpgrade={onUpgrade} />}
+                <SkillTiles styles={styles} activeId={settings.styleId} disabled={busy} full={styles.length >= STYLE_LIMIT} locked={stylesLocked} onPick={onApplyStyle} onEdit={onEditStyle} onCreate={onCreateStyle} onUpgrade={onUpgrade} />
+                {!activeStyle && !stylesLocked && <p className="mt-2 text-xs leading-relaxed text-ink-500">{t('Pilih satu skill untuk dipakai di notebook ini.', 'Pick a skill to use in this notebook.')}</p>}
               </>
             )}
           </section>
@@ -230,7 +242,8 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
                     <div className="w-[55%] shrink-0"><HintSelect size="sm" align="end" id="studio-language" label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(language) => onSettings({ ...settings, language })} options={languageOptions(t)} /></div>
                   </div>
                 </div>
-                <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings} /></div>
+                <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings}
+                  noteLocked={sessionOnly} onUpgrade={onUpgrade} sessionNote={sessionOnly ? t('Tidak tersimpan setelah notebook ditutup. Menyimpannya di notebook ada di paket Max.', 'Not kept after the notebook is closed. Keeping it in the notebook is part of Max.') : undefined} /></div>
               </>
             )}
           </section>

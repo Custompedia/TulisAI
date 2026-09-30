@@ -7,13 +7,16 @@ import { errorText, newKey, request } from '@/lib/client/api';
 import { plainTextDocument } from '@/lib/editor/document';
 import { countWords } from '@/lib/editor/metrics';
 import { numberFormat } from '@/lib/client/format';
-import { AI_SCOPE_LIMIT, defaults, detectLanguage, LEGACY_CUSTOM_PROMPT, MIN_WORDS, modeFromPrompt, normalizeSettings, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
+import { defaults, detectLanguage, LEGACY_CUSTOM_PROMPT, MIN_WORDS, modeFromPrompt, normalizeSettings, type Mode, type Settings, type WritingLanguage } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle } from '@/lib/writing/styles';
+import { composerRun, firstRunCustomKey, quotaEmptyText, stashCustom } from '@/lib/writing/composer';
 import { deriveTitle } from '@/lib/writing/title';
 import { rememberSettings, tabSettings, type TabMemory } from '@/components/workspace/assistant-tabs';
 import { StyleMark } from '@/components/writing/StyleMark';
 import { useWritingStyles } from '@/lib/client/styles-store';
-import { useSessionGuard, useShell } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
+import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
+import { PlansDialog } from '@/components/app/PlansDialog';
 import { COMPOSER_FOCUS_EVENT } from '@/components/app/Sidebar';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
@@ -60,7 +63,14 @@ export function Composer() {
   const [error, setError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   const [customizing, setCustomizing] = useState(false);
+  const [plans, setPlans] = useState(false);
   const { styles } = useWritingStyles();
+  const { limits, has } = useEntitlements();
+  // One skill rule everywhere: without saved_styles a skill is shown locked, never offered and then refused.
+  const stylesLocked = !has('saved_styles');
+  const skillTier = useRequiredTierName('saved_styles');
+  // Below Max the stored notebook drops Sesuaikan, so it reaches the first run only.
+  const sessionOnly = !has('persistent_personalization');
   // The composer's own baseline: the account defaults, never anything a skill brought in.
   const manualBase = useRef<Settings>(normalizeSettings({ ...defaults, mode: prefs.defaultMode === LEGACY_CUSTOM_PROMPT ? 'custom' : baseMode, language: prefs.writingLanguage, context: prefs.humanizerContext }));
   // Remembers the manual configuration so removing a skill restores it instead of resetting.
@@ -84,17 +94,20 @@ export function Composer() {
 
   const words = countWords(text);
   const detected = detectLanguage(text);
-  const tooLong = text.length > AI_SCOPE_LIMIT;
-  const outOfQuota = usage !== null && !usage.unlimited && usage.charactersRemaining <= 0;
+  const { autorun, limit: runLimit } = composerRun(text.length, limits.runLimit);
+  const overLimit = !autorun;
+  const outOfQuota = usage !== null && usage.charactersRemaining <= 0;
+  const oneTime = usage?.characterScope === 'account';
   const needsLanguage = settings.language === 'auto' && words >= MIN_WORDS && !detected;
   const ready = words >= MIN_WORDS;
-  const canSend = ready && !busy && !needsLanguage && !(outOfQuota && !tooLong);
+  const canSend = ready && !busy && !needsLanguage && !(outOfQuota && !overLimit);
   const activeMode = picked ? settings.mode : null;
-  const sendLabel = tooLong ? t('Buka sebagai notebook', 'Open as notebook') : sendLabelFor(activeMode, t);
+  const sendLabel = overLimit ? t('Buka sebagai notebook', 'Open as notebook') : sendLabelFor(activeMode, t);
+  const limitText = numberFormat(runLimit, locale);
   const status = busy ? { warn: false, text: t('Membuat notebook…', 'Creating notebook…') }
-    : outOfQuota ? { warn: true, text: t('Batas AI bulan ini habis.', 'This month’s AI limit is used up.') }
+    : outOfQuota ? { warn: true, text: quotaEmptyText(oneTime, t) }
     : needsLanguage ? { warn: true, text: t('Bahasa belum terdeteksi. Pilih Indonesia atau English.', 'Language unclear. Choose Indonesia or English.') }
-    : tooLong ? { warn: true, text: t(`Lebih dari ${numberFormat(AI_SCOPE_LIMIT, locale)} karakter, dibuka sebagai notebook.`, `Over ${numberFormat(AI_SCOPE_LIMIT, 'en')} characters, opens as a notebook.`) }
+    : overLimit ? { warn: true, text: t(`Lebih dari ${limitText} karakter, dibuka tanpa AI otomatis.`, `Over ${limitText} characters, opens without an automatic AI run.`) }
     : words > 0 && !ready ? { warn: false, text: t(`Minimal ${MIN_WORDS} kata`, `At least ${MIN_WORDS} words`) }
     : words > 0 ? { warn: false, text: `${numberFormat(words, locale)} ${t('kata', 'words')}` } : null;
 
@@ -114,10 +127,14 @@ export function Composer() {
   };
   // Removing a skill hands the row back to the manual configuration the user had before.
   const clearStyle = () => { setSettings(tabSettings('mode', settings, memory.current, styles, manualBase.current)); setPicked(manualPicked.current); };
-  const styleChip = styles.length > 0 && (
+  const styleChip = styles.length > 0 && (stylesLocked ? (
+    <button type="button" disabled={busy} onClick={() => setPlans(true)} title={t(`Skill tersimpan — buka dengan ${skillTier}`, `Saved skills — unlock with ${skillTier}`)} className={`${CHIP} font-medium text-ink-500`}>
+      <PaidLock size={13} />{t('Skill', 'Skill')}<span className="text-ink-400">· {skillTier}</span>
+    </button>
+  ) : (
     <ChipSelect label={t('Skill', 'Skill')} title={t('Skills', 'Skills')} value="" disabled={busy} onChange={pickStyle} width="w-72"
       options={styles.map((style) => ({ value: style.id, label: style.name, hint: style.description ?? requestSummary(style.settings, t) }))} />
-  );
+  ));
 
   async function create() {
     if (!canSend) return;
@@ -125,12 +142,18 @@ export function Composer() {
     // Short local title now; the first generation may replace it with a better one without a second read.
     const title = deriveTitle(text, t('Notebook tanpa judul', 'Untitled notebook'));
     try {
-      const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences: settings }, newKey());
+      // A skill id without saved_styles is refused on create, so a locked account never sends one.
+      const preferences = stylesLocked ? { ...settings, styleId: null } : settings;
+      const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences }, newKey());
       try {
-        if (!tooLong) sessionStorage.setItem(`writing-generate:${doc.id}`, '1');
+        if (autorun) {
+          sessionStorage.setItem(`writing-generate:${doc.id}`, '1');
+          const custom = stashCustom(settings);
+          if (custom) sessionStorage.setItem(firstRunCustomKey(doc.id), custom);
+        }
         sessionStorage.removeItem(DRAFT_KEY);
       } catch { /* storage unavailable */ }
-      router.push(`/notebooks/${doc.id}${tooLong ? '' : '?autoGenerate=1'}`);
+      router.push(`/notebooks/${doc.id}${autorun ? '?autoGenerate=1' : ''}`);
     } catch (caught) {
       if (!guard(caught)) setError(errorText(caught, locale === 'en'));
       setBusy(false);
@@ -179,7 +202,7 @@ export function Composer() {
               ]} />
             <ChipSelect<WritingLanguage> ghost prefix={t('Bahasa', 'Language')} label={t('Bahasa tulisan', 'Writing language')} value={settings.language} disabled={busy} onChange={(value) => set('language', value)}
               options={languageOptions(t)} />
-            <span role="status" className={`ml-1 inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs ${status?.warn ? 'font-medium text-amber-700' : 'text-ink-500'}`}>
+            <span role="status" title={status?.text} className={`ml-1 inline-flex min-w-0 flex-1 items-center gap-1.5 truncate text-xs ${status?.warn ? 'font-medium text-amber-700' : 'text-ink-500'}`}>
               {status?.warn && <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />}<span className="truncate">{status?.text}</span>
             </span>
             <button type="button" onClick={() => void create()} disabled={!canSend} aria-label={busy ? t('Membuat notebook…', 'Creating notebook…') : sendLabel}
@@ -187,6 +210,12 @@ export function Composer() {
               {busy ? <Spinner size={15} /> : <ArrowRight size={17} aria-hidden="true" />}
             </button>
           </div>
+          {overLimit && ready && (
+            <p className="border-t border-line px-5 py-2.5 text-xs leading-relaxed text-ink-600">
+              {t(`Teks lebih dari ${limitText} karakter. Dibuka sebagai notebook tanpa AI otomatis. Pilih paling banyak ${limitText} karakter (sebaiknya satu paragraf) lalu jalankan AI.`,
+                `The text is over ${limitText} characters. It opens as a notebook without an automatic AI run. Select at most ${limitText} characters (ideally one paragraph), then run the AI.`)}
+            </p>
+          )}
         </div>
 
         <div className={`flex flex-nowrap items-center gap-2 px-2 py-2.5 ${picked || activeStyle ? '' : 'justify-center'}`}>
@@ -240,15 +269,18 @@ export function Composer() {
         {picked && customizing && !activeStyle && (
           <div id="composer-customize" className="mx-0 mb-0.5 rounded-2xl bg-white px-4 py-4 shadow-[0_1px_3px_rgb(31_32_29/0.08)] animate-fade-up sm:px-5">
             <div className="mb-4 flex items-start justify-between gap-3">
-              <div><p className="text-sm font-semibold text-ink-900">{t('Sesuaikan hasil', 'Customize result')}</p><p className="mt-0.5 text-xs text-ink-500">{t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>
+              <div><p className="text-sm font-semibold text-ink-900">{t('Sesuaikan hasil', 'Customize result')}</p><p className="mt-0.5 text-xs text-ink-500">{sessionOnly
+                ? t('Berlaku untuk proses AI pertama saja, tidak tersimpan setelah notebook ditutup.', 'Applies to the first AI run only and is not kept after the notebook is closed.')
+                : t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>
               <button type="button" onClick={() => setCustomizing(false)} aria-label={t('Tutup Sesuaikan', 'Close customize')} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-500 hover:bg-paper-deep hover:text-ink-900"><X size={16} aria-hidden="true" /></button>
             </div>
-            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} />
+            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={sessionOnly} onUpgrade={() => setPlans(true)} />
           </div>
         )}
       </section>
 
       {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error} {t('Teksmu tidak hilang.', 'Your text is kept.')}</Toast>}
+      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {confirmClear && <ConfirmDialog title={t('Hapus teks?', 'Clear text?')} description={t('Teks di kotak ini akan dikosongkan.', 'The text in this box will be cleared.')} confirmLabel={t('Ya, hapus', 'Yes, clear')} tone="danger" onClose={() => setConfirmClear(false)} onConfirm={() => { setText(''); setConfirmClear(false); textarea.current?.focus(); }} />}
     </div>
   );

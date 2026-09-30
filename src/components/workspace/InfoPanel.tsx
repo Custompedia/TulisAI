@@ -10,7 +10,8 @@ import type { Term } from './types';
 
 type OutlineItem = { level: number; text: string; pos: number };
 type Props = {
-  editor: Editor | null; loaded: boolean; navigable: boolean; text: string; original: string | null; hasChanges: boolean; terms: Term[]; busy: boolean;
+  // `paged`: the Halaman canvas, the only one with a toolbar today, so only it may point at one.
+  editor: Editor | null; loaded: boolean; navigable: boolean; paged: boolean; text: string; original: string | null; hasChanges: boolean; terms: Term[]; busy: boolean;
   onUnlock: (term: Term) => void; onNavigate?: () => void; analytics: React.ReactNode;
 };
 
@@ -23,7 +24,7 @@ const Title = ({ icon: Icon, children, count }: { icon: typeof Heading; children
   </h3>
 );
 
-function Outline({ editor, navigable, onNavigate }: { editor: Editor; navigable: boolean; onNavigate?: () => void }) {
+function Outline({ editor, navigable, paged, onNavigate }: { editor: Editor; navigable: boolean; paged: boolean; onNavigate?: () => void }) {
   const { t } = useLocale();
   const items = useEditorState({
     editor,
@@ -43,7 +44,9 @@ function Outline({ editor, navigable, onNavigate }: { editor: Editor; navigable:
     if (editor.isEditable) editor.chain().setTextSelection(item.pos + 1).focus(undefined, { scrollIntoView: false }).run();
     onNavigate?.();
   }
-  if (!items.length) return <p className="text-xs leading-relaxed text-ink-500">{t('Belum ada judul. Pakai "Judul 1–3" di toolbar untuk membuat kerangka.', 'No headings yet. Use "Heading 1–3" in the toolbar to build an outline.')}</p>;
+  if (!items.length) return <p className="text-xs leading-relaxed text-ink-500">{paged
+    ? t('Belum ada judul. Ketik ## lalu spasi di awal baris, atau pilih Judul di "Gaya paragraf" pada toolbar.', 'No headings yet. Type ## and a space at the start of a line, or pick a Heading under "Paragraph style" in the toolbar.')
+    : t('Belum ada judul. Ketik ## lalu spasi di awal baris untuk membuat judul.', 'No headings yet. Type ## and a space at the start of a line to add a heading.')}</p>;
   return (
     <ul className="space-y-0.5">
       {items.map((item) => (
@@ -58,7 +61,7 @@ function Outline({ editor, navigable, onNavigate }: { editor: Editor; navigable:
   );
 }
 
-export function InfoPanel({ editor, loaded, navigable, text, original, hasChanges, terms, busy, onUnlock, onNavigate, analytics }: Props) {
+export function InfoPanel({ editor, loaded, navigable, paged, text, original, hasChanges, terms, busy, onUnlock, onNavigate, analytics }: Props) {
   const { t, locale } = useLocale();
   const n = (value: number) => numberFormat(value, locale);
   const stats: Array<[string, string]> = [
@@ -71,7 +74,7 @@ export function InfoPanel({ editor, loaded, navigable, text, original, hasChange
     <div className="scrollbar-thin h-full space-y-7 overflow-y-auto p-4">
       <section aria-label={t('Kerangka', 'Outline')}>
         <Title icon={Heading}>{t('Kerangka', 'Outline')}</Title>
-        {!loaded || !editor ? <div className="space-y-2" role="status"><div className="h-3 w-3/4 animate-pulse rounded bg-paper-deep" /><div className="h-3 w-1/2 animate-pulse rounded bg-paper-deep" /></div> : <Outline editor={editor} navigable={navigable} onNavigate={onNavigate} />}
+        {!loaded || !editor ? <div className="space-y-2" role="status"><div className="h-3 w-3/4 animate-pulse rounded bg-paper-deep" /><div className="h-3 w-1/2 animate-pulse rounded bg-paper-deep" /></div> : <Outline editor={editor} navigable={navigable} paged={paged} onNavigate={onNavigate} />}
       </section>
 
       <section aria-label={t('Istilah dikunci', 'Locked terms')}>

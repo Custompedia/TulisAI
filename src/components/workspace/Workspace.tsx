@@ -14,7 +14,8 @@ import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/
 import { copyRichText, handleClipboardEvent } from '@/lib/editor/clipboard';
 import { normalizePastedHtml, plainTextSlice } from '@/lib/editor/paste-normalize';
 import { documentExtensions } from '@/lib/editor/extensions';
-import { countWords } from '@/lib/editor/metrics';
+import { countCharacters, countWords } from '@/lib/editor/metrics';
+import { firstRunCustomKey, firstRunOverride } from '@/lib/writing/composer';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
 import { suggestStyle } from '@/lib/writing/suggest';
@@ -533,11 +534,14 @@ export default function Workspace() {
     if (!loaded || recovery) return;
     autoStarted.current = true;
     const intent = sessionStorage.getItem(`writing-generate:${id}`); sessionStorage.removeItem(`writing-generate:${id}`);
+    // The composer's Sesuaikan block rides along for this one run; below Max the stored notebook no longer has it.
+    const custom = sessionStorage.getItem(firstRunCustomKey(id)); sessionStorage.removeItem(firstRunCustomKey(id));
     syncUrl({ autoGenerate: null, mode: null });
     if (intent !== '1') { setArriving(false); return; }
     autoTitle.current = true;
     openRight('assistant');
-    void generate({ scope: 'document', surface: 'panel', suggestTitle: true });
+    const override = latest.current.settings.customized ? null : firstRunOverride(latest.current.settings, custom);
+    void generate({ scope: 'document', surface: 'panel', suggestTitle: true, ...(override ? { override } : {}) });
   });
   useEffect(() => { runInitialGenerate(); }, [loaded, recovery]);
 
@@ -860,6 +864,17 @@ export default function Workspace() {
     ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text) }
     : null;
   const words = countWords(text);
+  // On the Halaman canvas the hint sits inside the page margins, so it lines up with the first line of text.
+  const emptyHint = (
+    <div className="pointer-events-none absolute z-10" style={paged ? { top: 'var(--page-margin-top)', left: 'var(--page-margin-left)', right: 'var(--page-margin-right)' } : { top: 0, left: 0, right: 0 }}>
+      <p aria-hidden="true" className={paged ? 'text-ink-500' : 'text-[16px] leading-[1.75] text-ink-500'}>{t('Mulai menulis, atau tempel teks yang ingin diolah', 'Start writing, or paste the text you want to work on')}</p>
+      {!frozen && !recovery && (
+        <button type="button" onClick={() => void pasteClipboard()} className={`pointer-events-auto mt-4 inline-flex h-9 items-center gap-1.5 rounded-full px-4 font-sans text-[13px] font-semibold ${raisedGreen} ${pressGreen}`}>
+          <ClipboardPaste size={15} aria-hidden="true" />{t('Tempel teks', 'Paste text')}
+        </button>
+      )}
+    </div>
+  );
   const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
   const assistant = (
     <AssistantPanel
@@ -872,6 +887,7 @@ export default function Workspace() {
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
       onGenerate={() => void generate({ scope, surface: 'panel' })} customizeRequest={customizeRequest}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
+      onUpgrade={() => setPlans(true)}
     >
       {panelPreview && (
         <PreviewCard
@@ -895,10 +911,10 @@ export default function Workspace() {
           onRename={(version) => { setField(version.label ?? ''); setDialog({ kind: 'rename', version }); }} onDuplicate={(version) => void duplicateVersion(version)}
         />
       ) : (
-        <InfoPanel editor={editor} loaded={loaded} navigable={!compare} text={text} original={original} hasChanges={versions.some((version) => version.kind !== 'original')} terms={terms} busy={busy !== ''}
+        <InfoPanel editor={editor} loaded={loaded} navigable={!compare} paged={paged} text={text} original={original} hasChanges={versions.some((version) => version.kind !== 'original')} terms={terms} busy={busy !== ''}
           onUnlock={(term) => void unlock(term)} onNavigate={closeOnNarrow}
           analytics={
-            <AnalyticsPanel text={text} original={original} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} quality={quality} stale={!!quality && quality.stamp !== editStamp}
+            <AnalyticsPanel text={text} original={original} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} sourceChars={countCharacters(selection?.text.trim() ? selection.text : text)} quality={quality} stale={!!quality && quality.stamp !== editStamp}
               loading={qualityState.loading} error={qualityState.error} onAnalyze={() => void analyze()}
               blockedReason={!loaded ? t('Notebook masih dimuat.', 'The notebook is still loading.') : !text.trim() ? t('Tulisan masih kosong.', 'The text is empty.') : (selection?.text ?? text).length > AI_SCOPE_LIMIT ? t('Terlalu panjang untuk dianalisis sekaligus. Blok sebagian teks terlebih dahulu.', 'Too long to analyse at once. Select part of the text first.') : null} />
           } />
@@ -934,22 +950,14 @@ export default function Workspace() {
       <div className={`relative min-h-0 flex-1 ${compare ? 'hidden' : ''}`}>
       <div ref={canvasRef} className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? canvasStyle : undefined}>
         <article className={paged ? 'ww-page-frame relative' : 'editor-plain relative mx-auto min-h-full max-w-[760px]'} style={paged ? ({ '--page-zoom': pageZoom.scale } as React.CSSProperties) : undefined}>
-          {/* Lanjutan shows a bare page like Docs; the hint and paste button belong to Dasar only. */}
-          {loaded && !paged && !text.trim() && (
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-10">
-              <p aria-hidden="true" className="text-[16px] leading-[1.75] text-ink-500">{t('Tulis atau tempel teks yang terasa seperti tulisan AI…', 'Write or paste text that sounds AI-written…')}</p>
-              {!frozen && !recovery && (
-                <button type="button" onClick={() => void pasteClipboard()} className={`pointer-events-auto mt-4 inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-semibold ${raisedGreen} ${pressGreen}`}>
-                  <ClipboardPaste size={15} aria-hidden="true" />{t('Tempel teks', 'Paste text')}
-                </button>
-              )}
-            </div>
-          )}
+          {/* An empty notebook explains itself on both canvases: a neutral hint plus a paste button. */}
+          {loaded && !paged && !text.trim() && emptyHint}
           {paged && editor && loaded && !compare && (
             <PageRuler editor={editor} layout={pageLayout} zoom={pageZoom.scale} language={english ? 'en' : 'id'}
               disabled={!loaded || frozen || !!recovery} onMargins={(margins) => applyLayout({ ...pageLayout, margins })} />
           )}
           <div className={paged ? 'ww-page' : undefined}>
+            {loaded && paged && !compare && !text.trim() && emptyHint}
             {!loaded && <LoadingBlock label={arriving ? t('Menyiapkan notebook…', 'Preparing your notebook…') : t('Memuat notebook…', 'Loading notebook…')} />}
             <div className={loaded ? '' : 'hidden'}><EditorContent editor={editor} /></div>
             {paged && loaded && (pageLayout.header || pageLayout.footer) && (
@@ -972,7 +980,7 @@ export default function Workspace() {
             )}
           </div>
           {editor && loaded && <TableContextMenu editor={editor} disabled={busy !== '' || !!compare || !!recovery} />}
-          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} onCommand={selectionCommand} onStyle={styleCommand} />}
+          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} stylesLocked={!has('saved_styles')} onCommand={selectionCommand} onStyle={styleCommand} onUpgrade={() => setPlans(true)} />}
           {editor && loaded && inline && (
             <InlineResult
               editor={editor} label={inline.label} status={inline.status} preview={inlinePreview} message={inline.message} stale={stale} busy={busy !== ''} applying={busy === 'apply'}
