@@ -3,12 +3,14 @@ import { jsonData } from "@/lib/contracts";
 import { requireUser } from "@/server/auth/auth";
 import { handleRouteError, idempotencyKey, readJson } from "@/server/http";
 import { runtime } from "@/server/runtime";
+import { USE_CASES } from "@/lib/writing/use-cases";
 
 const Settings = z.object({
   interfaceLanguage: z.enum(["id", "en"]),
   writingLanguage: z.enum(["auto", "id", "en"]),
   defaultMode: z.enum(["P01_STANDARD_REWRITE", "P02_ACADEMIC", "P03_HUMANIZER", "P04_PROFESSIONAL", "P05_CREATIVE", "P06_SIMPLIFY"]),
-  primaryUseCase: z.enum(["academic", "professional", "general"]).default("general"),
+  // Finer choices since UX 2 (content, article, paraphrase); the first three stay valid.
+  primaryUseCase: z.enum(USE_CASES).default("general"),
   humanizerContext: z.enum(["academic", "professional", "general"]).default("general"),
   localDrafts: z.boolean().default(true),
 });

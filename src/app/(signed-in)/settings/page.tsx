@@ -20,6 +20,7 @@ import { UsagePanel } from '@/components/settings/UsagePanel';
 import { contextOptions, languageOptions, modeHint, modeLabel } from '@/components/writing/modes';
 import { modeFromPrompt } from '@/lib/writing/settings';
 import { accountDefaultMode, DEFAULT_MODE_PROMPTS, DISPLAY_PREFERENCE_KEYS, groupChanged, resetGroup, WRITING_PREFERENCE_KEYS } from '@/lib/writing/preferences';
+import { asUseCase, USE_CASES, primaryUseHint, primaryUseLabel } from '@/lib/writing/use-cases';
 
 // Akun & Paket. The sub-pages live in the hash and are listed in the context sidebar (a chip strip on phones).
 // Old links keep working: #bahasa opens Tampilan & perangkat, and #skills moved to /skills.
@@ -176,7 +177,7 @@ function SettingsView() {
               <div>
                 <p className="text-sm font-semibold text-ink-900">{t('Penggunaan utama', 'Main use')}</p>
                 <p className="mt-0.5 text-[13px] text-ink-500">{t('Jenis tulisan yang paling sering kamu olah.', 'The kind of writing you work on most.')}</p>
-                <div className="mt-2.5 max-w-sm"><Segmented label={t('Penggunaan utama', 'Main use')} value={form.primaryUseCase} onChange={(value) => setForm({ ...form, primaryUseCase: value })} options={[{ value: 'academic', label: t('Akademik', 'Academic') }, { value: 'professional', label: t('Profesional', 'Professional') }, { value: 'general', label: t('Umum', 'General') }]} /></div>
+                <div className="mt-2.5 max-w-sm"><HintSelect label={t('Penggunaan utama', 'Main use')} value={asUseCase(form.primaryUseCase)} onChange={(value) => setForm({ ...form, primaryUseCase: value })} options={USE_CASES.map((value) => ({ value, label: primaryUseLabel(value, t), hint: primaryUseHint(value, t) }))} /></div>
               </div>
             </div>
           </Card>

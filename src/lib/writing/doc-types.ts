@@ -108,9 +108,14 @@ export const DEFAULT_ACTIONS: InlineAction[] = ['alternatives', 'shorter', 'clea
 export const orderActions = (type: string | null | undefined): InlineAction[] => (isDocType(type) ? DEFINITIONS[type].actions : DEFAULT_ACTIONS);
 
 // Beranda's chips follow the onboarding answer: academic writers see Esai first, professional ones Email and
-// Laporan, everyone else Artikel and Script.
+// Laporan, content creators Script and Caption, article writers Artikel, paraphrasers Esai and Artikel, and
+// everyone else (general or unknown) Artikel and Script.
+const FIRST_FOR: Record<string, DocType[]> = {
+  academic: ['essay', 'report'], professional: ['email', 'report'], content: ['script', 'caption', 'article'],
+  article: ['article', 'story', 'product'], paraphrase: ['essay', 'article', 'report'],
+};
 export function skeletonOrder(useCase: string | null | undefined): DocType[] {
-  const first: DocType[] = useCase === 'academic' ? ['essay', 'report'] : useCase === 'professional' ? ['email', 'report'] : ['article', 'script', 'caption'];
+  const first: DocType[] = FIRST_FOR[useCase ?? ''] ?? ['article', 'script', 'caption'];
   return [...first, ...DOC_TYPES.filter((type) => !first.includes(type))];
 }
 
