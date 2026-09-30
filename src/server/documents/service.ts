@@ -10,6 +10,7 @@ import { FeatureLockedError } from "../usage/features";
 import { ADVANCED_PREFERENCE, hasFeature, PAGE_LAYOUT_PREFERENCES } from "@/lib/plans";
 import { storedSettingsForAccess } from "../usage/premium";
 import { validDocxImportReceipt } from "./portability";
+import { BRIEF_VALUE_LIMIT, LONG_META_KEYS } from "@/lib/writing/notebook-meta";
 
 type DocumentRow = { id: string; title: string; language: "auto" | "id" | "en"; preferences_json: string; revision: number; body_json: string | null; body_r2_key: string | null; original_version_id?: string | null; color?: string | null; icon?: string | null; pinned_at?: number | null; created_at: number; updated_at: number };
 type VersionRow = { id: string; document_id: string; kind: VersionDTO["kind"]; revision: number; label: string | null; snapshot_r2_key: string; created_at: number; prompt_id: string | null; scope_type: string | null };
@@ -42,6 +43,15 @@ async function checkedPreferences(ownerId: string, preferences: Record<string, u
     if (existing && Object.hasOwn(existing, key)) next[key] = existing[key];
     else delete next[key];
   }
+  return next;
+}
+
+// Autosave never refuses (a failing autosave would trap the writer in a save loop), so an over-long brief value is
+// cut to BRIEF_VALUE_LIMIT instead. Other preference values keep their own rules (a Max writing sample, for one).
+function briefClamped(preferences: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!preferences) return preferences;
+  const next = { ...preferences };
+  for (const key of LONG_META_KEYS) { const value = next[key]; if (typeof value === "string" && value.length > BRIEF_VALUE_LIMIT) next[key] = value.slice(0, BRIEF_VALUE_LIMIT); }
   return next;
 }
 
@@ -141,7 +151,7 @@ export async function listDocuments(ownerId: string, cursor?: string, limit = 20
   };
 }
 
-export async function saveDocument(ownerId: string, documentId: string, expectedRevision: number, changes: { content?: unknown; title?: string }, kind: VersionDTO["kind"] = "checkpoint", label: string | null = null, options?: { previewId: string; expectedLockIds?: string[]; promptId?: string; scopeType?: "selection" | "document" }) {
+export async function saveDocument(ownerId: string, documentId: string, expectedRevision: number, changes: { content?: unknown; title?: string }, kind: VersionDTO["kind"] = "checkpoint", label: string | null = null, options?: { previewId: string; expectedLockIds?: string[]; promptId?: string; scopeType?: "selection" | "section" | "document" }) {
   const existing = await rowForOwner(documentId, ownerId); if (existing.revision !== expectedRevision) throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: existing.revision });
   const content = changes.content ? checkedContent(changes.content) : await readBody(existing); const title = changes.title ?? existing.title; const revision = expectedRevision + 1; const versionId = id(); const serialized = snapshot(content); const object = await putImmutableSnapshot(documentId, versionId, serialized); const changed = now();
   const prior = options ? await runtime().DB.prepare("SELECT id FROM document_versions WHERE document_id=? AND owner_id=? AND revision=? LIMIT 1").bind(documentId, ownerId, expectedRevision).first<{ id: string }>() : null;
@@ -161,7 +171,7 @@ export async function saveDocument(ownerId: string, documentId: string, expected
 export async function autosaveDocument(ownerId: string, documentId: string, expectedRevision: number, content: unknown, metadata?: { title?: string; language?: "auto" | "id" | "en"; preferences?: Record<string, unknown> }) {
   const parsed = checkedContent(content); const current = await rowForOwner(documentId, ownerId);
   const oldPreferences = JSON.parse(current.preferences_json || "{}") as Record<string, unknown>;
-  const preferences = await checkedPreferences(ownerId, metadata?.preferences, "strip", oldPreferences); const saved = now();
+  const preferences = briefClamped(await checkedPreferences(ownerId, metadata?.preferences, "strip", oldPreferences)); const saved = now();
   const result = await runtime().DB.prepare("UPDATE documents SET title=?,language=?,preferences_json=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL")
     .bind(metadata?.title ?? current.title, metadata?.language ?? current.language, JSON.stringify(preferences ?? oldPreferences), snapshot(parsed), saved, documentId, ownerId, expectedRevision).run();
   if ((result.meta.changes ?? 0) !== 1) { const latest = await rowForOwner(documentId, ownerId); throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: latest.revision }); }

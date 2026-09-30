@@ -236,6 +236,7 @@ function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess }: {
 function Brief({ meta, onMeta }: { meta: NotebookMeta; onMeta: (patch: NotebookMeta) => void }) {
   const { t } = useLocale();
   const fields: Record<BriefKey, [string, string]> = {
+    briefTopic: [t('Topik', 'Topic'), t('Mis. cara hemat energi di kos', 'E.g. saving energy in a rented room')],
     briefPlatform: [t('Platform', 'Platform'), t('Mis. Instagram, blog kantor', 'E.g. Instagram, company blog')],
     briefAudience: [t('Pembaca', 'Readers'), t('Mis. mahasiswa tingkat akhir', 'E.g. final-year students')],
     briefMessage: [t('Pesan utama', 'Key message'), t('Satu kalimat yang harus diingat', 'One sentence they should remember')],

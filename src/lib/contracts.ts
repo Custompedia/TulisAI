@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { INSTRUCTION_LIMIT } from "@/lib/writing/instruction";
 import { NotebookAppearanceSchema } from "@/lib/notebook/appearance";
+import { BRIEF_VALUE_LIMIT, metaLimit } from "@/lib/writing/notebook-meta";
 
 export const ApiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) });
 const MAX_EDITOR_NODES = 12_000;
@@ -25,7 +26,9 @@ const compactNode = (node: unknown): unknown => {
 const MAX_BODY_UNITS = 1_500_000; const MAX_BODY_BYTES = 1_900_000;
 const utf8Length = (value: string) => { let bytes = value.length; for (let index = 0; index < value.length; index++) { const code = value.charCodeAt(index); if (code >= 0x80) bytes += code >= 0x800 && (code < 0xd800 || code > 0xdfff) ? 2 : 1; } return bytes; };
 export const EditorDocumentSchema = z.preprocess(compactNode, z.object({ type: z.literal("doc"), content: z.array(EditorNodeSchema).max(MAX_EDITOR_NODES).default([]) }).strict().superRefine((document, ctx) => { const encoded = JSON.stringify(document); if (encoded.length > MAX_BODY_UNITS || (encoded.length > MAX_BODY_BYTES / 3 && utf8Length(encoded) > MAX_BODY_BYTES)) ctx.addIssue({ code: "custom", message: "Document exceeds the inline safety limit." }); }));
-const DocumentPreferencesSchema = z.record(z.string(), z.union([z.string().max(500), z.number().finite(), z.boolean(), z.null(), z.array(z.string().max(300)).max(20)]));
+// Every string preference stays ≤500 characters except the brief (UX 3), whose values may reach BRIEF_VALUE_LIMIT.
+const DocumentPreferencesSchema = z.record(z.string(), z.union([z.string().max(BRIEF_VALUE_LIMIT), z.number().finite(), z.boolean(), z.null(), z.array(z.string().max(300)).max(20)]))
+  .superRefine((preferences, ctx) => { for (const [key, value] of Object.entries(preferences)) if (typeof value === "string" && value.length > metaLimit(key)) ctx.addIssue({ code: "custom", path: [key], message: `At most ${metaLimit(key)} characters.` }); });
 export const DocumentCreateSchema = z.object({ title: z.string().trim().min(1).max(180).default("Untitled document"), content: EditorDocumentSchema.optional(), language: z.enum(["auto", "id", "en"]).default("auto"), preferences: DocumentPreferencesSchema.optional(), color: NotebookAppearanceSchema.shape.color.optional(), icon: NotebookAppearanceSchema.shape.icon.optional(), docxImportReceipt: z.string().uuid().optional() });
 export const DocumentPatchSchema = z.object({ title: z.string().trim().min(1).max(180).optional(), language: z.enum(["auto", "id", "en"]).optional(), preferences: DocumentPreferencesSchema.optional(), content: EditorDocumentSchema.optional(), expectedRevision: z.number().int().min(0) });
 // GET /api/documents: every filter is optional; an unknown mode or kind is refused rather than matching nothing.
@@ -50,7 +53,10 @@ export const GenerateSchema = z.object({
   // untrusted text: the server sanitises it and sends it as its own USER block, never as a control.
   instruction: z.string().max(INSTRUCTION_LIMIT).optional(),
 });
-export const ApplyPreviewSchema = z.object({ expectedRevision: z.number().int().min(0), selectedAlternative: z.number().int().min(0).max(4).optional() });
+// UX 3, Draf dari brief: where to write (a plain-text offset on a heading or an empty line) and in which language.
+// The brief, the outline and the kind of writing are read from the saved notebook, never from this body.
+export const DraftSchema = z.object({ documentId: z.string().uuid(), expectedRevision: z.number().int().min(0), at: z.number().int().min(0), language: z.enum(["id", "en"]) });
+export const ApplyPreviewSchema =z.object({ expectedRevision: z.number().int().min(0), selectedAlternative: z.number().int().min(0).max(4).optional() });
 export const AnalyzeQualitySchema = z.object({ documentId: z.string().uuid(), expectedRevision: z.number().int().min(0), source: z.object({ text: z.string().min(1).max(20000), anchor: z.object({ from: z.number().int().min(0), to: z.number().int().min(0) }).optional() }), language: z.enum(["id", "en"]), context: z.enum(["standard", "academic", "humanize", "professional", "creative", "simplify"]) });
 export const RestoreVersionSchema = z.object({ expectedRevision: z.number().int().min(0) });
 export const CheckpointSchema = z.object({ expectedRevision: z.number().int().min(0), label: z.string().trim().min(1).max(120).optional() });
@@ -58,6 +64,7 @@ export const VersionLabelSchema = z.object({ label: z.string().trim().min(1).max
 
 export type DocumentCreateInput = z.infer<typeof DocumentCreateSchema>;
 export type GenerateInput = z.infer<typeof GenerateSchema>;
+export type DraftInput = z.infer<typeof DraftSchema>;
 export type AnalyzeQualityInput = z.infer<typeof AnalyzeQualitySchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
