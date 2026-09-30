@@ -73,8 +73,10 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
   // One skill rule everywhere: without saved_styles a skill is shown locked, never offered and then refused.
   const stylesLocked = !has('saved_styles');
   const skillTier = useRequiredTierName('saved_styles');
-  // Below Max the stored notebook drops Sesuaikan, so it reaches the first run only.
-  const sessionOnly = !has('persistent_personalization');
+  // Free's stored notebook drops Sesuaikan, so it reaches the first run only; Plus and Pro keep format, length,
+  // reader and emphasis. The note for the AI stays Max-only on every plan.
+  const sessionOnly = !has('saved_styles');
+  const noteLocked = !has('persistent_personalization');
   // The composer's own baseline: the account defaults, never anything a skill brought in.
   const manualBase = useRef<Settings>(normalizeSettings({ ...defaults, mode: prefs.defaultMode === LEGACY_CUSTOM_PROMPT ? 'custom' : baseMode, language: prefs.writingLanguage, context: prefs.humanizerContext }));
   // Remembers the manual configuration so removing a skill restores it instead of resetting.
@@ -295,7 +297,7 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
                 : t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>
               <button type="button" onClick={() => setCustomizing(false)} aria-label={t('Tutup Sesuaikan', 'Close customize')} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-500 hover:bg-paper-deep hover:text-ink-900"><X size={16} aria-hidden="true" /></button>
             </div>
-            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={sessionOnly} onUpgrade={openPlans} />
+            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={noteLocked} onUpgrade={openPlans} />
           </div>
         )}
       </section>

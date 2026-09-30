@@ -147,8 +147,10 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   // One per-tier budget covers both scopes: a paraphrase run is a paraphrase run.
   const { limits, has } = useEntitlements();
   const stylesLocked = !has('saved_styles');
-  // Below Max the server keeps no Sesuaikan block and empties the note, so both say so up front.
-  const sessionOnly = !has('persistent_personalization');
+  // Free keeps no Sesuaikan block in the notebook (Plus and Pro keep format, length, reader and emphasis),
+  // and below Max the note is emptied, so both say so up front.
+  const sessionOnly = !has('saved_styles');
+  const noteLocked = !has('persistent_personalization');
   const limit = limits.runLimit;
   const overLimit = scopeChars > limit;
   const needsSelection = scope === 'selection' && !hasSelection;
@@ -281,7 +283,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
                   </div>
                 </div>
                 <div className="mt-3"><CustomizePanel key={customizeRequest} defaultOpen={customizeRequest > 0} settings={settings} disabled={busy} onChange={onSettings}
-                  noteLocked={sessionOnly} onUpgrade={onUpgrade} sessionNote={sessionOnly ? t('Tidak tersimpan setelah notebook ditutup. Menyimpannya di notebook ada di paket Max.', 'Not kept after the notebook is closed. Keeping it in the notebook is part of Max.') : undefined} /></div>
+                  noteLocked={noteLocked} onUpgrade={onUpgrade} sessionNote={sessionOnly ? t('Tidak tersimpan setelah notebook ditutup. Menyimpannya di notebook mulai paket Plus.', 'Not kept after the notebook is closed. Keeping it in the notebook starts on Plus.') : undefined} /></div>
               </>
             )}
           </section>

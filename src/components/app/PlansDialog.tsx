@@ -34,7 +34,7 @@ function plans(t: T, freeCharacters: number): Plan[] {
     {
       id: 'plus', name: 'Plus', icon: Sparkles, tagline: t('Untuk yang rutin menulis ulang.', 'For regular rewriting.'), quota: allowance('plus', t, freeCharacters),
       inherits: t('Semua di Gratis, plus:', 'Everything in Free, plus:'),
-      features: [perRun('plus', t), t('Kuota AI isi ulang tiap bulan', 'AI allowance refills every month'), t('Skill tersimpan: mode beserta pengaturannya', 'Saved skills: a mode with its settings')],
+      features: [perRun('plus', t), t('Kuota AI isi ulang tiap bulan', 'AI allowance refills every month'), t('Skill tersimpan: mode beserta pengaturannya', 'Saved skills: a mode with its settings'), t('Format & panjang di Sesuaikan hasil tersimpan di notebook & skill', 'Format & length in Customize result kept in notebooks & skills')],
     },
     {
       id: 'pro', name: 'Pro', icon: Crown, tagline: t('Untuk dokumen panjang dan skripsi.', 'For long documents and theses.'), quota: allowance('pro', t, freeCharacters), popular: true,
@@ -48,7 +48,6 @@ function plans(t: T, freeCharacters: number): Plan[] {
         t('Perintah AI: instruksi bebas pada teks terpilih', 'AI instructions: free-form instructions on selected text'),
         t('Catatan untuk AI di Sesuaikan hasil', 'Notes for the AI in Customize result'),
         t('Instruksi & contoh tulisan di skill', 'Instructions & writing samples in skills'),
-        t('Sesuaikan hasil tersimpan di notebook & skill', 'Customize result saved in notebooks & skills'),
         t('Kuota AI terbesar — 3,5× Pro', 'The largest AI allowance — 3.5× Pro'),
       ],
     },
@@ -77,7 +76,7 @@ function groups(t: T, freeCharacters: number): Array<{ title: string; rows: Arra
         { label: t('Perintah AI: instruksi bebas pada teks terpilih', 'AI instructions: free-form instructions on selected text'), cells: [false, false, false, true] },
         { label: t('Catatan untuk AI di Sesuaikan hasil', 'Notes for the AI in Customize result'), cells: [false, false, false, true] },
         { label: t('Instruksi & contoh tulisan di skill', 'Instructions & writing samples in skills'), cells: [false, false, false, true] },
-        { label: t('Sesuaikan hasil tersimpan di notebook & skill', 'Customize result saved in notebooks & skills'), cells: [false, false, false, true] },
+        { label: t('Format & panjang di Sesuaikan hasil tersimpan di notebook & skill', 'Format & length in Customize result kept in notebooks & skills'), cells: [false, true, true, true] },
       ],
     },
     {

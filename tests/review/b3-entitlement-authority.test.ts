@@ -182,8 +182,9 @@ describe("B3 checkpoint and capability resolver", () => {
     await persistAuthority("u", link, plus, now + 2);
     const changed = EditorDocumentSchema.parse({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "isi tetap dapat disimpan" }] }] });
     await autosaveDocument("u", doc.id, doc.revision, changed, { preferences: { advanced: false, pageSize: "a4", extra: "bypass", sample: "bypass", customized: false } });
-    expect((await getDocument("u", doc.id)).preferences).toMatchObject({ advanced: true, pageSize: "letter", extra: "Instruksi lama", sample: "Sampel lama", customized: true });
-    expect((await listStyles("u"))[0]!.settings).toMatchObject({ extra: "Instruksi lama", sample: "Sampel lama", customized: true });
+    // Plus and Pro own the Sesuaikan flag since UX 2, so their explicit "off" wins; the Max note and sample survive.
+    expect((await getDocument("u", doc.id)).preferences).toMatchObject({ advanced: true, pageSize: "letter", extra: "Instruksi lama", sample: "Sampel lama", customized: false });
+    expect((await listStyles("u"))[0]!.settings).toMatchObject({ extra: "Instruksi lama", sample: "Sampel lama", customized: false });
   });
 
   it("uses only server-issued DOCX evidence for downgrade portability", async () => {
