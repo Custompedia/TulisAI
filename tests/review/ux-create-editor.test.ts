@@ -59,7 +59,8 @@ describe('skeletons', () => {
     expect(orderModes(MODES, 'essay')[0]).toBe('academic');
     expect([...orderModes(MODES, 'essay')].sort()).toEqual([...MODES].sort());
     expect(orderModes(MODES, null)).toEqual(MODES);
-    expect(orderActions('caption')[0]).toBe('shorter');
+    expect(orderActions('caption')[0]).toBe('hook');
+    expect(orderActions('caption')[3]).toBe('shorter');
     expect(orderActions('nonsense')).toEqual(DEFAULT_ACTIONS);
     for (const type of DOC_TYPES) expect([...orderActions(type)].sort()).toEqual([...DEFAULT_ACTIONS].sort());
     expect(isSpoken('script')).toBe(true); expect(isSpoken('caption')).toBe(true); expect(isSpoken('essay')).toBe(false); expect(isSpoken(undefined)).toBe(false);

@@ -10,7 +10,10 @@ export type Draft = { owner: string; revision: number; content: JSONContent; tit
 export type Scope = 'selection' | 'section' | 'document';
 export type SelectionRange = { from: number; to: number; text: string; pmFrom: number; pmTo: number };
 export type SaveState = 'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'offline' | 'conflict' | 'local-unavailable';
-export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | 'natural';
+// catchy, hook and cta are the creator actions (UX 3): Lebih catchy, Jadikan hook, Tambah CTA, on every plan.
+export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | 'natural' | 'catchy' | 'hook' | 'cta';
+export const CREATOR_ACTIONS: readonly InlineAction[] = ['hook', 'catchy', 'cta'];
+export const isCreatorAction = (action: string | undefined) => !!action && (CREATOR_ACTIONS as readonly string[]).includes(action);
 // Where an AI request was started and where its result is shown: on the text itself or in the Assistant panel.
 export type Surface = 'inline' | 'panel';
 
