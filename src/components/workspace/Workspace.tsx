@@ -16,6 +16,7 @@ import { normalizePastedHtml, plainTextSlice } from '@/lib/editor/paste-normaliz
 import { documentExtensions } from '@/lib/editor/extensions';
 import { countCharacters, countWords } from '@/lib/editor/metrics';
 import { firstRunCustomKey, firstRunOverride } from '@/lib/writing/composer';
+import { autosavePreferences, copyPreferences, readMeta, type NotebookMeta } from '@/lib/writing/notebook-meta';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
 import { suggestStyle } from '@/lib/writing/suggest';
@@ -104,6 +105,8 @@ export default function Workspace() {
   const [pageLayout, setPageLayout] = useState<PageLayout>(() => readLayout(undefined, 'id'));
   const [pageCount, setPageCount] = useState(1);
   const [advancedMode, setAdvancedMode] = useState(false);
+  // Kind of writing, word target and brief: kept beside the settings so no save or copy drops them.
+  const [meta, setMeta] = useState<NotebookMeta>({});
   const [text, setText] = useState('');
   const [editStamp, setEditStamp] = useState(0);
   const [metaTick, setMetaTick] = useState(0);
@@ -154,12 +157,13 @@ export default function Workspace() {
   const metaDirty = useRef(false);
   const initializing = useRef(true);
   const inFlight = useRef<Promise<Doc> | null>(null);
-  const latest = useRef({ title, settings, layout: pageLayout, advanced: advancedMode });
-  // Writing settings and page layout share one preferences row; neither may drop the other on save.
-  const savedPreferences = () => ({
-    ...layoutPreferences(latest.current.layout), ...(latest.current.settings as unknown as Record<string, unknown>),
-    [ADVANCED_PREFERENCE]: latest.current.advanced,
-  });
+  const latest = useRef({ title, settings, layout: pageLayout, advanced: advancedMode, meta });
+  // Writing settings, page layout and the notebook facts share one preferences row; none may drop another on save.
+  const savedPreferences = () => autosavePreferences({ settings: latest.current.settings, layout: layoutPreferences(latest.current.layout), advanced: latest.current.advanced, meta: latest.current.meta });
+  // A new notebook made from this one: create refuses layout keys and skill ids the account cannot use, so they stay out.
+  const copiedPreferences = (settingsFor: Settings = latest.current.settings) => copyPreferences(
+    { settings: settingsFor, layout: layoutPreferences(latest.current.layout), advanced: latest.current.advanced, meta: latest.current.meta },
+    { advancedNotebook: has('advanced_notebook'), savedStyles: has('saved_styles') });
   const versionTexts = useRef(new Map<string, string>());
   const autoStarted = useRef(false);
   const arrivingRef = useRef(false);
@@ -186,7 +190,7 @@ export default function Workspace() {
   const rightPanel = usePanelRef();
   const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
-  latest.current = { title, settings, layout: pageLayout, advanced: advancedMode };
+  latest.current = { title, settings, layout: pageLayout, advanced: advancedMode, meta };
   arrivingRef.current = arriving;
   const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null;
   termsRef.current = terms.map((term) => term.term);
@@ -320,8 +324,9 @@ export default function Workspace() {
       setManualBase(base.styleId ? account : { ...base, styleId: null, sample: '' });
       const loadedLayout = readLayout(value.preferences, value.language === 'en' ? 'en' : prefs.interfaceLanguage === 'en' ? 'en' : 'id');
       const loadedAdvanced = (value.preferences as Record<string, unknown> | undefined)?.[ADVANCED_PREFERENCE] === true;
-      setSettings(base); setPageLayout(loadedLayout); setAdvancedMode(loadedAdvanced);
-      latest.current = { title: value.title, settings: base, layout: loadedLayout, advanced: loadedAdvanced };
+      const loadedMeta = readMeta(value.preferences);
+      setSettings(base); setPageLayout(loadedLayout); setAdvancedMode(loadedAdvanced); setMeta(loadedMeta);
+      latest.current = { title: value.title, settings: base, layout: loadedLayout, advanced: loadedAdvanced, meta: loadedMeta };
       editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
       setText(documentText(value.content)); setSave('saved');
       await Promise.all([loadVersions(), loadTerms()]);
@@ -429,8 +434,8 @@ export default function Workspace() {
     router.push(href);
   }
 
-  function markMetadata(nextTitle: string, nextSettings: Settings, nextLayout = latest.current.layout, nextAdvanced = latest.current.advanced) {
-    latest.current = { title: nextTitle, settings: nextSettings, layout: nextLayout, advanced: nextAdvanced };
+  function markMetadata(nextTitle: string, nextSettings: Settings, nextLayout = latest.current.layout, nextAdvanced = latest.current.advanced, nextMeta = latest.current.meta) {
+    latest.current = { title: nextTitle, settings: nextSettings, layout: nextLayout, advanced: nextAdvanced, meta: nextMeta };
     metaDirty.current = true; metaStamp.current++; setMetaTick(metaStamp.current);
     setSave((state) => (state === 'conflict' ? state : 'dirty'));
     if (editor) cache(editor.getJSON());
@@ -693,7 +698,7 @@ export default function Workspace() {
   async function duplicateVersion(version: Version) {
     await run('duplicate', async () => {
       const content = (await request<{ content: JSONContent }>(`/api/documents/${id}/versions/${version.id}`)).content;
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: settings }, newKey());
+      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: copiedPreferences() }, newKey());
       guardedPush(router, `/notebooks/${copy.id}`);
     });
   }
@@ -754,7 +759,7 @@ export default function Workspace() {
     const draft = recovery;
     await run('recover', async () => {
       if (mode === 'copy') {
-        const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: draft.settings }, newKey());
+        const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: copiedPreferences(normalizeSettings(draft.settings)) }, newKey());
         await del(cacheKey.current).catch(() => undefined); setRecovery(null); router.push(`/notebooks/${copy.id}`); return;
       }
       if (mode === 'discard') { await del(cacheKey.current).catch(() => undefined); setRecovery(null); return; }
@@ -768,7 +773,7 @@ export default function Workspace() {
   async function copyAsNew() {
     if (!editor) return;
     await run('copy', async () => {
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: settings }, newKey());
+      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: copiedPreferences() }, newKey());
       dirty.current = false; metaDirty.current = false; await del(cacheKey.current).catch(() => undefined); router.push(`/notebooks/${copy.id}`);
     });
   }
