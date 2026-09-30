@@ -1,4 +1,4 @@
-# AI Writing Workspace
+# Tulis Lab
 
 Ruang kerja menulis Indonesia-first (ID/EN): enam mode (Standar, Akademik, Humanize, Profesional, Kreatif, Sederhanakan) + Kustom, pratinjau sebelum diterapkan, kunci istilah & sitasi, riwayat versi, bandingkan versi, dan analisis lokal. Stack: Next.js (vinext) di Cloudflare Workers, D1, R2, Tiptap, Tailwind CSS v4, lucide-react, OpenRouter.
 

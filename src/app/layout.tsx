@@ -3,7 +3,7 @@ import type { Metadata, Viewport } from 'next';
 import { LocaleProvider } from '@/lib/client/locale';
 
 export const metadata: Metadata = {
-  title: { default: 'AI Writing Workspace', template: '%s · AI Writing Workspace' },
+  title: { default: 'Tulis Lab', template: '%s · Tulis Lab' },
   icons: { icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }] },
   description: 'Ruang kerja menulis berbahasa Indonesia: parafrase, akademik, humanize, dengan pratinjau, kunci istilah, dan riwayat versi.',
 };

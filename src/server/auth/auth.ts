@@ -47,7 +47,7 @@ export function auth() {
     emailAndPassword: {
       enabled: true, minPasswordLength: 10, maxPasswordLength: 128, resetPasswordTokenExpiresIn: 3600,
       sendResetPassword: async ({ user, url }) => deliver(user.email, {
-        subject: "Reset password · AI Writing Workspace", url,
+        subject: "Reset password · Tulis Lab", url,
         heading: { id: "Reset password", en: "Reset your password" },
         body: { id: `Halo ${user.name}, kami menerima permintaan untuk mengganti password akunmu.`, en: `Hi ${user.name}, we received a request to reset your account password.` },
         action: { id: "Buat password baru", en: "Create a new password" },
@@ -57,7 +57,7 @@ export function auth() {
     emailVerification: {
       sendOnSignUp: false,
       sendVerificationEmail: async ({ user, url }) => deliver(user.email, {
-        subject: "Verifikasi email · AI Writing Workspace", url,
+        subject: "Verifikasi email · Tulis Lab", url,
         heading: { id: "Verifikasi alamat email", en: "Verify your email address" },
         body: { id: `Halo ${user.name}, klik tombol di bawah untuk memverifikasi ${user.email}.`, en: `Hi ${user.name}, click the button below to verify ${user.email}.` },
         action: { id: "Verifikasi email", en: "Verify email" },

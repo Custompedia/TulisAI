@@ -5,13 +5,13 @@ import { raisedBlack } from './Button';
 export function Logo({ href = '/', tone = 'dark', compact = false, mark = 'h-8 w-8' }: { href?: string; tone?: 'dark' | 'light'; compact?: boolean; mark?: string }) {
   const light = tone === 'light';
   return (
-    <Link href={href} className="group inline-flex items-center gap-2.5 rounded-lg" aria-label="AI Writing Workspace">
+    <Link href={href} className="group inline-flex items-center gap-2.5 rounded-lg" aria-label="Tulis Lab">
       <span className={`grid ${mark} place-items-center rounded-lg ${light ? 'bg-white text-ink-950' : raisedBlack}`}>
         <Feather size={17} strokeWidth={2.2} aria-hidden="true" />
       </span>
       {!compact && (
         <span className={`text-[15px] font-semibold tracking-tight ${light ? 'text-white' : 'text-ink-950'}`}>
-          AI Writing <span className={light ? 'text-brand-200' : 'text-brand-600'}>Workspace</span>
+          Tulis <span className={light ? 'text-brand-200' : 'text-brand-600'}>Lab</span>
         </span>
       )}
     </Link>

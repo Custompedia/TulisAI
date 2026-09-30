@@ -1,4 +1,4 @@
-# AI Writing Workspace — setup lokal
+# Tulis Lab — setup lokal
 
 Dokumen ini menjelaskan setup lokal untuk core MVP. Kredensial Google OAuth, OpenRouter, dan resource Cloudflare belum tersedia pada workspace ini; login username/password memakai D1 lokal dengan secret lokal; Google dan AI memerlukan kredensial tambahan. Tidak ada klaim bahwa deployment production sudah berhasil.
 
@@ -163,3 +163,4 @@ Setelah resource tersedia, verifikasi login/callback, CRUD dan restore akun uji,
 - Email belum dikonfigurasi (`EMAIL_FROM` masih placeholder), jadi reset password lewat email belum tersedia; admin bisa mengganti password pengguna dari panel admin.
 - Pembayaran tertutup (`TULISAI_COMMERCE_CHECKOUT_ENABLED="false"`, belum ada `MIDTRANS_SERVER_KEY`). Paket bisa diberikan admin lewat tab Paket.
 - Admin tidak di-bootstrap otomatis dan email admin tidak disimpan di repo (repo publik): akun dipromosikan satu per satu di D1 setelah pemiliknya mendaftar dan owner mengonfirmasi.
+- Nama produk sejak 30 September 2026: **Tulis Lab** (sebelumnya AI Writing Workspace / TulisAI). Domain, logo dan warna tetap. Identitas teknis sengaja tidak diganti: Worker/D1 `tulisai`, R2 `tulisai-documents`, kode aplikasi `tulisai` di data wallet dan periode akses, variabel `TULISAI_COMMERCE_CHECKOUT_ENABLED`, prefix pesanan `TA-`.

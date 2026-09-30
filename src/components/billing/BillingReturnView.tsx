@@ -55,7 +55,7 @@ export function BillingReturnView() {
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           {order?.status === 'pending' && order.payUrl && <a className={buttonClass('primary')} href={order.payUrl}>{t('Lanjutkan pembayaran', 'Continue payment')}</a>}
           {(order?.status === 'pending' || error) && <Button icon={RotateCw} loading={busy} onClick={() => void check()}>{t('Cek lagi', 'Check again')}</Button>}
-          <Link className={buttonClass(order?.status === 'paid' ? 'primary' : 'secondary')} href="/app">{t('Kembali ke TulisAI', 'Back to TulisAI')}</Link>
+          <Link className={buttonClass(order?.status === 'paid' ? 'primary' : 'secondary')} href="/app">{t('Kembali ke Tulis Lab', 'Back to Tulis Lab')}</Link>
         </div>
       </section>
     </main>
