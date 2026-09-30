@@ -1,3 +1,4 @@
+import { isReferenceHeading } from '@/lib/editor/document';
 import type { Version } from './types';
 import { WORKING } from './types';
 
@@ -70,14 +71,14 @@ export function draftSpotAt(blocks: Block[], position: number): DraftSpot | null
   if (index < 0) return null;
   const block = blocks[index]!;
   if (block.type === 'heading') {
-    if (!block.text.trim()) return null;
+    if (!block.text.trim() || isReferenceHeading(block.text)) return null;
     for (let next = index + 1; next < blocks.length && blocks[next]!.type !== 'heading'; next++) if (blocks[next]!.text.trim()) return null;
     return { pos: block.pos + 1, heading: block.text.trim(), headingPos: block.pos };
   }
   if (block.type !== 'paragraph' || block.text || block.size !== 2) return null;
   for (let previous = index - 1; previous >= 0; previous--) {
     const heading = blocks[previous]!;
-    if (heading.type === 'heading') return heading.text.trim() ? { pos: block.pos + 1, heading: heading.text.trim(), headingPos: heading.pos } : null;
+    if (heading.type === 'heading') return heading.text.trim() && !isReferenceHeading(heading.text) ? { pos: block.pos + 1, heading: heading.text.trim(), headingPos: heading.pos } : null;
   }
   return null;
 }

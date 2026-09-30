@@ -19,6 +19,7 @@ import { IconButton } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 import { modeLabel, modeToneClass } from '@/components/writing/modes';
 import { outlineSections, type OutlineSection } from './editor-rules';
+import { isReferenceHeading } from '@/lib/editor/document';
 import type { Term } from './types';
 
 type Props = {
@@ -228,7 +229,7 @@ function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess, onD
               <button type="button" role="menuitem" onClick={() => select(item)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-ink-700 hover:bg-paper-deep"><TextSelect size={14} aria-hidden="true" />{t('Pilih bagian ini', 'Select this section')}</button>
               <button type="button" role="menuitem" onClick={() => copy(item)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-ink-700 hover:bg-paper-deep"><Copy size={14} aria-hidden="true" />{t('Salin bagian', 'Copy section')}</button>
               {onProcess && item.words > 0 && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onProcess(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><Sparkles size={14} aria-hidden="true" />{t('Olah bagian ini dengan AI', 'Work on this section with AI')}</button>}
-              {onDraft && item.words === 0 && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onDraft(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><PenLine size={14} aria-hidden="true" /><span className="flex-1 text-left">{t('Tulis bagian ini', 'Write this section')}</span>{draftLocked && <PaidLock size={12} />}</button>}
+              {onDraft && item.words === 0 && !isReferenceHeading(item.text) && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onDraft(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><PenLine size={14} aria-hidden="true" /><span className="flex-1 text-left">{t('Tulis bagian ini', 'Write this section')}</span>{draftLocked && <PaidLock size={12} />}</button>}
             </div>
           )}
         </li>

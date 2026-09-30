@@ -123,6 +123,12 @@ describe('UX 3: structured insert', () => {
     const filled = EditorDocumentSchema.parse({ type: 'doc', content: [{ type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: 'Isi' }] }, { type: 'paragraph', content: [{ type: 'text', text: 'Sudah ada.' }] }] });
     expect(draftTarget(filled, 2)).toBeNull();
     expect(draftTarget(filled, 6)).toBeNull();
+    // A reference list is never drafted, not even as an outline section of its own.
+    const essay = EditorDocumentSchema.parse(skeletonDocument('essay', 'id'));
+    const essayText = documentText(essay);
+    expect(draftTarget(essay, essayText.indexOf('Daftar Pustaka') + 3)).toBeNull();
+    expect(draftTarget(essay, essayText.indexOf('Bab I Pendahuluan') + 3)).toMatchObject({ kind: 'heading' });
+    expect(draftSpotAt([{ type: 'heading', text: 'Daftar Pustaka', pos: 0, size: 16 }, { type: 'paragraph', text: '', pos: 16, size: 2 }], 17)).toBeNull();
   });
 
   it('inserts paragraphs, subheadings and lists as real nodes, filling the outline line', () => {

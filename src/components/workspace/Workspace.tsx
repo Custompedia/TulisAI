@@ -592,6 +592,8 @@ export default function Workspace() {
     const label = t('Draf', 'Draft');
     openRight('assistant'); setInline(null);
     if (!spot) { setAiError(t('Letakkan kursor di judul bagian yang masih kosong, atau di baris kosong di bawah sebuah judul.', 'Put the cursor on a heading whose section is still empty, or on an empty line under a heading.')); return; }
+    // The caret moves to the section being written, so the result and the Asisten talk about the same place.
+    if (position !== undefined) { editor.chain().setTextSelection(spot.pos).run(); setCaret(spot.pos); setSelection(null); }
     const facts = latest.current.meta;
     if (!facts.briefTopic?.trim() && !facts.briefMessage?.trim()) { openBrief(); setAiError(t('Isi Topik atau Pesan utama di Brief dulu, lalu tulis bagian ini.', 'Fill in the Topic or the Key message in the Brief first, then write this section.')); return; }
     setBusy('generate'); setAiError(''); setLastRequest({ scope: 'section', surface: 'panel', label, draft: spot.pos });

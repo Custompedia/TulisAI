@@ -173,6 +173,8 @@ function topLevelIndex(doc:PMNode,at:number):number {
   const $pos=doc.resolve(span.pmFrom+Math.min(at-span.from,span.to-span.from));
   return Math.min($pos.index(0),doc.childCount-1);
 }
+// A reference list is the writer's own sources: Draf dari brief never writes one, not even as a section of the outline.
+export const isReferenceHeading=(text:string)=>/^(?:daftar pustaka|daftar rujukan|referensi|rujukan|bibliografi|references?|bibliography|works cited)$/iu.test(text.trim());
 const isEmptyParagraph=(node:PMNode|null|undefined)=>!!node&&node.type.name==='paragraph'&&node.content.size===0;
 export type DraftTarget = { index:number; kind:'heading'|'empty'; heading:{text:string;level:number}; outline:string[]; before:string; after:string };
 // Where Draf dari brief may write: on a heading whose section is still empty (the draft goes under it), or on an
@@ -192,7 +194,7 @@ export function draftTarget(document:unknown,at:number):DraftTarget|null {
     kind='empty';
     for(let previous=index-1;previous>=0;previous--)if(blocks[previous]!.type.name==='heading'){headingIndex=previous;break;}
   } else return null;
-  if(headingIndex<0||!texts[headingIndex])return null;
+  if(headingIndex<0||!texts[headingIndex]||isReferenceHeading(texts[headingIndex]!))return null;
   const clipEnd=(value:string,size:number)=>value.length<=size?value:value.slice(value.length-size).replace(/^\S*\s/u,'');
   const clipStart=(value:string,size:number)=>value.length<=size?value:value.slice(0,size).replace(/\s\S*$/u,'');
   return {
