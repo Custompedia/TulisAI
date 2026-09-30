@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpRight, Gauge, Palette, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
+import { ArrowUpRight, Gauge, Palette, PenLine, RotateCw, Save, ShieldCheck, SlidersHorizontal, Trash2, UserRound, type LucideIcon } from 'lucide-react';
 import { delMany, keys } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
@@ -11,12 +11,16 @@ import { AppShell, useSessionGuard, useShell, type UserSettings } from '@/compon
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Toast } from '@/components/ui/Toast';
-import { inputClass, Segmented } from '@/components/ui/Field';
+import { FieldLabel, inputClass, Segmented } from '@/components/ui/Field';
+import { HintSelect } from '@/components/ui/HintSelect';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { ProfileCard, ProfileError, ProfileSkeleton, type AccountDetails, type Notice } from '@/components/settings/ProfileCard';
 import { StylesCard } from '@/components/settings/StylesCard';
+import { contextOptions, languageOptions, modeHint, modeLabel } from '@/components/writing/modes';
+import { modeFromPrompt } from '@/lib/writing/settings';
+import { accountDefaultMode, DEFAULT_MODE_PROMPTS, DISPLAY_PREFERENCE_KEYS, groupChanged, resetGroup, WRITING_PREFERENCE_KEYS } from '@/lib/writing/preferences';
 
-const TABS = ['profil', 'skills', 'preferensi', 'pemakaian', 'privasi'] as const;
+const TABS = ['profil', 'skills', 'menulis', 'preferensi', 'pemakaian', 'privasi'] as const;
 type Tab = (typeof TABS)[number];
 const tabFromHash = (hash: string): Tab => { const value = hash.replace(/^#/, ''); return value === 'bahasa' ? 'preferensi' : (TABS as readonly string[]).includes(value) ? value as Tab : 'profil'; };
 
@@ -44,12 +48,15 @@ function SettingsView() {
   const [loadError, setLoadError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [form, setForm] = useState<UserSettings>(settings);
+  const [form, setForm] = useState<UserSettings>(() => ({ ...settings, defaultMode: accountDefaultMode(settings.defaultMode) }));
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmText, setConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
-  const dirty = JSON.stringify(form) !== JSON.stringify(settings);
+  // Each card saves the whole preferences row but only reports and discards its own fields.
+  const baseline: UserSettings = { ...settings, defaultMode: accountDefaultMode(settings.defaultMode) };
+  const writingDirty = groupChanged(form, baseline, WRITING_PREFERENCE_KEYS);
+  const displayDirty = groupChanged(form, settings, DISPLAY_PREFERENCE_KEYS);
   const deleteKeyword = account?.username || user.username || user.name;
   const isConfirmValid = Boolean(deleteKeyword && confirmText.trim().replace(/^["']|["']$/g, '').toLowerCase() === deleteKeyword.toLowerCase());
   const en = locale === 'en';
@@ -101,9 +108,9 @@ function SettingsView() {
   async function save() {
     setSaving(true);
     try {
-      const saved = await request<UserSettings>('/api/settings', 'PATCH', form, newKey());
+      const saved = await request<UserSettings>('/api/settings', 'PATCH', { ...form, defaultMode: accountDefaultMode(form.defaultMode) }, newKey());
       if (!saved.localDrafts) await clearLocalDrafts().catch(() => undefined);
-      setSettings(saved); setForm(saved); setLocale(saved.interfaceLanguage);
+      setSettings(saved); setForm({ ...saved, defaultMode: accountDefaultMode(saved.defaultMode) }); setLocale(saved.interfaceLanguage);
       setNotice({ tone: 'success', message: saved.interfaceLanguage === 'en' ? 'Settings saved.' : 'Pengaturan tersimpan.' });
     } catch (caught) { if (!guard(caught)) setNotice({ tone: 'error', title: t('Pengaturan belum tersimpan', 'Settings not saved'), message: errorText(caught, en) }); }
     finally { setSaving(false); }
@@ -122,7 +129,8 @@ function SettingsView() {
   const nav: Array<{ id: Tab; icon: LucideIcon; label: string }> = [
     { id: 'profil', icon: UserRound, label: t('Profil', 'Profile') },
     { id: 'skills', icon: Palette, label: 'Skills' },
-    { id: 'preferensi', icon: SlidersHorizontal, label: t('Preferensi', 'Preferences') },
+    { id: 'menulis', icon: PenLine, label: t('Preferensi menulis', 'Writing preferences') },
+    { id: 'preferensi', icon: SlidersHorizontal, label: t('Tampilan & perangkat', 'Display & device') },
     { id: 'pemakaian', icon: Gauge, label: t('Pemakaian AI', 'AI usage') },
     { id: 'privasi', icon: ShieldCheck, label: t('Privasi & data', 'Privacy & data') },
   ];
@@ -166,12 +174,45 @@ function SettingsView() {
 
           {tab === 'skills' && <StylesCard />}
 
-          {tab === 'preferensi' && (
-            <Card title={t('Preferensi', 'Preferences')} description={t('Tampilan aplikasi dan penyimpanan di perangkat ini.', 'App display and storage on this device.')}
+          {tab === 'menulis' && (
+            <Card title={t('Preferensi menulis', 'Writing preferences')} description={t('Bawaan untuk notebook dan teks baru. Tiap notebook tetap bisa diatur sendiri di panel Asisten.', 'Defaults for new notebooks and text. Each notebook can still be set on its own in the Assistant panel.')}
               footer={<>
-                {dirty && !saving && <p className="mr-auto text-sm text-ink-500">{t('Ada perubahan yang belum disimpan.', 'You have unsaved changes.')}</p>}
-                <Button disabled={!dirty || saving} onClick={() => setForm(settings)}>{t('Batalkan', 'Discard')}</Button>
-                <Button variant="primary" icon={Save} loading={saving} disabled={!dirty} onClick={() => void save()}>{t('Simpan pengaturan', 'Save settings')}</Button>
+                {writingDirty && !saving && <p className="mr-auto text-sm text-ink-500">{t('Ada perubahan yang belum disimpan.', 'You have unsaved changes.')}</p>}
+                <Button disabled={!writingDirty || saving} onClick={() => setForm(resetGroup(form, baseline, WRITING_PREFERENCE_KEYS))}>{t('Batalkan', 'Discard')}</Button>
+                <Button variant="primary" icon={Save} loading={saving} disabled={!writingDirty} onClick={() => void save()}>{t('Simpan pengaturan', 'Save settings')}</Button>
+              </>}>
+              <div className="space-y-5">
+                <div>
+                  <p className="text-sm font-semibold text-ink-900">{t('Bahasa tulisan', 'Writing language')}</p>
+                  <p className="mt-0.5 text-[13px] text-ink-500">{t('Bahasa hasil AI. Auto mendeteksinya dari teks.', 'The language of AI results. Auto detects it from the text.')}</p>
+                  <div className="mt-2.5 max-w-sm"><Segmented label={t('Bahasa tulisan', 'Writing language')} value={form.writingLanguage} onChange={(value) => setForm({ ...form, writingLanguage: value })} options={languageOptions(t).map(({ value, label }) => ({ value, label }))} /></div>
+                </div>
+                <div className="max-w-sm">
+                  <FieldLabel htmlFor="settings-default-mode">{t('Mode awal', 'Starting mode')}</FieldLabel>
+                  <HintSelect id="settings-default-mode" label={t('Mode awal', 'Starting mode')} value={form.defaultMode} onChange={(value) => setForm({ ...form, defaultMode: value })}
+                    options={DEFAULT_MODE_PROMPTS.map((prompt) => { const mode = modeFromPrompt(prompt) ?? 'humanize'; return { value: prompt, label: modeLabel(mode, t), hint: modeHint(mode, t) }; })} />
+                  <p className="mt-1.5 text-[13px] text-ink-500">{t('Mode yang terpilih saat membuka Beranda dan notebook baru.', 'The mode selected when you open Home and new notebooks.')}</p>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink-900">{t('Konteks Humanize', 'Humanize context')}</p>
+                  <p className="mt-0.5 text-[13px] text-ink-500">{t('Register bawaan saat memakai mode Humanize.', 'The default register for the Humanize mode.')}</p>
+                  <div className="mt-2.5 max-w-sm"><Segmented label={t('Konteks Humanize', 'Humanize context')} value={form.humanizerContext} onChange={(value) => setForm({ ...form, humanizerContext: value })} options={contextOptions(t).map(({ value, label }) => ({ value: value as UserSettings['humanizerContext'], label }))} /></div>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-ink-900">{t('Penggunaan utama', 'Main use')}</p>
+                  <p className="mt-0.5 text-[13px] text-ink-500">{t('Jenis tulisan yang paling sering kamu olah.', 'The kind of writing you work on most.')}</p>
+                  <div className="mt-2.5 max-w-sm"><Segmented label={t('Penggunaan utama', 'Main use')} value={form.primaryUseCase} onChange={(value) => setForm({ ...form, primaryUseCase: value })} options={[{ value: 'academic', label: t('Akademik', 'Academic') }, { value: 'professional', label: t('Profesional', 'Professional') }, { value: 'general', label: t('Umum', 'General') }]} /></div>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {tab === 'preferensi' && (
+            <Card title={t('Tampilan & perangkat', 'Display & device')} description={t('Tampilan aplikasi dan penyimpanan di perangkat ini.', 'App display and storage on this device.')}
+              footer={<>
+                {displayDirty && !saving && <p className="mr-auto text-sm text-ink-500">{t('Ada perubahan yang belum disimpan.', 'You have unsaved changes.')}</p>}
+                <Button disabled={!displayDirty || saving} onClick={() => setForm(resetGroup(form, settings, DISPLAY_PREFERENCE_KEYS))}>{t('Batalkan', 'Discard')}</Button>
+                <Button variant="primary" icon={Save} loading={saving} disabled={!displayDirty} onClick={() => void save()}>{t('Simpan pengaturan', 'Save settings')}</Button>
               </>}>
               <div className="space-y-5">
                 <div>
@@ -191,8 +232,8 @@ function SettingsView() {
             <Card title={t('Pemakaian AI', 'AI usage')} description={usage ? (usage.characterScope === 'account' ? t('Jatah sekali pakai untuk akun ini', 'A one-time allowance for this account') : `${t('Periode', 'Period')} ${usage.period} (UTC)`) : undefined}>
               {usage ? (
                 <>
-                  <div className="flex items-end justify-between"><p className="text-3xl font-bold text-ink-950">{numberFormat(usage.charactersUsed, locale)}<span className="text-base font-medium text-ink-400"> / {usage.unlimited ? '∞' : numberFormat(usage.characterLimit, locale)}</span></p><p className="text-sm text-ink-500">{usage.unlimited ? t('Tanpa batas', 'Unlimited') : `${numberFormat(usage.charactersRemaining, locale)} ${t('karakter tersisa', 'characters remaining')}`}</p></div>
-                  {!usage.unlimited && <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper-deep"><div className={`h-full rounded-full ${usedPercent >= 90 ? 'bg-amber-500' : 'bg-brand-600'}`} style={{ width: `${usedPercent}%` }} /></div>}
+                  <div className="flex items-end justify-between"><p className="text-3xl font-bold text-ink-950">{numberFormat(usage.charactersUsed, locale)}<span className="text-base font-medium text-ink-400"> / {numberFormat(usage.characterLimit, locale)}</span></p><p className="text-sm text-ink-500">{`${numberFormat(usage.charactersRemaining, locale)} ${t('karakter tersisa', 'characters remaining')}`}</p></div>
+                  <div className="mt-3 h-2 overflow-hidden rounded-full bg-paper-deep"><div className={`h-full rounded-full ${usedPercent >= 90 ? 'bg-amber-500' : 'bg-brand-600'}`} style={{ width: `${usedPercent}%` }} /></div>
                   <p className="mt-3 text-[13px] text-ink-500">{t('Yang dihitung hanya teks sumber yang berhasil diproses. Perbaikan otomatis, percobaan gagal, mengetik, riwayat, dan perbandingan tidak dihitung.', 'Only source text that was processed successfully is counted. Automatic repairs, failed attempts, typing, history, and comparisons are never counted.')}</p>
                 </>
               ) : (
