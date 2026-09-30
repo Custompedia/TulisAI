@@ -28,7 +28,8 @@ export type AiMetrics = {
   byError: Array<{ errorCode: string; count: number }>;
   topUsers: Array<{ id: string; name: string; email: string; role: Role; tier: Tier; requests: number; failed: number; tokens: number }>;
 };
-export const ADMIN_ACTIONS = ['user.create', 'user.update', 'user.role', 'user.ban', 'user.unban', 'user.password', 'user.delete', 'session.revoke', 'session.revoke-all', 'plan.admin.activated', 'plan.admin.extended', 'plan.admin.replaced', 'plan.admin.ended'] as const;
+export const ADMIN_ACTIONS = ['user.create', 'user.update', 'user.role', 'user.ban', 'user.unban', 'user.password', 'user.delete', 'session.revoke', 'session.revoke-all', 'plan.admin.activated', 'plan.admin.extended', 'plan.admin.replaced', 'plan.admin.ended',
+  'payment.plan.activated', 'payment.plan.renewed', 'payment.topup.credited', 'payment.needs_operator', 'payment.refund.topup_reversed', 'payment.refund.needs_operator', 'payment.mode_mismatch', 'payment.amount_mismatch'] as const;
 export const sortLabel = (sort: UserSort, t: T) => ({ newest: t('Terbaru bergabung', 'Newest'), oldest: t('Terlama bergabung', 'Oldest'), name: t('Nama A–Z', 'Name A–Z'), usage: t('AI terbanyak bulan ini', 'Most AI this month'), active: t('Terakhir aktif', 'Recently active') })[sort];
 export const promptLabel = (promptId: string) => ({ P01_STANDARD_REWRITE: 'Parafrase', P02_ACADEMIC: 'Akademik', P03_HUMANIZER: 'Humanize', P04_PROFESSIONAL: 'Profesional', P05_CREATIVE: 'Kreatif', P06_SIMPLIFY: 'Sederhanakan', P07_INLINE_ALTERNATIVES: 'Alternatif inline', P08_CUSTOM_TRANSFORM: 'Sesuaikan', P09_QUALITY_EVALUATION: 'Analisis kualitas', P10_REPAIR: 'Perbaikan', generate: 'Rewrite', repair: 'Perbaikan', analyze: 'Analisis' } as Record<string, string>)[promptId] ?? promptId;
 
@@ -41,6 +42,10 @@ export const actionLabel = (action: string, t: T) => ({
   'session.revoke': t('Mencabut satu sesi', 'Revoked a session'), 'session.revoke-all': t('Mencabut semua sesi', 'Revoked all sessions'),
   'plan.admin.activated': t('Mengaktifkan paket', 'Activated a plan'), 'plan.admin.extended': t('Memperpanjang paket', 'Extended the plan'),
   'plan.admin.replaced': t('Mengganti paket', 'Replaced the plan'), 'plan.admin.ended': t('Mengakhiri paket', 'Ended the plan'),
+  'payment.plan.activated': t('Membayar paket', 'Paid for a plan'), 'payment.plan.renewed': t('Memperpanjang paket (bayar)', 'Renewed a plan (paid)'),
+  'payment.topup.credited': t('Membeli tambahan karakter', 'Bought a top-up'), 'payment.needs_operator': t('Pembayaran perlu tindakan', 'Payment needs action'),
+  'payment.refund.topup_reversed': t('Refund tambahan karakter', 'Top-up refunded'), 'payment.refund.needs_operator': t('Refund paket perlu tindakan', 'Plan refund needs action'),
+  'payment.mode_mismatch': t('Mode pembayaran tidak cocok', 'Payment mode mismatch'), 'payment.amount_mismatch': t('Jumlah pembayaran tidak cocok', 'Payment amount mismatch'),
 }[action] ?? action);
 export const statusLabel = (status: string, t: T) => ({ completed: t('Selesai', 'Completed'), failed: t('Gagal', 'Failed'), reserved: t('Berjalan', 'Running') }[status] ?? status);
 export const operationLabel = (operation: string, t: T) => ({ generate: t('Rewrite', 'Rewrite'), repair: t('Perbaikan', 'Repair'), analyze: t('Analisis', 'Analysis') }[operation] ?? operation);
