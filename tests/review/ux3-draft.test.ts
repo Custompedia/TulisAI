@@ -15,6 +15,7 @@ import { draftTarget, documentText, insertBlocksAt } from '@/lib/editor/document
 import { skeletonDocument } from '@/lib/writing/doc-types';
 import { DRAFT_RESERVE_CHARACTERS, DRAFT_TARGET_CHARACTERS, PLAN_LIMITS, requiredTierFor } from '@/lib/plans';
 import { EditorDocumentSchema } from '@/lib/contracts';
+import { draftSpotAt, firstDraftSpot } from '@/components/workspace/editor-rules';
 
 let db: DatabaseSync;
 beforeEach(() => { const made = testEnv(); db = made.db; state.env = made.env; made.addUser('plus-a'); made.addUser('free-a'); made.addUser('admin-1', 'admin'); });
@@ -134,6 +135,25 @@ describe('UX 3: structured insert', () => {
     expect(result.content[at + 2]).toMatchObject({ type: 'heading', attrs: { level: 3 } });
     expect(result.content.length).toBe(skeleton.content.length + 3);
     expect(JSON.stringify(result)).not.toContain('hardBreak');
+  });
+});
+
+describe('UX 3: where "Tulis bagian ini" is offered in the editor', () => {
+  const blocks = [
+    { type: 'heading', text: 'Hook', pos: 0, size: 6 }, { type: 'paragraph', text: 'Sudah ada', pos: 6, size: 11 },
+    { type: 'heading', text: 'Masalah', pos: 17, size: 9 }, { type: 'paragraph', text: '', pos: 26, size: 2 },
+    { type: 'heading', text: 'CTA', pos: 28, size: 5 },
+  ];
+  it('offers a heading with an empty section and an empty line under a heading, never written text', () => {
+    expect(draftSpotAt(blocks, 2)).toBeNull();
+    expect(draftSpotAt(blocks, 8)).toBeNull();
+    expect(draftSpotAt(blocks, 18)).toEqual({ pos: 18, heading: 'Masalah', headingPos: 17 });
+    expect(draftSpotAt(blocks, 27)).toEqual({ pos: 27, heading: 'Masalah', headingPos: 17 });
+    expect(draftSpotAt(blocks, 30)).toEqual({ pos: 29, heading: 'CTA', headingPos: 28 });
+  });
+  it('picks the first section nobody has written for "Tulis bagian pertama"', () => {
+    expect(firstDraftSpot(blocks)).toEqual({ pos: 18, heading: 'Masalah', headingPos: 17 });
+    expect(firstDraftSpot(blocks.slice(0, 2))).toBeNull();
   });
 });
 

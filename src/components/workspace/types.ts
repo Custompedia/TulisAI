@@ -14,10 +14,14 @@ export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | '
 // Where an AI request was started and where its result is shown: on the text itself or in the Assistant panel.
 export type Surface = 'inline' | 'panel';
 
-export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean; suggested_title?: string };
+// A Draf dari brief result (UX 3): the section as blocks, inserted as real editor nodes when applied.
+export type DraftBlock = { type: 'paragraph' | 'subheading' | 'bullet_list' | 'numbered_list'; text: string; items: string[] };
+export type PreviewOutput = { transformed_text?: string; alternatives?: Array<{ text: string; variation_level?: string }>; warnings?: string[]; change_categories?: string[]; no_change_needed?: boolean; exceeds_preservation?: boolean; suggested_title?: string; blocks?: DraftBlock[]; repaired?: number };
 export type Preview = {
   id: string; output: PreviewOutput; expiresAt: string; source: string; stamp: number; anchor?: { from: number; to: number };
   settings: Settings; scope: Scope; revision: number; inlineAction?: InlineAction; surface: Surface; label?: string;
+  // Set for a draft: the section it was written for, whether the academic guard applied, and where to retry.
+  draft?: { heading: string; academic: boolean; pos: number };
 };
 
 // A comparison side is a version id, the live working copy, or an AI preview.
@@ -32,5 +36,6 @@ export type QualityItem = { value: QualityBand; reason: string };
 // Accepts the v3 flat shape and a `dimensions` wrapper.
 export type Quality = Partial<Record<QualityDimension, QualityItem>> & { dimensions?: Partial<Record<QualityDimension, QualityItem>>; warnings?: string[]; analyzedRevision?: number };
 
+export const draftPlainText = (blocks: DraftBlock[]) => blocks.flatMap((block) => (block.type === 'bullet_list' || block.type === 'numbered_list' ? block.items.map((item) => `- ${item}`) : [block.text])).join('\n');
 export const previewText = (preview: Preview, alternative = 0) =>
-  preview.output.alternatives?.[alternative]?.text ?? preview.output.transformed_text ?? '';
+  preview.output.alternatives?.[alternative]?.text ?? preview.output.transformed_text ?? (preview.output.blocks ? draftPlainText(preview.output.blocks) : '');

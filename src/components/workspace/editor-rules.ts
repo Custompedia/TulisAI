@@ -60,6 +60,32 @@ export function outlineSections(blocks: Array<{ type: string; level?: number; te
   return sections;
 }
 
+// UX 3, "Tulis bagian ini": where Draf dari brief may write, mirroring draftTarget on the server. The caret's block
+// must be a heading whose section is still empty, or an empty paragraph under a heading. `pos` is a position inside
+// that block (turned into a plain-text offset when the request is sent), `heading` the section it belongs to.
+export type DraftSpot = { pos: number; heading: string; headingPos: number };
+export function draftSpotAt(blocks: Block[], position: number): DraftSpot | null {
+  const index = blocks.findIndex((block) => position >= block.pos && position <= block.pos + block.size);
+  if (index < 0) return null;
+  const block = blocks[index]!;
+  if (block.type === 'heading') {
+    if (!block.text.trim()) return null;
+    for (let next = index + 1; next < blocks.length && blocks[next]!.type !== 'heading'; next++) if (blocks[next]!.text.trim()) return null;
+    return { pos: block.pos + 1, heading: block.text.trim(), headingPos: block.pos };
+  }
+  if (block.type !== 'paragraph' || block.text || block.size !== 2) return null;
+  for (let previous = index - 1; previous >= 0; previous--) {
+    const heading = blocks[previous]!;
+    if (heading.type === 'heading') return heading.text.trim() ? { pos: block.pos + 1, heading: heading.text.trim(), headingPos: heading.pos } : null;
+  }
+  return null;
+}
+// The first outline section nobody has written yet, for "Tulis bagian pertama".
+export function firstDraftSpot(blocks: Block[]): DraftSpot | null {
+  for (const block of blocks) if (block.type === 'heading') { const spot = draftSpotAt(blocks, block.pos + 1); if (spot) return spot; }
+  return null;
+}
+
 // "Bagian ini": the run of blocks between two headings that holds the caret (or follows the heading it sits on).
 // Headings are never part of it, so applying a multi-paragraph result keeps every heading in place; the run stops
 // at the next heading of any level so a subheading is never flattened either. Positions are ProseMirror offsets

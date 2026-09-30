@@ -3,12 +3,13 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
-import { ArrowLeft, ChevronDown, ChevronsLeft, Copy, Heading, LockKeyhole, MoreHorizontal, NotebookPen, Plus, Search, Sparkles, Target, TextSelect, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronsLeft, Copy, Heading, LockKeyhole, MoreHorizontal, NotebookPen, PenLine, Plus, Search, Sparkles, Target, TextSelect, X } from 'lucide-react';
+import { PaidLock } from '@/components/app/PaidLock';
 import { useLocale } from '@/lib/client/locale';
 import { request } from '@/lib/client/api';
 import { numberFormat, relativeTime } from '@/lib/client/format';
 import { clampDocPanelWidth, DOC_PANEL_MAX_WIDTH, DOC_PANEL_MIN_WIDTH } from '@/lib/navigation/doc-panel';
-import { BRIEF_KEYS, META_VALUE_LIMIT, WORD_TARGET_MAX, type BriefKey, type NotebookMeta } from '@/lib/writing/notebook-meta';
+import { BRIEF_KEYS, BRIEF_VALUE_LIMIT, WORD_TARGET_MAX, type BriefKey, type NotebookMeta } from '@/lib/writing/notebook-meta';
 import { docTypeShort, isDocType } from '@/lib/writing/doc-types';
 import { PICKER_SEARCH_DELAY_MS, searchQuery } from '@/lib/navigation/library';
 import type { Mode } from '@/lib/writing/settings';
@@ -27,6 +28,9 @@ type Props = {
   onCopied: (message: string) => void;
   // "Olah bagian ini dengan AI": puts the Asisten on the section under the heading at this position.
   onProcessSection?: (headingPos: number) => void;
+  // UX 3, Draf dari brief: "Tulis bagian ini" on a section with no words yet, and "Tulis bagian pertama" under the
+  // Brief. `draftLocked` shows both with a padlock that opens the plans. `briefOpen` unfolds the Brief on arrival.
+  onDraftSection?: (headingPos: number) => void; onDraftFirst?: () => void; draftLocked?: boolean; briefOpen?: boolean;
   // « on desktop, X in the phone sheet.
   onClose: () => void; sheet?: boolean;
 };
@@ -34,8 +38,8 @@ type Props = {
 const LABEL = 'mb-2 flex items-center justify-between gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500';
 
 // The editor's left column: back to the library, switch notebook, what this notebook is, its outline (with the
-// words in each section), locked terms, and the writer's own brief. Nothing here calls AI.
-export function DocPanelContent({ editor, loaded, navigable, text, words, terms, busy, docId, title, meta, mode, onMeta, onUnlock, onOpenAssistant, onNavigate, onCopied, onProcessSection, onClose, sheet = false }: Props) {
+// words in each section), locked terms, and the writer's own brief. AI runs only from the explicit section actions.
+export function DocPanelContent({ editor, loaded, navigable, text, words, terms, busy, docId, title, meta, mode, onMeta, onUnlock, onOpenAssistant, onNavigate, onCopied, onProcessSection, onDraftSection, onDraftFirst, draftLocked = false, briefOpen = false, onClose, sheet = false }: Props) {
   const { t } = useLocale();
   const tone = modeToneClass(mode);
   return (
@@ -59,7 +63,7 @@ export function DocPanelContent({ editor, loaded, navigable, text, words, terms,
         <section aria-label={t('Kerangka', 'Outline')}>
           <h3 className={LABEL}><span className="inline-flex items-center gap-1.5"><Heading size={13} aria-hidden="true" />{t('Kerangka', 'Outline')}</span></h3>
           {!loaded || !editor ? <div className="space-y-2" role="status"><div className="h-3 w-3/4 animate-pulse rounded bg-paper-deep" /><div className="h-3 w-1/2 animate-pulse rounded bg-paper-deep" /></div>
-            : <Outline editor={editor} navigable={navigable} busy={busy} onNavigate={onNavigate} onCopied={onCopied} onProcess={onProcessSection} />}
+            : <Outline editor={editor} navigable={navigable} busy={busy} onNavigate={onNavigate} onCopied={onCopied} onProcess={onProcessSection} onDraft={onDraftSection} draftLocked={draftLocked} />}
         </section>
 
         <section aria-label={t('Istilah dikunci', 'Locked terms')}>
@@ -78,7 +82,7 @@ export function DocPanelContent({ editor, loaded, navigable, text, words, terms,
           )}
         </section>
 
-        <Brief meta={meta} onMeta={onMeta} />
+        <Brief meta={meta} onMeta={onMeta} open={briefOpen} busy={busy} locked={draftLocked} onDraftFirst={onDraftFirst} />
       </div>
     </div>
   );
@@ -170,7 +174,7 @@ function WordTarget({ words, target, onChange }: { words: number; target?: numbe
   );
 }
 
-function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess }: { editor: Editor; navigable: boolean; busy: boolean; onNavigate?: () => void; onCopied: (message: string) => void; onProcess?: (headingPos: number) => void }) {
+function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess, onDraft, draftLocked }: { editor: Editor; navigable: boolean; busy: boolean; onNavigate?: () => void; onCopied: (message: string) => void; onProcess?: (headingPos: number) => void; onDraft?: (headingPos: number) => void; draftLocked: boolean }) {
   const { t, locale } = useLocale();
   const [menu, setMenu] = useState<number | null>(null);
   const items = useEditorState({
@@ -223,7 +227,8 @@ function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess }: {
             <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)]">
               <button type="button" role="menuitem" onClick={() => select(item)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-ink-700 hover:bg-paper-deep"><TextSelect size={14} aria-hidden="true" />{t('Pilih bagian ini', 'Select this section')}</button>
               <button type="button" role="menuitem" onClick={() => copy(item)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-ink-700 hover:bg-paper-deep"><Copy size={14} aria-hidden="true" />{t('Salin bagian', 'Copy section')}</button>
-              {onProcess && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onProcess(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><Sparkles size={14} aria-hidden="true" />{t('Olah bagian ini dengan AI', 'Work on this section with AI')}</button>}
+              {onProcess && item.words > 0 && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onProcess(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><Sparkles size={14} aria-hidden="true" />{t('Olah bagian ini dengan AI', 'Work on this section with AI')}</button>}
+              {onDraft && item.words === 0 && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onDraft(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><PenLine size={14} aria-hidden="true" /><span className="flex-1 text-left">{t('Tulis bagian ini', 'Write this section')}</span>{draftLocked && <PaidLock size={12} />}</button>}
             </div>
           )}
         </li>
@@ -232,9 +237,11 @@ function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess }: {
   );
 }
 
-// The writer's own notes about the piece. Kept with the notebook, never sent to the AI (a later phase may use them).
-function Brief({ meta, onMeta }: { meta: NotebookMeta; onMeta: (patch: NotebookMeta) => void }) {
+// The writer's own brief for the piece. Kept with the notebook; Draf dari brief (UX 3) reads it, as data, when it
+// writes a section, and nothing else sends it to the AI.
+function Brief({ meta, onMeta, open, busy, locked, onDraftFirst }: { meta: NotebookMeta; onMeta: (patch: NotebookMeta) => void; open: boolean; busy: boolean; locked: boolean; onDraftFirst?: () => void }) {
   const { t } = useLocale();
+  const ready = !!(meta.briefTopic?.trim() || meta.briefMessage?.trim());
   const fields: Record<BriefKey, [string, string]> = {
     briefTopic: [t('Topik', 'Topic'), t('Mis. cara hemat energi di kos', 'E.g. saving energy in a rented room')],
     briefPlatform: [t('Platform', 'Platform'), t('Mis. Instagram, blog kantor', 'E.g. Instagram, company blog')],
@@ -245,18 +252,27 @@ function Brief({ meta, onMeta }: { meta: NotebookMeta; onMeta: (patch: NotebookM
   };
   const filled = BRIEF_KEYS.some((key) => meta[key]) || !!meta.notes;
   return (
-    <details open={filled || undefined} className="group/brief">
+    <details id="notebook-brief" open={filled || open || undefined} className="group/brief">
       <summary className={`${LABEL} cursor-pointer list-none`}><span>{t('Brief / Catatan', 'Brief / Notes')}</span><ChevronDown size={13} aria-hidden="true" className="transition-transform group-open/brief:rotate-180" /></summary>
-      <p className="mb-2.5 px-1 text-[11.5px] text-ink-500">{t('Catatan penulis, belum dipakai AI.', 'Writer’s notes, not used by the AI yet.')}</p>
+      <p className="mb-2.5 px-1 text-[11.5px] text-ink-500">{t('Dipakai AI saat menulis draf. Tulis fakta, angka, dan sumbermu di sini; AI tidak menambahkan yang lain.', 'Used by the AI when it writes a draft. Put your facts, figures and sources here; the AI adds none of its own.')}</p>
       <div className="space-y-2.5">
-        {BRIEF_KEYS.map((key) => (
+        {BRIEF_KEYS.map((key, index) => (
           <label key={key} className="block px-1 text-[12px] font-semibold text-ink-700">{fields[key][0]}
-            <input value={meta[key] ?? ''} maxLength={META_VALUE_LIMIT} placeholder={fields[key][1]} onChange={(event) => onMeta({ [key]: event.target.value })} className={`${inputClass} mt-1 h-8 text-[13px] font-normal`} />
+            <input autoFocus={open && index === 0} value={meta[key] ?? ''} maxLength={BRIEF_VALUE_LIMIT} placeholder={fields[key][1]} onChange={(event) => onMeta({ [key]: event.target.value })} className={`${inputClass} mt-1 h-8 text-[13px] font-normal`} />
           </label>
         ))}
         <label className="block px-1 text-[12px] font-semibold text-ink-700">{t('Catatan', 'Notes')}
-          <textarea value={meta.notes ?? ''} maxLength={META_VALUE_LIMIT} rows={3} onChange={(event) => onMeta({ notes: event.target.value })} className={`${inputClass} mt-1 h-auto py-2 text-[13px] font-normal`} />
+          <textarea value={meta.notes ?? ''} maxLength={BRIEF_VALUE_LIMIT} rows={3} placeholder={t('Poin, data, dan sumber yang boleh dipakai', 'Points, data and sources the draft may use')} onChange={(event) => onMeta({ notes: event.target.value })} className={`${inputClass} mt-1 h-auto py-2 text-[13px] font-normal`} />
         </label>
+        {onDraftFirst && (
+          <div className="space-y-1.5 px-1 pt-1">
+            <button type="button" disabled={busy || (!locked && !ready)} onClick={onDraftFirst}
+              className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full border border-brand-200 bg-brand-50 px-4 text-[13px] font-semibold text-brand-900 transition-colors hover:bg-brand-100 disabled:cursor-not-allowed disabled:opacity-50">
+              <PenLine size={14} aria-hidden="true" />{t('Tulis bagian pertama', 'Write the first section')}{locked && <PaidLock size={12} />}
+            </button>
+            {!locked && !ready && <p className="text-[11.5px] text-ink-500">{t('Isi Topik atau Pesan utama dulu.', 'Fill in the Topic or the Key message first.')}</p>}
+          </div>
+        )}
       </div>
     </details>
   );

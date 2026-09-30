@@ -1,8 +1,9 @@
 'use client';
-import { ArrowRight, ArrowUp, BookmarkPlus, Check, ChevronRight, Info, Languages, List, Maximize2, Minimize2, PencilLine, Plus, RefreshCw, Sparkles, Table, TextSelect, TriangleAlert, X, type LucideIcon } from 'lucide-react';
+import { ArrowRight, ArrowUp, BookmarkPlus, Check, ChevronRight, Info, Languages, List, Maximize2, Minimize2, NotebookPen, PenLine, PencilLine, Plus, RefreshCw, Sparkles, Table, TextSelect, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
+import { DRAFT_RESERVE_CHARACTERS } from '@/lib/plans';
 import { notebookTone } from '@/lib/notebook/appearance';
 import { type Mode, type Settings } from '@/lib/writing/settings';
 import { useEntitlements } from '@/components/app/AppShell';
@@ -42,6 +43,11 @@ type Props = {
   onNextSection?: () => void;
   // Nothing to work on yet: fewer than three words, or an outline that was never filled in.
   emptyDocument: boolean;
+  // UX 3: the caret sits on a section nobody has written yet, so Draf dari brief can write it.
+  draft?: { heading: string; ready: boolean; locked: boolean } | null;
+  onDraft?: () => void; onOpenBrief?: () => void;
+  // The running request is a draft, so the waiting card says what is being checked.
+  drafting?: boolean;
 };
 const QUICK_ICONS: Record<QuickAction, LucideIcon> = { summarize: Minimize2, expand: Maximize2, bullets: List, table: Table };
 // RAPIKAN tidies the wording, NADA changes the register.
@@ -88,6 +94,31 @@ function ModeTiles({ value, disabled, docType, onChange }: { value: Mode; disabl
   );
 }
 
+// UX 3: "Tulis bagian ini" in the Asisten, shown while the caret sits on a section that is still empty. It needs a
+// topic or a key message in the Brief, and it says up front that it writes a draft to check, at the draft's length.
+function DraftOffer({ draft, busy, onDraft, onOpenBrief, onUpgrade }: { draft: { heading: string; ready: boolean; locked: boolean }; busy: boolean; onDraft?: () => void; onOpenBrief?: () => void; onUpgrade: () => void }) {
+  const { t, locale } = useLocale();
+  const cap = numberFormat(DRAFT_RESERVE_CHARACTERS, locale);
+  return (
+    <section aria-label={t('Draf dari brief', 'Draft from brief')} className="space-y-2.5 rounded-xl border border-brand-200 bg-brand-50/60 p-3.5">
+      <p className="flex items-center gap-2 text-[13px] font-semibold text-brand-900"><PenLine size={15} aria-hidden="true" className="shrink-0" /><span className="min-w-0 flex-1 truncate">{t(`Tulis bagian “${draft.heading}”`, `Write the “${draft.heading}” section`)}</span></p>
+      <p className="text-xs leading-relaxed text-ink-600">{t('AI menulis draf bagian ini dari Brief dan kerangka. Angka, sumber, dan tautan yang tidak ada di brief menjadi [placeholder] untuk kamu isi.', 'The AI drafts this section from the Brief and the outline. Figures, sources and links that are not in the brief become [placeholders] for you to fill.')}</p>
+      {draft.locked ? <LockedFeatureRow feature="draft_from_brief" label={t('Draf dari brief', 'Draft from brief')} onUpgrade={onUpgrade} />
+        : !draft.ready ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="min-w-0 flex-1 text-xs text-amber-800">{t('Isi Topik atau Pesan utama di Brief dulu.', 'Fill in the Topic or the Key message in the Brief first.')}</p>
+            {onOpenBrief && <Button size="sm" icon={NotebookPen} onClick={onOpenBrief}>{t('Buka Brief', 'Open Brief')}</Button>}
+          </div>
+        ) : (
+          <button type="button" disabled={busy || !onDraft} onClick={onDraft} className={`inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-full px-4 text-[13px] font-semibold ${busy ? 'bg-paper-deep text-ink-300' : `${raisedGreen} ${pressGreen}`}`}>
+            <PenLine size={14} aria-hidden="true" />{t('Tulis bagian ini', 'Write this section')}
+          </button>
+        )}
+      <p className="text-[11px] leading-relaxed text-ink-500">{t(`Biaya: sepanjang draf yang jadi, paling banyak ${cap} karakter. Draf tidak mengarang data atau sitasi.`, `Cost: the finished draft’s length, at most ${cap} characters. The draft never makes up data or citations.`)}</p>
+    </section>
+  );
+}
+
 const TILE = 'group relative flex h-[60px] min-w-0 flex-col justify-between rounded-xl border py-2.5 pl-3 pr-8 text-left transition-colors disabled:opacity-50';
 
 // Skill tiles mirror the mode tiles; the pencil edits the skill without applying it. A locked account sees the
@@ -122,7 +153,7 @@ function SkillTiles({ styles, activeId, disabled, full, locked, onPick, onEdit, 
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade, docType, onQuickAction, structured, emptyDocument, section = null, onNextSection }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade, docType, onQuickAction, structured, emptyDocument, section = null, onNextSection, draft = null, onDraft, onOpenBrief, drafting = false }: Props) {
   const { t, locale } = useLocale();
   const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<AssistantTab>(() => tabForSettings(settings));
@@ -181,13 +212,15 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
         <div className="space-y-4 p-4">
           {generating && (
             <div role="status" className="space-y-2.5 rounded-xl border border-brand-200 bg-brand-50 p-3.5">
-              <p className="flex items-center gap-2 text-[13px] font-semibold text-brand-900"><Spinner size={14} className="text-brand-700" />{arrival ? t('Menyiapkan hasil pertamamu…', 'Preparing your first result…') : t('Menulis ulang dan memeriksa istilah terkunci…', 'Rewriting and checking locked terms…')}</p>
+              <p className="flex items-center gap-2 text-[13px] font-semibold text-brand-900"><Spinner size={14} className="text-brand-700" />{arrival ? t('Menyiapkan hasil pertamamu…', 'Preparing your first result…') : drafting ? t('Menulis draf dan memeriksa angka serta sumber…', 'Drafting and checking figures and sources…') : t('Menulis ulang dan memeriksa istilah terkunci…', 'Rewriting and checking locked terms…')}</p>
               <div className="h-2 w-full animate-pulse rounded bg-white" /><div className="h-2 w-11/12 animate-pulse rounded bg-white" /><div className="h-2 w-3/4 animate-pulse rounded bg-white" />
               <p className="text-[11px] leading-relaxed text-brand-800">{arrival ? t('Pratinjaunya muncul di sini, lalu tekan “Gunakan Hasil Ini” kalau cocok. Tulisanmu tidak diubah sebelum itu.', 'The preview appears here; press “Use This Result” if it fits. Your writing is untouched until then.') : t('Kamu tetap bisa mengedit selama menunggu.', 'You can keep editing while you wait.')}</p>
             </div>
           )}
 
           {children}
+
+          {draft && !previewId && !generating && <DraftOffer draft={draft} busy={busy} onDraft={onDraft} onOpenBrief={onOpenBrief} onUpgrade={onUpgrade} />}
 
           {suggestion && (
             <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2.5">

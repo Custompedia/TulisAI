@@ -25,11 +25,11 @@ import { suggestStyle } from '@/lib/writing/suggest';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
-import { openPlans, requestNewWriting, showPlanNotice, showShellNotice } from '@/components/app/shell-events';
+import { openPlans, requestNewWriting, showLockedFeature, showPlanNotice, showShellNotice } from '@/components/app/shell-events';
 import { notifyLibraryChanged } from '@/lib/navigation/library';
 import { setFocusMode, useFocusMode, useInitialDocPanel } from '@/components/app/editor-frame';
 import { AppearancePicker, useAppearanceSave } from '@/components/app/AppearancePicker';
-import { ADVANCED_PREFERENCE } from '@/lib/plans';
+import { ADVANCED_PREFERENCE, requiredTierFor } from '@/lib/plans';
 import { pageStyle } from '@/lib/docx/office-defaults';
 import { docxFilename } from '@/lib/docx/export';
 import { Toast } from '@/components/ui/Toast';
@@ -60,7 +60,8 @@ import { ANALYTICS_SECTION_ID, ReviewPanel } from './ReviewPanel';
 import { DocPanelContent, DocPanelFrame } from './DocPanel';
 import { StatusBar } from './StatusBar';
 import { CompactToolbar } from './CompactToolbar';
-import { compareDefault, hasStructure, meaningfulOriginal, sectionBodyAt, shouldDiscard, type SectionBody } from './editor-rules';
+import { compareDefault, draftSpotAt, firstDraftSpot, hasStructure, meaningfulOriginal, sectionBodyAt, shouldDiscard, type SectionBody } from './editor-rules';
+import { DraftCard } from './DraftCard';
 import { InlineResult, type InlineStatus } from './InlineResult';
 import { getInlineTarget, inlineTargetExtension, setInlineTarget, type InlineTarget } from './inline-target';
 import { NotebookHeader } from './NotebookHeader';
@@ -73,7 +74,8 @@ import { StudioPanel, StudioStrip, useStudioTabs, type StudioTab } from './Studi
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Surface, type Term, type Version } from './types';
 import { versionLabel } from './versions';
 
-type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; suggestTitle?: boolean; instruction?: string };
+// `draft` marks a Draf dari brief run: the editor position it writes at, so "Coba lagi" writes the same section.
+type GenerateRequest = { scope: Scope; surface: Surface; label?: string; inlineAction?: InlineAction; override?: Settings; anchor?: { from: number; to: number }; suggestTitle?: boolean; instruction?: string; draft?: number };
 // One quick action started from the selection toolbar; its result is shown on the text, not in the panel.
 type InlineSession = { label: string; status: InlineStatus; message: string };
 type Dialog = { kind: 'checkpoint' | 'rename' | 'restore' | 'delete' | 'reload' | 'page-setup' | 'header-footer'; version?: Version };
@@ -175,6 +177,8 @@ export default function Workspace() {
   // What the Mode tab falls back to: the notebook's own settings, or the account defaults when a skill owns them.
   const [manualBase, setManualBase] = useState<Settings>(defaults);
   const [modeTabRequest, setModeTabRequest] = useState(0);
+  // Arriving from "Draf dari brief (AI)" in Tulis baru (?brief=1): the Brief unfolds and offers the first section.
+  const [briefFocus, setBriefFocus] = useState(false);
   const styleList = useWritingStyles();
 
   const current = useRef<Doc | null>(null);
@@ -565,6 +569,59 @@ export default function Workspace() {
     openRight('assistant');
   }
 
+  // The top-level blocks, as the pure outline and draft rules read them.
+  function topBlocks() {
+    const blocks: Array<{ type: string; text: string; pos: number; size: number }> = [];
+    editor?.state.doc.forEach((node, offset) => { blocks.push({ type: node.type.name, text: node.textContent, pos: offset, size: node.nodeSize }); });
+    return blocks;
+  }
+  // Unfolds the Brief in the Dokumen panel (or its sheet on a phone) so the writer can fill it in.
+  function openBrief() {
+    setBriefFocus(true);
+    if (window.matchMedia('(max-width: 1023px)').matches) setSheet('document'); else saveDocPanel({ ...docPanel, collapsed: false });
+    requestAnimationFrame(() => window.document.getElementById('notebook-brief')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  }
+  // UX 3, Draf dari brief: writes one still-empty section from the saved brief and outline into a preview the writer
+  // checks before using it. Plus and up; the brief needs a topic or a key message; the server has the final say.
+  async function draftSection(position?: number) {
+    if (!editor || busy) return;
+    if (!has('draft_from_brief')) { showLockedFeature(requiredTierFor('draft_from_brief')); return; }
+    const spot = draftSpotAt(topBlocks(), position ?? Math.min(caret, editor.state.doc.content.size));
+    const label = t('Draf', 'Draft');
+    openRight('assistant'); setInline(null);
+    if (!spot) { setAiError(t('Letakkan kursor di judul bagian yang masih kosong, atau di baris kosong di bawah sebuah judul.', 'Put the cursor on a heading whose section is still empty, or on an empty line under a heading.')); return; }
+    const facts = latest.current.meta;
+    if (!facts.briefTopic?.trim() && !facts.briefMessage?.trim()) { openBrief(); setAiError(t('Isi Topik atau Pesan utama di Brief dulu, lalu tulis bagian ini.', 'Fill in the Topic or the Key message in the Brief first, then write this section.')); return; }
+    setBusy('generate'); setAiError(''); setLastRequest({ scope: 'section', surface: 'panel', label, draft: spot.pos });
+    const ticket = ++generation.current;
+    try {
+      const saved = await flush();
+      if (ticket !== generation.current) return;
+      if (dirty.current) { setAiError(t('Tulisan masih berubah. Coba lagi setelah selesai mengetik.', 'The text is still changing. Try again when you finish typing.')); return; }
+      const at = selectionOffsets(editor.getJSON(), spot.pos, spot.pos).from;
+      const chosen = latest.current.settings.language;
+      const language = chosen !== 'auto' ? chosen : detectLanguage([facts.briefTopic, facts.briefMessage, facts.notes, documentText(editor.getJSON())].filter(Boolean).join('\n')) ?? (english ? 'en' : 'id');
+      if (preview) void request(`/api/ai/previews/${preview.id}/discard`, 'POST', {}, newKey()).catch(() => undefined);
+      setPreview(null);
+      const captured = stamp.current;
+      const result = await request<{ id: string; output: Preview['output']; expiresAt: string; heading: string; academic: boolean }>('/api/ai/draft', 'POST', { documentId: id, expectedRevision: saved.revision, at, language }, newKey());
+      if (ticket !== generation.current) { void request(`/api/ai/previews/${result.id}/discard`, 'POST', {}, newKey()).catch(() => undefined); return; }
+      setPreview({ id: result.id, output: result.output, expiresAt: result.expiresAt, source: '', stamp: captured, anchor: { from: at, to: at }, settings: latest.current.settings, scope: 'section', revision: saved.revision, surface: 'panel', label, draft: { heading: result.heading, academic: result.academic, pos: spot.pos } });
+      setBriefFocus(false);
+      void refreshUsage();
+    } catch (caught) {
+      if (guard(caught)) return;
+      showPlanNotice(caught);
+      setAiError(errorText(caught, english));
+    } finally { if (ticket === generation.current) setBusy(''); }
+  }
+  function draftFirst() {
+    if (!has('draft_from_brief')) { showLockedFeature(requiredTierFor('draft_from_brief')); return; }
+    const spot = firstDraftSpot(topBlocks());
+    if (!spot) { setNotice({ tone: 'info', message: t('Semua bagian di kerangka sudah berisi teks.', 'Every section of the outline already has text.') }); return; }
+    void draftSection(spot.pos);
+  }
+
   async function generate(req: GenerateRequest) {
     if (!editor || busy) return;
     const effective = req.override ?? latest.current.settings;
@@ -759,6 +816,12 @@ export default function Workspace() {
     compareStarted.current = true; const [a, b] = pair.split(':'); if (a && b) void openCompare(a, b);
   });
   useEffect(() => { runInitialCompare(); }, [loaded]);
+  // "Draf dari brief (AI)" in Tulis baru lands here with ?brief=1: the Brief unfolds first, then the first section.
+  const runBriefArrival = useEffectEvent(() => {
+    if (!loaded || search.get('brief') !== '1') return;
+    syncUrl({ brief: null }); openBrief();
+  });
+  useEffect(() => { runBriefArrival(); }, [loaded]);
 
   async function pasteClipboard() {
     if (!editor) return;
@@ -979,6 +1042,9 @@ export default function Workspace() {
   const panelPreview = preview?.surface === 'panel' ? preview : null;
   const inlinePreview = preview?.surface === 'inline' ? preview : null;
   const section = loaded && scope === 'section' ? currentSection() : null;
+  // "Tulis bagian ini" in the Asisten follows the caret onto a section nobody has written yet.
+  const draftSpot = loaded && editor && !compare && !recovery && !selection ? draftSpotAt(topBlocks(), Math.min(caret, editor.state.doc.content.size)) : null;
+  const briefReady = !!(meta.briefTopic?.trim() || meta.briefMessage?.trim());
   const sectionText = section && editor ? editor.state.doc.textBetween(section.from, section.to, '\n', ' ') : '';
   const scopeText = scope === 'selection' ? selection?.text ?? '' : scope === 'section' ? sectionText : text;
   const detected = detectLanguage(scopeText || text);
@@ -1037,13 +1103,19 @@ export default function Workspace() {
       settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
       busy={busy !== '' || !loaded} generating={(busy === 'generate' && lastRequest?.surface === 'panel') || (arriving && !aiError)} arrival={arriving} previewId={panelPreview?.id ?? null}
       manualBase={manualBase} modeTabRequest={modeTabRequest}
-      error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
+      error={aiError} onDismissError={() => setAiError('')} onRetry={() => (lastRequest?.draft !== undefined ? void draftSection(lastRequest.draft) : void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' }))}
       onGenerate={() => void generate({ scope, surface: 'panel' })} customizeRequest={customizeRequest}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection) && (scope !== 'section' || !!sectionText.trim())}
       section={scope === 'section' ? { heading: section?.heading ?? null, hasNext: section?.next !== null && section?.next !== undefined } : null} onNextSection={nextSection}
       onUpgrade={openPlans} docType={meta.docType} onQuickAction={runQuick} structured={structured} emptyDocument={loaded && emptyDocument}
+      draft={draftSpot ? { heading: draftSpot.heading, ready: briefReady, locked: !has('draft_from_brief') } : null} onDraft={() => void draftSection()} onOpenBrief={openBrief}
+      drafting={busy === 'generate' && lastRequest?.draft !== undefined}
     >
-      {panelPreview && (
+      {panelPreview?.draft && (
+        <DraftCard preview={panelPreview} stale={stale} busy={busy !== ''} applying={busy === 'apply'} onApply={() => void apply()} onDiscard={() => void discard()}
+          onRetry={() => { const position = panelPreview.draft!.pos; void discard().then(() => draftSection(position)); }} />
+      )}
+      {panelPreview && !panelPreview.draft && (
         <PreviewCard
           preview={panelPreview} stale={stale} busy={busy !== ''} applying={busy === 'apply'} paged={paged}
           onApply={() => void apply()} onCompare={() => { closeOnNarrow(); void openCompare(SOURCE, PREVIEW); }} onDiscard={() => void discard()}
@@ -1077,6 +1149,8 @@ export default function Workspace() {
     <DocPanelContent editor={editor} loaded={loaded} navigable={!compare} text={text} words={words} terms={terms} busy={busy !== ''} docId={id} title={title} meta={meta} mode={settings.mode}
       onMeta={updateMeta} onUnlock={(term) => void unlock(term)} onOpenAssistant={() => openRight('assistant')} onNavigate={closeOnNarrow}
       onProcessSection={(position) => { processSection(position); closeOnNarrow(); }}
+      onDraftSection={(position) => { closeOnNarrow(); void draftSection(position + 1); }} draftLocked={!has('draft_from_brief')} briefOpen={briefFocus}
+      onDraftFirst={briefFocus || (loaded && emptyDocument && meta.docSource === 'skeleton') ? () => { closeOnNarrow(); draftFirst(); } : undefined}
       onCopied={(message) => setNotice({ tone: 'success', message })} sheet={asSheet} onClose={() => (asSheet ? setSheet(null) : saveDocPanel({ ...docPanel, collapsed: true }))} />
   );
 
