@@ -147,7 +147,7 @@ async function summary(period: string): Promise<AdminSummary> {
     monthlyLimit: monthlyLimit(), freeCharacterAllowance: freeCharacterAllowance(),
     tierLimits: { free: tierLimit('free'), plus: tierLimit('plus'), pro: tierLimit('pro'), max: tierLimit('max') },
     tierCharacterLimits: { free: characterLimit('free'), plus: characterLimit('plus'), pro: characterLimit('pro'), max: characterLimit('max') },
-    aiEnabled: env.AI_PUBLIC_ENABLED === 'true', model: env.OPENROUTER_MODEL?.trim() || 'openai/gpt-5.6-luna',
+    aiEnabled: env.AI_PUBLIC_ENABLED === 'true', model: env.OPENROUTER_MODEL?.trim() || 'openai/gpt-6-luna',
   };
 }
 
