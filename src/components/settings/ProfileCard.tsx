@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 import { CircleAlert, CircleCheck, KeyRound, Lock, LogOut, Mail, Pencil, RotateCw, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { authRequest, errorText, newKey, request } from '@/lib/client/api';
-import { useSessionGuard, useSignOut } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard, useShell, useSignOut } from '@/components/app/AppShell';
+import { dateTime } from '@/lib/client/format';
 import { Button, IconButton } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { GoogleIcon } from '@/components/ui/GoogleIcon';
@@ -54,6 +55,11 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
   const [mklPending, setMklPending] = useState<{ profile: { name: string | null; email: string | null; issuer: string }; expiresAt: string } | null>(null);
   const [mklBusy, setMklBusy] = useState(false);
   const google = account.providers.includes('google');
+  // The real plan from /api/usage, never a hardcoded "Free": admins resolve to Max and say so.
+  const { tier } = useEntitlements();
+  const { user, usage } = useShell();
+  const planName = tier === 'free' ? t('Gratis', 'Free') : `${tier[0]!.toUpperCase()}${tier.slice(1)}`;
+  const paidUntil = usage?.access?.paidUntil ?? null;
 
   useEffect(() => {
     if (new URL(window.location.href).searchParams.get('mkl') !== 'confirm') return;
@@ -108,8 +114,9 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
             </Row>}
           </div>
           <div className="mt-2 border-t border-line pt-3.5">
-            <Row label={t('Paket', 'Plan')}>
-              {t('Gratis', 'Free')}
+            <Row label={t('Paket', 'Plan')} action={<a href="#pemakaian" className="shrink-0 rounded-md px-1.5 py-1 text-[13px] font-semibold text-brand-700 hover:text-brand-900 hover:underline">{t('Pemakaian', 'Usage')}</a>}>
+              {planName}{user.role === 'admin' && <span className="font-normal text-ink-500"> · {t('akun admin', 'admin account')}</span>}
+              {paidUntil && <span className="block text-[13px] font-normal text-ink-500">{t(`Berlaku s.d. ${dateTime(paidUntil, 'id')}`, `Valid until ${dateTime(paidUntil, 'en')}`)}</span>}
               <span className="block text-[13px] font-normal text-ink-500">{t(`Pengguna sejak ${memberSince(account.createdAt, locale)}`, `User since ${memberSince(account.createdAt, locale)}`)}</span>
             </Row>
           </div>

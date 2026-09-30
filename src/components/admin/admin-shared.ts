@@ -30,7 +30,7 @@ export type AiMetrics = {
 };
 export const ADMIN_ACTIONS = ['user.create', 'user.update', 'user.role', 'user.ban', 'user.unban', 'user.password', 'user.delete', 'session.revoke', 'session.revoke-all', 'plan.admin.activated', 'plan.admin.extended', 'plan.admin.replaced', 'plan.admin.ended',
   'payment.plan.activated', 'payment.plan.renewed', 'payment.topup.credited', 'payment.needs_operator', 'payment.refund.topup_reversed', 'payment.refund.needs_operator', 'payment.mode_mismatch', 'payment.amount_mismatch'] as const;
-export const sortLabel = (sort: UserSort, t: T) => ({ newest: t('Terbaru bergabung', 'Newest'), oldest: t('Terlama bergabung', 'Oldest'), name: t('Nama A–Z', 'Name A–Z'), usage: t('AI terbanyak bulan ini', 'Most AI this month'), active: t('Terakhir aktif', 'Recently active') })[sort];
+export const sortLabel = (sort: UserSort, t: T) => ({ newest: t('Terbaru bergabung', 'Newest'), oldest: t('Terlama bergabung', 'Oldest'), name: t('Nama A–Z', 'Name A–Z'), usage: t('Permintaan AI terbanyak bulan ini', 'Most AI requests this month'), active: t('Terakhir aktif', 'Recently active') })[sort];
 export const promptLabel = (promptId: string) => ({ P01_STANDARD_REWRITE: 'Parafrase', P02_ACADEMIC: 'Akademik', P03_HUMANIZER: 'Humanize', P04_PROFESSIONAL: 'Profesional', P05_CREATIVE: 'Kreatif', P06_SIMPLIFY: 'Sederhanakan', P07_INLINE_ALTERNATIVES: 'Alternatif inline', P08_CUSTOM_TRANSFORM: 'Sesuaikan', P09_QUALITY_EVALUATION: 'Analisis kualitas', P10_REPAIR: 'Perbaikan', generate: 'Rewrite', repair: 'Perbaikan', analyze: 'Analisis' } as Record<string, string>)[promptId] ?? promptId;
 
 export const TIERS: readonly Tier[] = PLAN_TIERS;
@@ -66,3 +66,26 @@ export const detailSummary = (entry: AuditEntry, t: T): string => {
   }
 };
 export const shortId = (id: string) => (id.length > 10 ? `${id.slice(0, 6)}…${id.slice(-3)}` : id);
+
+// The product bills characters, so the table shows characters used against the balance, not a request count.
+// 'account' scope is Free's one-time allowance; every other account refills per period. Admins are charged too.
+export const characterUsage = (user: Pick<AdminUser, 'charactersUsed' | 'characterLimit' | 'characterScope'>, t: T) => ({
+  used: user.charactersUsed, limit: user.characterLimit,
+  scope: user.characterScope === 'account' ? t('sekali pakai', 'one-time') : t('bulan ini', 'this month'),
+  share: user.characterLimit > 0 ? Math.min(1, user.charactersUsed / user.characterLimit) : 0,
+});
+
+// Walks every page of a paged list, so an export covers all matching rows and not just the page on screen.
+export async function collectAllPages<I>(load: (page: number) => Promise<{ items: I[]; pageInfo: PageInfo }>): Promise<I[]> {
+  const first = await load(1);
+  const items = [...first.items];
+  for (let page = 2; page <= first.pageInfo.pages; page++) items.push(...(await load(page)).items);
+  return items;
+}
+
+const csvCell = (value: unknown) => { const text = value === null || value === undefined ? '' : String(value); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
+export const USER_CSV_HEADER = ['id', 'name', 'email', 'username', 'role', 'tier', 'status', 'email_verified', 'characters_used', 'character_limit', 'character_scope', 'requests_this_month', 'failed_this_month', 'tokens_this_month', 'documents', 'last_active_at', 'created_at'];
+export function usersCsv(items: AdminUser[]): string {
+  const rows = items.map((u) => [u.id, u.name, u.email, u.username, u.role, u.tier, u.banned ? 'disabled' : 'active', u.emailVerified, u.charactersUsed, u.characterLimit, u.characterScope, u.requestsThisMonth, u.failedThisMonth, u.tokensThisMonth, u.documents, u.lastActiveAt, u.createdAt]);
+  return [USER_CSV_HEADER, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+}
