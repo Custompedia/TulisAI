@@ -1,9 +1,10 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Check, ChevronDown, Crown, Gauge, Leaf, Minus, Rocket, Sparkles, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { errorText, newKey, request } from '@/lib/client/api';
+import { useBilling, type Order } from '@/lib/client/billing-store';
 import { PLAN_LIMITS, TIERS, TOP_UPS, TOP_UP_VALIDITY_MONTHS, type Tier, type TopUp } from '@/lib/plans';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -14,8 +15,6 @@ type T = (id: string, en: string) => string;
 type Plan = { id: Tier; name: string; icon: LucideIcon; tagline: string; quota: string; inherits?: string; features: string[]; popular?: boolean };
 type Cells = [string | boolean, string | boolean, string | boolean, string | boolean];
 type PaidTier = Exclude<Tier, 'free'>;
-type Order = { id: string; kind: 'plan' | 'topup'; plan: PaidTier | null; pack: TopUp['id'] | null; characters: number; amountIdr: number; mode: 'sandbox' | 'production'; status: string; payUrl: string | null; createdAt: string };
-type Billing = { checkoutOpen: boolean; mode: 'sandbox' | 'production' | null; orders: Order[]; plan: { code: PaidTier; source: 'admin' | 'payment'; periodEnd: string; paidThrough: string } | null };
 
 // Prices, allowances and gates all come from PLAN_LIMITS, so this catalogue cannot drift from what the server enforces.
 // Buying goes through Tulis Lab's own Midtrans checkout. While payments are closed, choosing a plan explains that instead of pretending to sell.
@@ -169,12 +168,11 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
   const freeCharacters = usage && usage.tier === 'free' && !admin ? usage.characterLimit : FREE_CHARACTERS;
   const catalogue = plans(t, freeCharacters);
   const [notice, setNotice] = useState('');
-  const [billing, setBilling] = useState<Billing | null>(null);
+  // Shared with Pemakaian & paket, so opening the dialog twice does not refetch the orders.
+  const { billing, reload: load } = useBilling();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const en = locale === 'en';
-  const load = useCallback(async () => { try { setBilling(await request<Billing>('/api/payments/orders')); } catch { setBilling(null); } }, []);
-  useEffect(() => { void load(); }, [load]);
   const running = billing?.plan ?? null;
   async function buy(body: { kind: 'plan'; plan: PaidTier } | { kind: 'topup'; pack: TopUp['id'] }, label: string) {
     if (!billing?.checkoutOpen) { setNotice(label); return; }
@@ -189,6 +187,8 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI allowance')}>
+      {/* While checkout is closed the plans are shown for comparison only, and nothing here is a buy button. */}
+      {billing && !billing.checkoutOpen && !notice && <Alert tone="info" className="mb-4" title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t('Paket di bawah bisa kamu bandingkan dulu. Paket dan kuota yang sudah kamu punya tetap berlaku.', 'You can compare the plans below. Your current plan and allowance stay as they are.')}</Alert>}
       {admin && <Alert tone="info" className="mb-4" title={t('Akun admin', 'Admin account')}>{t('Akun admin tidak dibatasi kuota permintaan bulanan (tetap maks. 10 per menit), tetapi tetap memakai saldo karakter.', 'An admin account has no monthly request cap (still at most 10 per minute), but it still spends its character balance.')}</Alert>}
       {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t(`${notice} belum bisa dibeli karena pembayaran belum dibuka. Tulisan dan kuotamu saat ini tidak berubah.`, `${notice} cannot be bought yet because payments are not open. Your writing and current allowance are unchanged.`)}</Alert>}
       {error && <Alert tone="error" className="mb-4" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Alert>}
@@ -241,7 +241,7 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
                 <p className="mt-4 flex h-9 items-center justify-center text-[12.5px] text-ink-500">{t('Otomatis untuk setiap akun baru', 'Given to every new account')}</p>
               ) : (
                 <button type="button" disabled={busy !== ''} onClick={() => void buy({ kind: 'plan', plan: plan.id as PaidTier }, plan.name)}
-                  className={`mt-4 inline-flex h-9 w-full items-center justify-center rounded-full text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 ${plan.popular ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`}>
+                  className={`mt-4 inline-flex h-9 w-full items-center justify-center rounded-full text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 ${plan.popular && billing?.checkoutOpen ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`}>
                   {busy === plan.id ? t('Membuka pembayaran…', 'Opening payment…') : t(`Pilih ${plan.name}`, `Choose ${plan.name}`)}
                 </button>
               )}

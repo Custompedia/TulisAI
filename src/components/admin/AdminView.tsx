@@ -1,8 +1,10 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
-import { Database, Gauge, ScrollText, Wallet, type LucideIcon } from 'lucide-react';
+import { useCallback, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
+import { setHash, useHash } from '@/lib/client/hash';
+import { adminTabFromHash, type AdminTab } from '@/lib/navigation/sections';
 import { PageHeader, useShell } from '@/components/app/AppShell';
+import { useAdminNav } from '@/components/app/ContextSidebar';
 import { StatusScreen } from '@/components/ui/StatusScreen';
 import { Toast } from '@/components/ui/Toast';
 import type { AdminSummary, UsersPage } from './admin-shared';
@@ -12,26 +14,20 @@ import { UserDatabase } from './UserDatabase';
 import { PaymentsPanel } from './PaymentsPanel';
 import { UserDetailModal } from './UserDetailModal';
 
-type Tab = 'ai' | 'database' | 'payments' | 'log';
 type Notice = { tone: 'success' | 'error'; message: string };
-const TABS: Tab[] = ['database', 'payments', 'ai', 'log'];
-const tabFromHash = (hash: string): Tab => { const value = hash.replace(/^#/, ''); return (TABS as string[]).includes(value) ? value as Tab : 'database'; };
 
+// The sections are listed in the context sidebar on desktop (Pusat kontrol + Kelola) and as tabs on phones.
+// The hashes (#database, #payments, #ai, #log) are unchanged.
 export function AdminView() {
   const { t } = useLocale();
   const { user } = useShell();
-  const [tab, setTab] = useState<Tab>('database');
+  const tab: AdminTab = adminTabFromHash(useHash());
+  const nav = useAdminNav();
   const [summary, setSummary] = useState<AdminSummary | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
-  useEffect(() => {
-    const sync = () => setTab(tabFromHash(window.location.hash));
-    sync(); window.addEventListener('hashchange', sync);
-    return () => window.removeEventListener('hashchange', sync);
-  }, []);
-  const select = (next: Tab) => { setTab(next); window.history.replaceState(window.history.state, '', `${window.location.pathname}${window.location.search}#${next}`); };
   const onPage = useCallback((page: UsersPage) => setSummary(page.summary), []);
   const notify = useCallback((next: Notice) => setNotice(next), []);
   const refresh = useCallback(() => setRefreshKey((value) => value + 1), []);
@@ -40,16 +36,16 @@ export function AdminView() {
     return <StatusScreen kind="error" title={t('Halaman khusus admin', 'Admins only')} description={t('Akunmu tidak punya akses ke panel admin.', 'Your account does not have access to the admin panel.')} secondary={{ label: t('Kembali ke beranda', 'Back to home'), href: '/app' }} />;
   }
 
-  const tabs: Array<{ id: Tab; icon: LucideIcon; label: string }> = [{ id: 'database', icon: Database, label: 'Database' }, { id: 'payments', icon: Wallet, label: t('Pembayaran', 'Payments') }, { id: 'ai', icon: Gauge, label: 'Monitoring AI' }, { id: 'log', icon: ScrollText, label: 'Log' }];
+  const current = nav.find((item) => item.id === tab) ?? nav[0];
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 pb-12 pt-8 sm:px-6">
-      <PageHeader title={t('Panel admin', 'Admin panel')} />
-      <div role="tablist" aria-label={t('Bagian panel admin', 'Admin panel sections')} className="mt-5 inline-flex w-full rounded-xl border border-line-strong bg-paper p-1 sm:w-auto">
-        {tabs.map(({ id, icon: Icon, label }) => (
-          <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => select(id)}
-            className={`inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-[13.5px] font-semibold transition-colors sm:flex-none ${tab === id ? 'bg-white text-ink-900 shadow-sm ring-1 ring-line' : 'text-ink-500 hover:text-ink-900'}`}>
-            <Icon size={16} aria-hidden="true" className={tab === id ? 'text-brand-700' : ''} />{label}
+      <PageHeader title={current.label} description={t('Panel admin', 'Admin panel')} />
+      <div role="tablist" aria-label={t('Bagian panel admin', 'Admin panel sections')} className="mt-5 flex w-full overflow-x-auto rounded-xl border border-line-strong bg-paper p-1 md:hidden">
+        {nav.map(({ id, icon: Icon, label }) => (
+          <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setHash(id)}
+            className={`inline-flex h-9 flex-1 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-[13px] font-semibold transition-colors ${tab === id ? 'bg-white text-ink-900 shadow-sm ring-1 ring-line' : 'text-ink-500 hover:text-ink-900'}`}>
+            <Icon size={15} aria-hidden="true" className={tab === id ? 'text-brand-700' : ''} />{label}
           </button>
         ))}
       </div>

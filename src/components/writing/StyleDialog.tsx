@@ -8,7 +8,7 @@ import { customConflict, EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT, type Settings }
 import { STYLE_LIMIT, STYLE_NAME_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { useEntitlements, useSessionGuard } from '@/components/app/AppShell';
 import { LockedFeatureRow } from '@/components/app/PaidLock';
-import { PlansDialog } from '@/components/app/PlansDialog';
+import { openPlans } from '@/components/app/shell-events';
 import { AppearanceFields } from '@/components/app/AppearancePicker';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -32,7 +32,6 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
   const [nameError, setNameError] = useState('');
-  const [plans, setPlans] = useState(false);
   const { has } = useEntitlements();
   // Max-only parts of a skill stay visible as locked rows: below Max the server would drop them on save.
   const instructionsLocked = !has('persistent_personalization');
@@ -123,7 +122,7 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
         </div>
 
         {instructionsLocked ? (
-          <LockedFeatureRow feature="persistent_personalization" label={t('Instruksi untuk AI', 'Instructions for the AI')} onUpgrade={() => setPlans(true)} />
+          <LockedFeatureRow feature="persistent_personalization" label={t('Instruksi untuk AI', 'Instructions for the AI')} onUpgrade={openPlans} />
         ) : <div>
           <FieldLabel htmlFor={`${id}-extra`} hint={`${draft.settings.extra.length}/${EXTRA_LIMIT}`}>{t('Instruksi untuk AI', 'Instructions for the AI')}</FieldLabel>
           <textarea id={`${id}-extra`} rows={3} maxLength={EXTRA_LIMIT} disabled={busy} value={draft.settings.extra}
@@ -166,7 +165,7 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
               )}
               <div className="border-t border-line pt-4">
                 {sampleLocked ? (
-                  <LockedFeatureRow feature="style_reference" label={t('Contoh tulisan', 'Writing sample')} onUpgrade={() => setPlans(true)} />
+                  <LockedFeatureRow feature="style_reference" label={t('Contoh tulisan', 'Writing sample')} onUpgrade={openPlans} />
                 ) : <div>
                   <FieldLabel htmlFor={`${id}-sample`} hint={`${draft.settings.sample.length}/${SAMPLE_LIMIT}`}>{t('Contoh tulisan', 'Writing sample')}</FieldLabel>
                   <textarea id={`${id}-sample`} rows={4} maxLength={SAMPLE_LIMIT} disabled={busy} value={draft.settings.sample}
@@ -196,7 +195,6 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
           {!trimmed && <p className="mt-2 text-xs font-medium text-amber-700">{t('Beri nama skill ini sebelum menyimpan.', 'Give this skill a name before saving.')}</p>}
         </section>
       </form>
-      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {confirmDelete && style && (
         <ConfirmDialog title={t('Hapus skill ini?', 'Delete this skill?')} tone="danger" busy={busy} confirmLabel={t('Hapus skill', 'Delete skill')} onClose={() => { if (!busy) setConfirmDelete(false); }} onConfirm={() => void remove()}>
           <p>{t('Skill', 'The skill')} <b className="text-ink-900">“{style.name}”</b> {t('akan dihapus. Notebook yang memakainya tetap menyimpan pengaturannya.', 'will be deleted. Notebooks using it keep their current settings.')}</p>

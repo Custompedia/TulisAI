@@ -1,10 +1,9 @@
 'use client';
 import { useParams } from 'next/navigation';
-import { AppShell } from '@/components/app/AppShell';
 import Workspace from '@/components/workspace/Workspace';
 
-// Client page so AppShell and Workspace share one module graph; keyed by id for fresh state.
+// The shared signed-in layout keeps the rail beside the editor; keyed by id for fresh state per notebook.
 export default function NotebookPage() {
   const { id } = useParams<{ id: string }>();
-  return <AppShell bare><Workspace key={id} /></AppShell>;
+  return <Workspace key={id} />;
 }

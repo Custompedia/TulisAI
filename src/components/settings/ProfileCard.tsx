@@ -8,6 +8,7 @@ import { dateTime } from '@/lib/client/format';
 import { Button, IconButton } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/Modal';
 import { GoogleIcon } from '@/components/ui/GoogleIcon';
+import { HashLink } from '@/components/ui/HashLink';
 import { ChangePasswordDialog, EmailDialog, NameDialog, SetPasswordDialog, UsernameDialog, type Submit } from './AccountDialogs';
 
 export type AccountDetails = { id: string; name: string; email: string; username: string | null; emailVerified: boolean; image: string | null; createdAt: string; hasPassword: boolean; providers: string[]; mkl: { linked: false } | { linked: true; profileEmail: string | null; profileName: string | null; linkedAt: string } };
@@ -46,7 +47,9 @@ export function ProfileSkeleton() {
   );
 }
 
-export function ProfileCard({ account, onUpdated, notify }: { account: AccountDetails; onUpdated: () => Promise<void>; notify: (notice: Notice) => void }) {
+// One component for both Akun & Paket pages so the dialogs and their state stay in one place:
+// `profile` is who you are and your plan, `security` is how you sign in.
+export function ProfileCard({ account, onUpdated, notify, part = 'profile' }: { account: AccountDetails; onUpdated: () => Promise<void>; notify: (notice: Notice) => void; part?: 'profile' | 'security' }) {
   const { t, locale } = useLocale();
   const guard = useSessionGuard();
   const { signOut, busy: signingOut } = useSignOut();
@@ -94,7 +97,7 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
 
   return (
     <>
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_16rem] lg:gap-8">
+      {part === 'profile' ? (
         <div className="min-w-0">
           <div className="divide-y divide-line">
             <Row label={t('Nama', 'Name')} action={edit('name', t('Ubah nama', 'Change name'))}>{account.name}</Row>
@@ -114,16 +117,16 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
             </Row>}
           </div>
           <div className="mt-2 border-t border-line pt-3.5">
-            <Row label={t('Paket', 'Plan')} action={<a href="#pemakaian" className="shrink-0 rounded-md px-1.5 py-1 text-[13px] font-semibold text-brand-700 hover:text-brand-900 hover:underline">{t('Pemakaian', 'Usage')}</a>}>
+            <Row label={t('Paket', 'Plan')} action={<HashLink href="/settings#pemakaian" className="shrink-0 rounded-md px-1.5 py-1 text-[13px] font-semibold text-brand-700 hover:text-brand-900 hover:underline">{t('Pemakaian & paket', 'Usage & plan')}</HashLink>}>
               {planName}{user.role === 'admin' && <span className="font-normal text-ink-500"> · {t('akun admin', 'admin account')}</span>}
               {paidUntil && <span className="block text-[13px] font-normal text-ink-500">{t(`Berlaku s.d. ${dateTime(paidUntil, 'id')}`, `Valid until ${dateTime(paidUntil, 'en')}`)}</span>}
               <span className="block text-[13px] font-normal text-ink-500">{t(`Pengguna sejak ${memberSince(account.createdAt, locale)}`, `User since ${memberSince(account.createdAt, locale)}`)}</span>
             </Row>
           </div>
         </div>
-
-        <div className="flex flex-col border-t border-line pt-5 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
-          <h3 className="text-[13px] text-ink-500">{t('Akun', 'Account')}</h3>
+      ) : (
+        <div className="flex flex-col">
+          <h3 className="text-[13px] text-ink-500">{t('Kata sandi', 'Password')}</h3>
           <div className="mt-2 flex flex-col items-start gap-1">
             {account.hasPassword ? (
               <>
@@ -137,11 +140,12 @@ export function ProfileCard({ account, onUpdated, notify }: { account: AccountDe
               </>
             )}
           </div>
-          <div className="mt-4 border-t border-line pt-3 lg:mt-auto">
-            <LinkAction icon={LogOut} tone="danger" onClick={() => setDialog('sign-out')}>{t('Keluar', 'Log out')}</LinkAction>
+          <div className="mt-5 border-t border-line pt-4">
+            <h3 className="text-[13px] text-ink-500">{t('Sesi di perangkat ini', 'Session on this device')}</h3>
+            <div className="mt-2"><LinkAction icon={LogOut} tone="danger" onClick={() => setDialog('sign-out')}>{t('Keluar', 'Log out')}</LinkAction></div>
           </div>
         </div>
-      </div>
+      )}
 
       {dialog === 'name' && <NameDialog current={account.name} busy={busy} submit={submit} onClose={close} />}
       {dialog === 'username' && <UsernameDialog current={account.username} busy={busy} submit={submit} onClose={close} />}

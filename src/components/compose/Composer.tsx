@@ -16,8 +16,7 @@ import { StyleMark } from '@/components/writing/StyleMark';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
 import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
-import { PlansDialog } from '@/components/app/PlansDialog';
-import { COMPOSER_FOCUS_EVENT } from '@/components/app/Sidebar';
+import { COMPOSER_FOCUS_EVENT, openPlans, showPlanNotice } from '@/components/app/shell-events';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -63,7 +62,6 @@ export function Composer() {
   const [error, setError] = useState('');
   const [confirmClear, setConfirmClear] = useState(false);
   const [customizing, setCustomizing] = useState(false);
-  const [plans, setPlans] = useState(false);
   const { styles } = useWritingStyles();
   const { limits, has } = useEntitlements();
   // One skill rule everywhere: without saved_styles a skill is shown locked, never offered and then refused.
@@ -128,7 +126,7 @@ export function Composer() {
   // Removing a skill hands the row back to the manual configuration the user had before.
   const clearStyle = () => { setSettings(tabSettings('mode', settings, memory.current, styles, manualBase.current)); setPicked(manualPicked.current); };
   const styleChip = styles.length > 0 && (stylesLocked ? (
-    <button type="button" disabled={busy} onClick={() => setPlans(true)} title={t(`Skill tersimpan — buka dengan ${skillTier}`, `Saved skills — unlock with ${skillTier}`)} className={`${CHIP} font-medium text-ink-500`}>
+    <button type="button" disabled={busy} onClick={openPlans} title={t(`Skill tersimpan — buka dengan ${skillTier}`, `Saved skills — unlock with ${skillTier}`)} className={`${CHIP} font-medium text-ink-500`}>
       <PaidLock size={13} />{t('Skill', 'Skill')}<span className="text-ink-400">· {skillTier}</span>
     </button>
   ) : (
@@ -155,7 +153,7 @@ export function Composer() {
       } catch { /* storage unavailable */ }
       router.push(`/notebooks/${doc.id}${autorun ? '?autoGenerate=1' : ''}`);
     } catch (caught) {
-      if (!guard(caught)) setError(errorText(caught, locale === 'en'));
+      if (!guard(caught)) { showPlanNotice(caught); setError(errorText(caught, locale === 'en')); }
       setBusy(false);
     }
   }
@@ -274,13 +272,12 @@ export function Composer() {
                 : t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>
               <button type="button" onClick={() => setCustomizing(false)} aria-label={t('Tutup Sesuaikan', 'Close customize')} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-500 hover:bg-paper-deep hover:text-ink-900"><X size={16} aria-hidden="true" /></button>
             </div>
-            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={sessionOnly} onUpgrade={() => setPlans(true)} />
+            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={sessionOnly} onUpgrade={openPlans} />
           </div>
         )}
       </section>
 
       {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error} {t('Teksmu tidak hilang.', 'Your text is kept.')}</Toast>}
-      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {confirmClear && <ConfirmDialog title={t('Hapus teks?', 'Clear text?')} description={t('Teks di kotak ini akan dikosongkan.', 'The text in this box will be cleared.')} confirmLabel={t('Ya, hapus', 'Yes, clear')} tone="danger" onClose={() => setConfirmClear(false)} onConfirm={() => { setText(''); setConfirmClear(false); textarea.current?.focus(); }} />}
     </div>
   );

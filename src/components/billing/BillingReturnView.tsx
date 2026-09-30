@@ -10,6 +10,8 @@ import { Logo } from '@/components/ui/Logo';
 import { Button, buttonClass } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 
+export const BILLING_RETURN_HREF = '/settings#pemakaian';
+
 type Order = { id: string; kind: 'plan' | 'topup'; plan: string | null; characters: number; amountIdr: number; mode: 'sandbox' | 'production'; status: string; granted: boolean; needsOperator: boolean; payUrl: string | null };
 
 export function BillingReturnView() {
@@ -55,7 +57,8 @@ export function BillingReturnView() {
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           {order?.status === 'pending' && order.payUrl && <a className={buttonClass('primary')} href={order.payUrl}>{t('Lanjutkan pembayaran', 'Continue payment')}</a>}
           {(order?.status === 'pending' || error) && <Button icon={RotateCw} loading={busy} onClick={() => void check()}>{t('Cek lagi', 'Check again')}</Button>}
-          <Link className={buttonClass(order?.status === 'paid' ? 'primary' : 'secondary')} href="/app">{t('Kembali ke Tulis Lab', 'Back to Tulis Lab')}</Link>
+          {/* Back to Pemakaian & paket, where the new order is listed in the payment history. */}
+          <Link className={buttonClass(order?.status === 'paid' ? 'primary' : 'secondary')} href={BILLING_RETURN_HREF}>{t('Kembali ke Tulis Lab', 'Back to Tulis Lab')}</Link>
         </div>
       </section>
     </main>

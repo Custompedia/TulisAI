@@ -21,8 +21,8 @@ import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/sty
 import { suggestStyle } from '@/lib/writing/suggest';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
-import { useEntitlements, useSessionGuard, type UserSettings } from '@/components/app/AppShell';
-import { PlansDialog } from '@/components/app/PlansDialog';
+import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
+import { openPlans, showPlanNotice } from '@/components/app/shell-events';
 import { ADVANCED_PREFERENCE } from '@/lib/plans';
 import { pageStyle } from '@/lib/docx/office-defaults';
 import { docxFilename } from '@/lib/docx/export';
@@ -87,8 +87,10 @@ export default function Workspace() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const search = useSearchParams();
-  const { t, locale, setLocale } = useLocale();
+  const { t, locale } = useLocale();
   const { limits, has } = useEntitlements();
+  // The signed-in shell already holds the account and its preferences, so the editor no longer fetches them again.
+  const { user, settings: prefs, refreshUsage } = useShell();
   const english = locale === 'en';
   const guard = useSessionGuard();
 
@@ -108,7 +110,6 @@ export default function Workspace() {
   const [save, setSave] = useState<SaveState>('loading');
   const [online, setOnline] = useState(true);
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [plans, setPlans] = useState(false);
   const [busy, setBusy] = useState('');
   const [aiError, setAiError] = useState('');
   const [inline, setInline] = useState<InlineSession | null>(null);
@@ -309,9 +310,8 @@ export default function Workspace() {
   const loadDocument = useEffectEvent(async (isLive: () => boolean) => {
     if (!editor) return;
     try {
-      const [user, prefs, value] = await Promise.all([request<{ id: string }>('/api/me'), request<UserSettings>('/api/settings'), request<Doc>(`/api/documents/${id}`)]);
+      const value = await request<Doc>(`/api/documents/${id}`);
       if (!isLive()) return;
-      setLocale(prefs.interfaceLanguage);
       localDrafts.current = prefs.localDrafts !== false; owner.current = user.id; cacheKey.current = `writing-draft:${user.id}:${id}`;
       current.current = value; setDoc(value); setTitle(value.title);
       const base = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, ...(value.preferences ?? {}), language: value.language });
@@ -439,7 +439,7 @@ export default function Workspace() {
   async function run(name: string, work: () => Promise<void>) {
     if (busy) return;
     setBusy(name); setNotice(null);
-    try { await work(); } catch (caught) { if (!guard(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); } finally { setBusy(''); }
+    try { await work(); } catch (caught) { if (!guard(caught) && !showPlanNotice(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); } finally { setBusy(''); }
   }
 
   function loadContent(value: Doc) {
@@ -515,7 +515,13 @@ export default function Workspace() {
       setPreview({ ...result, source: resolved.source, stamp: captured, anchor: resolved.anchor, settings: effective, scope: req.scope, revision: saved.revision, inlineAction: req.inlineAction, surface: req.surface, label });
       if (req.surface === 'inline') setInline({ label, status: 'ready', message: '' });
       adoptTitle(req, result.output.suggested_title);
-    } catch (caught) { if (!guard(caught)) fail(errorText(caught instanceof ApiError && caught.code.toUpperCase() === 'SCOPE_TOO_LARGE' ? new ApiError('SCOPE_TOO_LARGE', caught.status) : caught, english)); }
+      void refreshUsage();
+    } catch (caught) {
+      if (guard(caught)) return;
+      // Quota, request cap and locked features also raise the shared toast with "Lihat paket"; the per-minute cap does not.
+      showPlanNotice(caught);
+      fail(errorText(caught instanceof ApiError && caught.code.toUpperCase() === 'SCOPE_TOO_LARGE' ? new ApiError('SCOPE_TOO_LARGE', caught.status) : caught, english));
+    }
     // A stopped run has already cleared the busy state, and a newer run may own it by now.
     finally { if (ticket === generation.current) setBusy(''); if (req.surface === 'panel') setArriving(false); }
   }
@@ -704,8 +710,10 @@ export default function Workspace() {
       if (!language) throw new Error('language');
       const result = await request<Quality>('/api/ai/analyze-quality', 'POST', { documentId: id, expectedRevision: saved.revision, source: { text: source, ...(anchor ? { anchor } : {}) }, language, context: settings.mode }, newKey());
       setQuality({ ...result, stamp: stamp.current }); setQualityState({ loading: false, error: '' });
+      void refreshUsage();
     } catch (caught) {
       if (guard(caught)) return;
+      showPlanNotice(caught);
       setQualityState({ loading: false, error: caught instanceof Error && caught.message === 'language' ? t('Pilih bahasa tulisan dulu di panel AI.', 'Choose the writing language in the AI panel first.') : errorText(caught, english) });
     }
   }
@@ -811,7 +819,7 @@ export default function Workspace() {
   const chooseStyle = (style: WritingStyle) => { setSuggestionOff(true); updateSettings(applyStyle(latest.current.settings, style)); };
   // Saving a skill starts at Plus, so a free account is shown the plans instead of a 403 from the save.
   const openStyleDialog = (style: WritingStyle | null, preset: Settings, apply: boolean) =>
-    (has('saved_styles') ? setStyleDialog({ style, preset, apply }) : setPlans(true));
+    (has('saved_styles') ? setStyleDialog({ style, preset, apply }) : openPlans());
   // Deleting the applied skill only drops the marker; the notebook keeps the settings it is running with.
   function onStyleDeleted(removed: WritingStyle) {
     setStyleDialog(null);
@@ -887,7 +895,7 @@ export default function Workspace() {
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
       onGenerate={() => void generate({ scope, surface: 'panel' })} customizeRequest={customizeRequest}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
-      onUpgrade={() => setPlans(true)}
+      onUpgrade={openPlans}
     >
       {panelPreview && (
         <PreviewCard
@@ -923,7 +931,7 @@ export default function Workspace() {
   );
 
   const writing = (
-    <main aria-label={t('Tulisan', 'Writing')} className={`flex h-full min-w-0 flex-col overflow-hidden rounded-2xl ${paged ? 'ww-writing-paged' : 'border border-line bg-white'}`}>
+    <main aria-label={t('Tulisan', 'Writing')} className={`flex h-full w-full min-w-0 flex-col overflow-hidden rounded-2xl ${paged ? 'ww-writing-paged' : 'border border-line bg-white'}`}>
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-white pl-4 pr-3">
         <h2 className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink-900">{t('Tulisan', 'Writing')}</h2>
         {/* Advanced mode has undo and redo in the formatting toolbar, so they are not repeated here. */}
@@ -980,7 +988,7 @@ export default function Workspace() {
             )}
           </div>
           {editor && loaded && <TableContextMenu editor={editor} disabled={busy !== '' || !!compare || !!recovery} />}
-          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} stylesLocked={!has('saved_styles')} onCommand={selectionCommand} onStyle={styleCommand} onUpgrade={() => setPlans(true)} />}
+          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} stylesLocked={!has('saved_styles')} onCommand={selectionCommand} onStyle={styleCommand} onUpgrade={openPlans} />}
           {editor && loaded && inline && (
             <InlineResult
               editor={editor} label={inline.label} status={inline.status} preview={inlinePreview} message={inline.message} stale={stale} busy={busy !== ''} applying={busy === 'apply'}
@@ -991,7 +999,7 @@ export default function Workspace() {
       </div>
       {loaded && paged && !recovery && (
         <InstructionDock busy={busy !== ''} locked={!has('freeform_prompt')} target={instructionTarget}
-          onSubmit={instructionCommand} onUpgrade={() => setPlans(true)} onOpenChange={dockOpenChange}
+          onSubmit={instructionCommand} onUpgrade={openPlans} onOpenChange={dockOpenChange}
           running={busy === 'generate' && !!lastRequest?.instruction} onStop={stopGeneration} />
       )}
       </div>
@@ -1006,7 +1014,7 @@ export default function Workspace() {
         onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} onDelete={() => setDialog({ kind: 'delete' })}
         canExport={has('docx_export')} exporting={busy === 'export'} onExport={() => void exportDocx()}
         canAdvanced={has('advanced_notebook')} advanced={advanced} onAdvanced={toggleAdvanced}
-        onUpgrade={() => setPlans(true)}
+        onUpgrade={openPlans}
       />
 
       {save === 'conflict' && (
@@ -1014,10 +1022,10 @@ export default function Workspace() {
           {t('Perubahanmu belum ditimpa dan masih ada di layar ini.', 'Nothing was overwritten; your changes are still on this screen.')}
         </Toast>
       )}
-      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {notice && <Toast tone={notice.tone} onDismiss={() => setNotice(null)} dismissLabel={t('Tutup', 'Dismiss')} actions={notice.retrySave ? <Button size="sm" icon={RefreshCw} onClick={() => { setNotice(null); setSave('dirty'); void flush().catch(() => undefined); }}>{t('Coba simpan lagi', 'Retry saving')}</Button> : undefined}>{notice.message}</Toast>}
 
-      <div className="flex min-h-0 flex-1 px-3 pb-3">
+      {/* The shared shell's rail stays fixed on the left, so the writing area starts after it on desktop. */}
+      <div className="flex min-h-0 flex-1 px-3 pb-3 md:pl-[84px]">
         {narrow || !mounted ? writing : (
           <Group orientation="horizontal" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged} className="min-w-0 flex-1">
             <Panel id="writing" defaultSize="62%" minSize="45%">{writing}</Panel>

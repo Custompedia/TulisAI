@@ -1,21 +1,25 @@
 'use client';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { House, Lock, NotebookPen, Plus, Search, SearchX, Upload, X } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Filter, House, Lock, NotebookPen, Plus, Search, SearchX, Upload, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, request } from '@/lib/client/api';
-import { AppShell, PageHeader, useEntitlements, useSessionGuard, type DocumentSummary } from '@/components/app/AppShell';
+import { PageHeader, useEntitlements, useSessionGuard, type DocumentSummary } from '@/components/app/AppShell';
 import { NotebookCard, NotebookCardSkeleton } from '@/components/app/NotebookCard';
 import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
 import { ImportDocxDialog } from '@/components/app/ImportDocxDialog';
-import { PlansDialog } from '@/components/app/PlansDialog';
 import { useRequiredTierName } from '@/components/app/PaidLock';
+import { showLockedFeature } from '@/components/app/shell-events';
+import { modeLabel } from '@/components/writing/modes';
+import { filterByMode, libraryMode, publishLibrary } from '@/lib/navigation/library';
+import { requiredTierFor } from '@/lib/plans';
 import { Toast } from '@/components/ui/Toast';
 import { Button, buttonClass } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 
 export default function NotebooksPage() {
-  return <AppShell><Notebooks /></AppShell>;
+  return <Suspense><Notebooks /></Suspense>;
 }
 
 const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-5';
@@ -24,7 +28,6 @@ function Notebooks() {
   const { t, locale } = useLocale();
   const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
-  const [plans, setPlans] = useState(false);
   const { has } = useEntitlements();
   const guard = useSessionGuard();
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
@@ -32,6 +35,8 @@ function Notebooks() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
+  // ?mode= comes from the sidebar's MODE TERAKHIR group and filters the pages already loaded.
+  const mode = libraryMode(useSearchParams().get('mode'));
 
   const load = useCallback(async (next?: string) => {
     setError(''); if (next) setLoadingMore(true);
@@ -42,14 +47,17 @@ function Notebooks() {
     finally { setLoadingMore(false); }
   }, [guard, locale]);
   useEffect(() => { void load(); }, [load]);
+  // The sidebar counts per mode only once every page is in (nextCursor null).
+  useEffect(() => { publishLibrary(docs, docs !== null && cursor === null); }, [cursor, docs]);
+  useEffect(() => () => publishLibrary(null, false), []);
 
   const term = query.trim().toLowerCase();
-  const visible = useMemo(() => (docs && term ? docs.filter((doc) => doc.title.toLowerCase().includes(term)) : docs), [docs, term]);
+  const visible = useMemo(() => { if (!docs) return docs; const byMode = filterByMode(docs, mode); return term ? byMode.filter((doc) => doc.title.toLowerCase().includes(term)) : byMode; }, [docs, mode, term]);
   const canImport = has('docx_import');
   const importTier = useRequiredTierName('docx_import');
   // A locked import stays visible and explains itself, rather than hiding the feature from free accounts.
   const importDocx = (
-    <Button icon={Upload} iconRight={canImport ? undefined : Lock} onClick={() => (canImport ? setImporting(true) : setPlans(true))}
+    <Button icon={Upload} iconRight={canImport ? undefined : Lock} onClick={() => (canImport ? setImporting(true) : showLockedFeature(requiredTierFor('docx_import')))}
       className={canImport ? '' : 'text-ink-500'}
       title={canImport ? t('Impor dokumen Word', 'Import a Word document') : t(`Impor DOCX — buka dengan ${importTier}`, `DOCX import — unlock with ${importTier}`)}>
       {t('Impor DOCX', 'Import DOCX')}
@@ -68,6 +76,14 @@ function Notebooks() {
           {query && <button type="button" onClick={() => setQuery('')} aria-label={t('Hapus pencarian', 'Clear search')} className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-ink-400 hover:bg-paper-deep hover:text-ink-900"><X size={14} /></button>}
         </div>
       </div>
+      {/* The mode filter works on the pages already loaded, and says so, until the server can filter (Fase 2). */}
+      {mode && docs && docs.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-[13px] text-ink-600">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1 font-semibold text-ink-800"><Filter size={13} aria-hidden="true" />{t('Mode terakhir', 'Last mode')}: {modeLabel(mode, t)}</span>
+          <span>{cursor ? t(`Menyaring ${docs.length} notebook yang sudah dimuat. Muat lebih banyak untuk memeriksa yang lebih lama.`, `Filtering the ${docs.length} notebooks loaded so far. Load more to check older ones.`) : t('Menyaring semua notebook.', 'Filtering all notebooks.')}</span>
+          <Link href="/notebooks" className="font-semibold text-brand-800 hover:text-ink-900">{t('Hapus filter', 'Clear filter')}</Link>
+        </div>
+      )}
 
       <div className="mt-5">
         {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Notebook tidak bisa dimuat', 'Could not load notebooks')} actions={<Button size="sm" onClick={() => void load(docs ? cursor ?? undefined : undefined)}>{t('Coba lagi', 'Retry')}</Button>}>{error}</Toast>}
@@ -86,8 +102,8 @@ function Notebooks() {
           ) : visible && visible.length === 0 ? (
             <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white px-5 py-4 text-sm text-ink-600">
               <SearchX size={18} aria-hidden="true" className="text-ink-400" />
-              <span className="min-w-0 flex-1">{t(`Tidak ada notebook yang cocok dengan “${query.trim()}”.`, `No notebooks match “${query.trim()}”.`)}{cursor ? t(' Muat lebih banyak untuk mencari notebook lama.', ' Load more to search older notebooks.') : ''}</span>
-              <Button size="sm" onClick={() => setQuery('')}>{t('Hapus pencarian', 'Clear search')}</Button>
+              <span className="min-w-0 flex-1">{term ? t(`Tidak ada notebook yang cocok dengan “${query.trim()}”.`, `No notebooks match “${query.trim()}”.`) : t('Belum ada notebook dengan mode ini.', 'No notebooks with this mode yet.')}{cursor ? t(' Muat lebih banyak untuk mencari notebook lama.', ' Load more to search older notebooks.') : ''}</span>
+              {term ? <Button size="sm" onClick={() => setQuery('')}>{t('Hapus pencarian', 'Clear search')}</Button> : <Link href="/notebooks" className={buttonClass('secondary', 'sm')}>{t('Hapus filter', 'Clear filter')}</Link>}
             </div>
           ) : (
             <div className={GRID}>
@@ -98,7 +114,6 @@ function Notebooks() {
       </div>
       {creating && <NewNotebookDialog onClose={() => setCreating(false)} />}
       {importing && <ImportDocxDialog onClose={() => setImporting(false)} />}
-      {plans && <PlansDialog onClose={() => setPlans(false)} />}
     </main>
   );
 }
