@@ -10,7 +10,7 @@ import { PlansDialog } from './PlansDialog';
 import { ShortcutsDialog } from './ShortcutsDialog';
 import { ImportDocxDialog } from './ImportDocxDialog';
 import { NewWritingDialog, type Step } from './NewWritingDialog';
-import { NEW_WRITING_EVENT, OPEN_PLANS_EVENT, OPEN_SHORTCUTS_EVENT, PLAN_NOTICE_EVENT, SHELL_NOTICE_EVENT, type NewWritingStart, type ShellNotice } from './shell-events';
+import { NEW_WRITING_EVENT, OPEN_PLANS_EVENT, OPEN_SHORTCUTS_EVENT, PLAN_NOTICE_EVENT, SHELL_NOTICE_EVENT, takeShellNotice, type NewWritingStart, type ShellNotice } from './shell-events';
 
 // The only PlansDialog in the signed-in app, plus the plan and rate-limit toasts. "Lihat paket" in a toast
 // opens this dialog, which ends at "Pembayaran belum dibuka" while checkout is closed.
@@ -90,9 +90,13 @@ export function NoticeHost() {
   const { t } = useLocale();
   const [notice, setNotice] = useState<ShellNotice | null>(null);
   useEffect(() => {
-    const onNotice = (event: Event) => setNotice((event as CustomEvent<ShellNotice>).detail);
+    let live = true;
+    const waiting = takeShellNotice();
+    if (waiting) setNotice(waiting);
+    // A host that is about to unmount (the frame swaps when leaving the editor) leaves the notice for the next one.
+    const onNotice = (event: Event) => { setNotice((event as CustomEvent<ShellNotice>).detail); setTimeout(() => { if (live) takeShellNotice(); }, 0); };
     window.addEventListener(SHELL_NOTICE_EVENT, onNotice);
-    return () => window.removeEventListener(SHELL_NOTICE_EVENT, onNotice);
+    return () => { live = false; window.removeEventListener(SHELL_NOTICE_EVENT, onNotice); };
   }, []);
   return notice ? <Toast tone={notice.tone} duration={5000} onDismiss={() => setNotice(null)} dismissLabel={t('Tutup', 'Dismiss')}>{notice.message}</Toast> : null;
 }

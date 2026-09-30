@@ -63,7 +63,7 @@ export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImpor
   return (
     <dialog ref={ref} aria-labelledby="new-writing-title" onCancel={(event) => { event.preventDefault(); if (!busyAny) onClose(); }}
       onClick={(event) => { if (event.target === ref.current && !busyAny) onClose(); }}
-      className="m-0 h-dvh max-h-none w-full max-w-none border-0 bg-white p-0 text-ink-900 shadow-2xl backdrop:bg-ink-900/40 sm:m-auto sm:h-auto sm:max-h-[min(88vh,calc(100dvh-4rem))] sm:w-[calc(100%-2rem)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-line">
+      className="m-0 h-dvh max-h-none w-full max-w-none border-0 bg-white p-0 text-ink-900 shadow-2xl backdrop:bg-ink-900/40 sm:m-auto sm:h-fit sm:max-h-[min(88vh,calc(100dvh-4rem))] sm:w-[calc(100%-2rem)] sm:max-w-3xl sm:rounded-2xl sm:border sm:border-line">
       <div className="flex h-full max-h-[inherit] flex-col">
         <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3.5 sm:px-6">
           {back && <button type="button" onClick={back} disabled={busyAny} aria-label={t('Kembali', 'Back')} title={t('Kembali', 'Back')} className="-ml-1.5 grid h-8 w-8 place-items-center rounded-lg text-ink-500 hover:bg-ink-100 hover:text-ink-900 disabled:opacity-40"><ArrowLeft size={18} aria-hidden="true" /></button>}

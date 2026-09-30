@@ -28,7 +28,15 @@ export type NewWritingStart = { step?: 'pick' | 'rewrite' | 'skill'; styleId?: s
 export const requestNewWriting = (start: NewWritingStart = {}) => fire(NEW_WRITING_EVENT, start);
 // A toast that outlives the page that raised it, e.g. "Notebook kosong tidak disimpan" after leaving the editor.
 export type ShellNotice = { tone: 'success' | 'info' | 'warning' | 'error'; message: string };
-export const showShellNotice = (notice: ShellNotice) => fire(SHELL_NOTICE_EVENT, notice);
+// Leaving the editor also swaps the frame, so the host that would show the toast may mount after the event fired;
+// the notice is kept for a moment and picked up by the next host that mounts.
+let pending: { notice: ShellNotice; at: number } | null = null;
+export function showShellNotice(notice: ShellNotice) { pending = { notice, at: Date.now() }; fire(SHELL_NOTICE_EVENT, notice); }
+export function takeShellNotice(): ShellNotice | null {
+  const value = pending && Date.now() - pending.at < 3000 ? pending.notice : null;
+  pending = null;
+  return value;
+}
 
 // Raises the plan or rate-limit toast for a failed request. Returns true when the error was one of those,
 // so a caller can skip its own generic message.

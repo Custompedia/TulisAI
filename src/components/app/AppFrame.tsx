@@ -5,6 +5,7 @@ import { Search } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { hasContextSidebar, sectionFor } from '@/lib/navigation/sections';
 import type { SidebarPreferences } from '@/lib/navigation/sidebar';
+import type { DocPanelPreferences } from '@/lib/navigation/doc-panel';
 import { Logo } from '@/components/ui/Logo';
 import { AccountMenu } from './AccountMenu';
 import { useShell } from './AppShell';
@@ -14,6 +15,7 @@ import { MobileContextBar, ResizableSidebar, SidebarContent, sidebarLabel } from
 import { QuotaPill } from './QuotaPill';
 import { NewWritingHost, NoticeHost, PlansHost, ShortcutsHost } from './ShellHosts';
 import { openPalette } from './shell-events';
+import { DocPanelContext, useFocusMode } from './editor-frame';
 
 const subscribe = () => () => {};
 const onMac = () => /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
@@ -57,17 +59,19 @@ function Hosts() {
 
 // Three layers from Mari Rekap: top bar, icon rail, and a context sidebar for the sections that have one.
 // The editor keeps the rail but supplies its own header in place of the top bar.
-export function AppFrame({ children, initialSidebar }: { children: React.ReactNode; initialSidebar: SidebarPreferences }) {
+export function AppFrame({ children, initialSidebar, initialDocPanel = null }: { children: React.ReactNode; initialSidebar: SidebarPreferences; initialDocPanel?: DocPanelPreferences | null }) {
   const { t } = useLocale();
   const pathname = usePathname();
   const { user } = useShell();
   const section = sectionFor(pathname);
+  const focus = useFocusMode();
 
   if (section === 'editor') {
+    // Mode fokus hides the rail too; the editor hides its own panels and drops the rail's offset.
     return (
       <div className="h-dvh overflow-hidden bg-shell">
-        <Rail />
-        {children}
+        {!focus && <Rail />}
+        <DocPanelContext.Provider value={initialDocPanel}>{children}</DocPanelContext.Provider>
         <Hosts />
       </div>
     );

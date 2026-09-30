@@ -9,13 +9,14 @@ import type { Quality, QualityBand, QualityDimension } from './types';
 
 type Props = {
   // sourceChars: code points of the text that would be analysed, which is exactly what the analysis charges.
-  text: string; original: string | null; scopeLabel: string; sourceChars: number; quality: Quality | null; stale: boolean; loading: boolean; error: string;
+  // showOriginal: false for a skeleton or blank notebook, whose Original is empty or only the outline.
+  text: string; original: string | null; showOriginal?: boolean; scopeLabel: string; sourceChars: number; quality: Quality | null; stale: boolean; loading: boolean; error: string;
   blockedReason: string | null; onAnalyze: () => void;
 };
 
 const BANDS: QualityBand[] = ['rendah', 'sedang', 'tinggi'];
 
-export function AnalyticsPanel({ text, original, scopeLabel, sourceChars, quality, stale, loading, error, blockedReason, onAnalyze }: Props) {
+export function AnalyticsPanel({ text, original, showOriginal = true, scopeLabel, sourceChars, quality, stale, loading, error, blockedReason, onAnalyze }: Props) {
   const { t, locale } = useLocale();
   const n = (value: number) => numberFormat(value, locale);
   const repeated = repeatedWords(text);
@@ -31,7 +32,7 @@ export function AnalyticsPanel({ text, original, scopeLabel, sourceChars, qualit
 
   return (
     <div className="space-y-6">
-      <section>
+      {showOriginal && <section>
         <h3 className="mb-1 text-[13px] font-medium text-ink-900">{t('Sebelum & sesudah', 'Before & after')}</h3>
         <p className="mb-2.5 text-xs text-ink-500">{t('Dihitung langsung di perangkatmu, tanpa AI.', 'Computed on your device, without AI.')}</p>
         {original === null ? <p className="text-[13px] text-ink-500">{t('Original belum termuat.', 'The original is not loaded.')}</p> : (
@@ -43,7 +44,7 @@ export function AnalyticsPanel({ text, original, scopeLabel, sourceChars, qualit
             <div className="border-t border-line bg-brand-50 px-3 py-2 text-[13px] text-brand-800">≈ <b>{changePercentage(original, text)}%</b> {t('berubah dari Original', 'changed from the Original')}</div>
           </div>
         )}
-      </section>
+      </section>}
 
       <section>
         <h3 className="mb-2 text-[13px] font-medium text-ink-900">{t('Kata yang sering diulang', 'Frequently repeated words')}</h3>

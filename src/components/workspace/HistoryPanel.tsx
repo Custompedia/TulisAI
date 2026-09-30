@@ -102,6 +102,13 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
             })}
           </ol>
         )}
+        {/* A writer who never runs AI would otherwise see only the Original and wonder where versions come from. */}
+        {!loading && !hasMore && versions.length > 0 && versions.every((version) => version.kind === 'original') && (
+          <div className="mt-4 rounded-xl border border-dashed border-line-strong bg-paper/60 px-3.5 py-3">
+            <p className="text-xs leading-relaxed text-ink-600">{t('Versi dibuat saat kamu menerapkan hasil AI atau menekan Simpan versi.', 'Versions are made when you apply an AI result or press Save version.')}</p>
+            <Button size="sm" className="mt-2.5" icon={Save} disabled={!canSave} onClick={onSave}>{t('Simpan versi sekarang', 'Save a version now')}</Button>
+          </div>
+        )}
         {error && (
           <div role="alert" className="mt-3 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[13px] text-red-900">
             <TriangleAlert size={15} className="mt-0.5 shrink-0" aria-hidden="true" /><p className="flex-1">{error}</p>
