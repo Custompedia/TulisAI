@@ -44,7 +44,7 @@ export function publicOrder(row: OrderRow, now = Date.now()): PublicOrder {
   };
 }
 
-/** TulisAI's own switch for new checkouts. Status refresh, notifications and refund handling ignore it. */
+/** Tulis Lab's own switch for new checkouts. Status refresh, notifications and refund handling ignore it. */
 export function checkoutEnabled(env: RuntimeEnv): boolean {
   return env.TULISAI_COMMERCE_CHECKOUT_ENABLED?.trim() === "true";
 }
@@ -91,13 +91,13 @@ export async function createCheckout(buyer: Buyer, input: CheckoutInput, now = D
     }
     if (state.paidThrough && Date.parse(state.paidThrough) - now > MAX_PAID_AHEAD_MS) throw new RequestError("RENEWAL_LIMIT", "Paket sudah dibayar lebih dari setahun ke depan.", 409);
     const limits = PLAN_LIMITS[input.plan];
-    item = { kind: "plan", plan: input.plan, pack: null, characters: limits.includedCharacters, amount: limits.priceIdr, name: `TulisAI ${input.plan[0]!.toUpperCase()}${input.plan.slice(1)} 1 bulan` };
+    item = { kind: "plan", plan: input.plan, pack: null, characters: limits.includedCharacters, amount: limits.priceIdr, name: `Tulis Lab ${input.plan[0]!.toUpperCase()}${input.plan.slice(1)} 1 bulan` };
   } else {
     // Top-ups only extend a paid plan (B0): they never grant features or a tier.
     if (!state.current) throw new RequestError("PAID_PLAN_REQUIRED", "Tambahan karakter hanya untuk paket Plus, Pro, atau Max yang sedang aktif.", 409);
     const pack = TOP_UPS.find((candidate) => candidate.id === input.pack);
     if (!pack) throw new RequestError("PACK_UNAVAILABLE", "Paket tambahan ini tidak tersedia.", 400);
-    item = { kind: "topup", plan: null, pack: pack.id, characters: pack.characters, amount: pack.priceIdr, name: `TulisAI tambahan ${pack.characters.toLocaleString("id-ID")} karakter` };
+    item = { kind: "topup", plan: null, pack: pack.id, characters: pack.characters, amount: pack.priceIdr, name: `Tulis Lab tambahan ${pack.characters.toLocaleString("id-ID")} karakter` };
   }
 
   // Reuse an unpaid order for the same thing instead of creating a second payable one.

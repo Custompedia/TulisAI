@@ -379,7 +379,7 @@ export function createOpenRouterProvider(options: OpenRouterOptions) {
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
-      const response = await fetchImpl(endpoint, { method: "POST", headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json", "X-Title": "AI Writing Workspace" }, body: JSON.stringify({ model: options.model, messages, response_format: definition.responseFormat, reasoning: { effort: definition.reasoningEffort }, provider: { data_collection: "deny" }, usage: { include: true }, stream: false }), signal: controller.signal });
+      const response = await fetchImpl(endpoint, { method: "POST", headers: { Authorization: `Bearer ${options.apiKey}`, "Content-Type": "application/json", "X-Title": "Tulis Lab" }, body: JSON.stringify({ model: options.model, messages, response_format: definition.responseFormat, reasoning: { effort: definition.reasoningEffort }, provider: { data_collection: "deny" }, usage: { include: true }, stream: false }), signal: controller.signal });
       if (!response.ok) return { ok: false, error: "http_error", status: response.status };
       if (!response.body) return { ok: false, error: "invalid_provider_response" };
       reader = response.body.getReader(); const chunks: Uint8Array[] = []; let total = 0;

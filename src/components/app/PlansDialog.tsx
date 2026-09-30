@@ -18,7 +18,7 @@ type Order = { id: string; kind: 'plan' | 'topup'; plan: PaidTier | null; pack: 
 type Billing = { checkoutOpen: boolean; mode: 'sandbox' | 'production' | null; orders: Order[]; plan: { code: PaidTier; source: 'admin' | 'payment'; periodEnd: string; paidThrough: string } | null };
 
 // Prices, allowances and gates all come from PLAN_LIMITS, so this catalogue cannot drift from what the server enforces.
-// Buying goes through TulisAI's own Midtrans checkout. While payments are closed, choosing a plan explains that instead of pretending to sell.
+// Buying goes through Tulis Lab's own Midtrans checkout. While payments are closed, choosing a plan explains that instead of pretending to sell.
 const FREE_CHARACTERS = PLAN_LIMITS.free.includedCharacters;
 const chars = (value: number, t: T) => t(`${numberFormat(value, 'id')} karakter`, `${numberFormat(value, 'en')} characters`);
 const perRun = (tier: Tier, t: T) => t(`Sekali proses s.d. ${chars(PLAN_LIMITS[tier].runLimit, t)}`, `Up to ${chars(PLAN_LIMITS[tier].runLimit, t)} per run`);
@@ -29,7 +29,7 @@ const allowance = (tier: Tier, t: T, freeCharacters: number) => (tier === 'free'
 function plans(t: T, freeCharacters: number): Plan[] {
   return [
     {
-      id: 'free', name: t('Gratis', 'Free'), icon: Leaf, tagline: t('Coba TulisAI sekali jalan.', 'Try TulisAI once.'), quota: allowance('free', t, freeCharacters),
+      id: 'free', name: t('Gratis', 'Free'), icon: Leaf, tagline: t('Coba Tulis Lab sekali jalan.', 'Try Tulis Lab once.'), quota: allowance('free', t, freeCharacters),
       features: [t('6 mode penulisan', '6 writing modes'), perRun('free', t), t('Aksi cepat pada teks terpilih', 'Quick actions on selected text'), t('Riwayat versi & bandingkan', 'Version history & compare'), t('Editor tetap bisa dipakai setelah jatah habis', 'The editor keeps working after the allowance runs out')],
     },
     {

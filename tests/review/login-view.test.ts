@@ -19,6 +19,9 @@ describe('login presentation', () => {
   it('offers email/password and Google sign-in only, since MKL retired its identity service', () => {
     const html = render();
     expect(html).not.toContain('MKL');
+    // Rebrand (2026-09-30): the product is Tulis Lab.
+    expect(html).toContain('aria-label="Tulis Lab"');
+    expect(html).not.toContain('AI Writing Workspace');
     expect(html).toContain('Continue with Google');
     expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Continue with Google'));
     expect(html).toContain('type="email"');
