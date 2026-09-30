@@ -15,7 +15,7 @@ type Props = {
   register?: boolean;
   values: Record<AuthField, string>;
   remember: boolean;
-  busy: 'form' | 'google' | 'mkl' | null;
+  busy: 'form' | 'google' | null;
   error: string;
   fieldErrors: AuthErrors;
   next: string | null;
@@ -24,7 +24,6 @@ type Props = {
   onRemember: (value: boolean) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onGoogle: () => void;
-  onMkl: () => void;
 };
 
 const fieldInfo = {
@@ -35,7 +34,7 @@ const fieldInfo = {
   confirm: { label: 'Confirm password', placeholder: 'Repeat your password', maxLength: 128 },
 };
 
-export function AuthView({ register = false, values, remember, busy, error, fieldErrors, next, inputRefs, onChange, onRemember, onSubmit, onGoogle, onMkl }: Props) {
+export function AuthView({ register = false, values, remember, busy, error, fieldErrors, next, inputRefs, onChange, onRemember, onSubmit, onGoogle }: Props) {
   const [shown, setShown] = useState({ password: false, confirm: false });
   const [capsLock, setCapsLock] = useState<AuthField | null>(null);
   const fields: AuthField[] = register ? ['name', 'username', 'email', 'password', 'confirm'] : ['email', 'password'];
@@ -48,11 +47,6 @@ export function AuthView({ register = false, values, remember, busy, error, fiel
         <div className={styles.formPanel}>
           <div className={styles.heading}><div className={styles.brand}><Logo compact /></div><h1 id="auth-title">{register ? 'Create your account' : 'Welcome back'}</h1><p>{register ? 'A workspace for your words.' : next ? 'Sign in to pick up where you left off.' : 'Sign in to your writing workspace.'}</p></div>
           {error && <Toast tone="error">{error}</Toast>}
-          <button type="button" className={styles.mkl} onClick={onMkl} disabled={busy !== null} aria-busy={busy === 'mkl'}>
-            {busy === 'mkl' ? <Spinner size={18} /> : <span aria-hidden="true" className={styles.mklMark}>M</span>}
-            {busy === 'mkl' ? 'Connecting to MKL…' : 'Continue with MKL'}
-          </button>
-          <div className={styles.divider}><span />or use a local account<span /></div>
           <form onSubmit={onSubmit} noValidate aria-label={register ? 'Create account with email' : 'Sign in with email'} aria-busy={busy === 'form'}>
             <fieldset disabled={busy !== null} className={styles.fields}>
               <div className={styles.inputGrid}>
