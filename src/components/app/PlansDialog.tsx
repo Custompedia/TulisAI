@@ -1,8 +1,9 @@
 'use client';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Check, ChevronDown, Crown, Gauge, Leaf, Minus, Rocket, Sparkles, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
-import { numberFormat } from '@/lib/client/format';
+import { dateTime, numberFormat } from '@/lib/client/format';
+import { errorText, newKey, request } from '@/lib/client/api';
 import { PLAN_LIMITS, TIERS, TOP_UPS, TOP_UP_VALIDITY_MONTHS, type Tier, type TopUp } from '@/lib/plans';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -12,9 +13,12 @@ import { useShell } from './AppShell';
 type T = (id: string, en: string) => string;
 type Plan = { id: Tier; name: string; icon: LucideIcon; tagline: string; quota: string; inherits?: string; features: string[]; popular?: boolean };
 type Cells = [string | boolean, string | boolean, string | boolean, string | boolean];
+type PaidTier = Exclude<Tier, 'free'>;
+type Order = { id: string; kind: 'plan' | 'topup'; plan: PaidTier | null; pack: TopUp['id'] | null; characters: number; amountIdr: number; mode: 'sandbox' | 'production'; status: string; payUrl: string | null; createdAt: string };
+type Billing = { checkoutOpen: boolean; mode: 'sandbox' | 'production' | null; orders: Order[]; plan: { code: PaidTier; source: 'admin' | 'payment'; periodEnd: string; paidThrough: string } | null };
 
 // Prices, allowances and gates all come from PLAN_LIMITS, so this catalogue cannot drift from what the server enforces.
-// Payment is not wired yet, so choosing a plan explains that instead of pretending to sell.
+// Buying goes through TulisAI's own Midtrans checkout. While payments are closed, choosing a plan explains that instead of pretending to sell.
 const FREE_CHARACTERS = PLAN_LIMITS.free.includedCharacters;
 const chars = (value: number, t: T) => t(`${numberFormat(value, 'id')} karakter`, `${numberFormat(value, 'en')} characters`);
 const perRun = (tier: Tier, t: T) => t(`Sekali proses s.d. ${chars(PLAN_LIMITS[tier].runLimit, t)}`, `Up to ${chars(PLAN_LIMITS[tier].runLimit, t)} per run`);
@@ -103,7 +107,7 @@ const perThousand = (pack: TopUp) => Math.round((pack.priceIdr / pack.characters
 // The cheapest price per 1,000 characters is computed, so the "best value" tag cannot drift from the catalogue.
 const BEST_VALUE = TOP_UPS.reduce((best, pack) => (perThousand(pack) < perThousand(best) ? pack : best)).id;
 
-function TopUps({ t }: { t: T }) {
+function TopUps({ t, canBuy, busy, onBuy }: { t: T; canBuy: boolean; busy: string; onBuy: (pack: TopUp['id']) => void }) {
   const rules = [
     t('Hanya menambah kuota AI — tidak membuka fitur paket lain', 'Adds AI allowance only — never unlocks another plan\'s features'),
     t(`Dipakai setelah kuota bulanan habis, berlaku ${TOP_UP_VALIDITY_MONTHS} bulan`, `Used after the monthly allowance, valid for ${TOP_UP_VALIDITY_MONTHS} months`),
@@ -119,7 +123,7 @@ function TopUps({ t }: { t: T }) {
             <p className="mt-0.5 text-[12.5px] text-ink-500">{t('Untuk Plus, Pro, dan Max saat kuota bulanan habis sebelum waktunya.', 'For Plus, Pro, and Max when the monthly allowance runs out early.')}</p>
           </div>
         </div>
-        <span className="self-start rounded-md border border-line bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink-600">{t('Dibuka setelah pembayaran aktif', 'Opens once payment is live')}</span>
+        {!canBuy && <span className="self-start rounded-md border border-line bg-paper px-2 py-0.5 text-[11px] font-semibold text-ink-600">{t('Untuk paket berbayar yang aktif', 'For an active paid plan')}</span>}
       </header>
 
       <ul className="grid gap-3 p-4 sm:grid-cols-3">
@@ -134,6 +138,7 @@ function TopUps({ t }: { t: T }) {
               <p className="mt-1.5 text-xl font-semibold tracking-tight text-ink-950 tabular-nums">{numberFormat(pack.characters, 'id')}<span className="ml-1 text-xs font-medium text-ink-500">{t('karakter', 'characters')}</span></p>
               <p className="mt-0.5 text-[14px] font-semibold text-ink-800 tabular-nums">Rp{numberFormat(pack.priceIdr, 'id')}</p>
               <p className="mt-2 text-[11.5px] text-ink-500 tabular-nums">{t(`≈ Rp${numberFormat(perThousand(pack), 'id')} per 1.000 karakter`, `≈ Rp${numberFormat(perThousand(pack), 'id')} per 1,000 characters`)}</p>
+              {canBuy && <button type="button" disabled={busy !== ''} onClick={() => onBuy(pack.id)} className="mt-3 inline-flex h-8 items-center justify-center rounded-full border border-line-strong bg-white text-[12.5px] font-semibold text-ink-800 hover:border-ink-300 disabled:opacity-60">{busy === pack.id ? t('Membuka pembayaran…', 'Opening payment…') : t('Beli', 'Buy')}</button>}
             </li>
           );
         })}
@@ -147,7 +152,7 @@ function TopUps({ t }: { t: T }) {
 }
 
 export function PlansDialog({ onClose }: { onClose: () => void }) {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { usage } = useShell();
   // An unlimited account (admin or override) is on no catalogue plan, so nothing is marked as its current plan.
   const unlimited = usage?.unlimited === true;
@@ -155,11 +160,34 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
   const freeCharacters = usage && usage.tier === 'free' && !unlimited ? usage.characterLimit : FREE_CHARACTERS;
   const catalogue = plans(t, freeCharacters);
   const [notice, setNotice] = useState('');
+  const [billing, setBilling] = useState<Billing | null>(null);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const en = locale === 'en';
+  const load = useCallback(async () => { try { setBilling(await request<Billing>('/api/payments/orders')); } catch { setBilling(null); } }, []);
+  useEffect(() => { void load(); }, [load]);
+  const running = billing?.plan ?? null;
+  async function buy(body: { kind: 'plan'; plan: PaidTier } | { kind: 'topup'; pack: TopUp['id'] }, label: string) {
+    if (!billing?.checkoutOpen) { setNotice(label); return; }
+    setBusy(body.kind === 'plan' ? body.plan : body.pack); setError('');
+    try {
+      const result = await request<{ order: Order }>('/api/payments/checkout', 'POST', body, newKey());
+      if (result.order.payUrl) window.location.assign(result.order.payUrl); else await load();
+    } catch (caught) { setError(errorText(caught, en)); }
+    finally { setBusy(''); }
+  }
+  const pending = (billing?.orders ?? []).filter((order) => order.status === 'pending' && order.payUrl);
 
   return (
     <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI allowance')}>
       {unlimited && <Alert tone="info" className="mb-4" title={t('Akses AI tanpa batas', 'Unlimited AI access')}>{t('Akun ini tidak memakai kuota paket, jadi tidak ada paket yang ditandai aktif.', 'This account does not use plan allowance, so no plan is marked as active.')}</Alert>}
-      {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Pembayaran belum tersedia', 'Payment is not available yet')}>{t(`Paket ${notice} belum bisa dibeli karena pembayaran belum aktif. Tulisan dan kuotamu saat ini tidak berubah.`, `The ${notice} plan cannot be bought yet because payment is not live. Your writing and current allowance are unchanged.`)}</Alert>}
+      {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t(`${notice} belum bisa dibeli karena pembayaran belum dibuka. Tulisan dan kuotamu saat ini tidak berubah.`, `${notice} cannot be bought yet because payments are not open. Your writing and current allowance are unchanged.`)}</Alert>}
+      {error && <Alert tone="error" className="mb-4" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Alert>}
+      {billing?.checkoutOpen && billing.mode === 'sandbox' && <Alert tone="warning" className="mb-4" title={t('Mode uji (sandbox)', 'Test mode (sandbox)')}>{t('Pembayaran memakai simulator Midtrans. Tidak ada uang sungguhan yang ditarik.', 'Payments use the Midtrans simulator. No real money is charged.')}</Alert>}
+      {running && <Alert tone="info" className="mb-4" title={t(`Paket ${running.code[0]!.toUpperCase()}${running.code.slice(1)} aktif`, `${running.code[0]!.toUpperCase()}${running.code.slice(1)} plan active`)}>{t(`Berlaku sampai ${dateTime(running.paidThrough, 'id')}.`, `Valid until ${dateTime(running.paidThrough, 'en')}.`)}</Alert>}
+      {pending.length > 0 && <Alert tone="info" className="mb-4" title={t('Pembayaran belum selesai', 'Payment not finished')}>
+        <ul className="space-y-1">{pending.map((order) => <li key={order.id} className="flex flex-wrap items-center gap-2"><span>{order.kind === 'plan' ? `${t('Paket', 'Plan')} ${order.plan}` : t(`Tambahan ${numberFormat(order.characters, 'id')} karakter`, `${numberFormat(order.characters, 'en')}-character top-up`)} · Rp{numberFormat(order.amountIdr, 'id')}</span><a className="font-semibold text-brand-800 underline" href={order.payUrl!}>{t('Lanjutkan pembayaran', 'Continue payment')}</a></li>)}</ul>
+      </Alert>}
 
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {catalogue.map((plan) => {
@@ -191,14 +219,21 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* Free is not something to buy, so it gets a plain label instead of a disabled-looking button. */}
-              {current ? (
+              {current && plan.id !== 'free' && running?.code === plan.id && billing?.checkoutOpen ? (
+                <button type="button" disabled={busy !== ''} onClick={() => void buy({ kind: 'plan', plan: plan.id as PaidTier }, plan.name)}
+                  className="mt-4 inline-flex h-9 w-full items-center justify-center rounded-full border border-line-strong bg-white text-[13px] font-semibold text-ink-800 hover:border-ink-300 disabled:opacity-60">
+                  {busy === plan.id ? t('Membuka pembayaran…', 'Opening payment…') : t('Perpanjang 1 bulan', 'Renew 1 month')}
+                </button>
+              ) : current ? (
                 <p className="mt-4 flex h-9 items-center justify-center rounded-full bg-paper-deep text-[13px] font-semibold text-ink-500">{t('Paket saat ini', 'Current plan')}</p>
+              ) : running && plan.id !== 'free' ? (
+                <p className="mt-4 flex h-9 items-center justify-center text-center text-[12px] text-ink-500">{t('Bisa dipilih setelah paket saat ini berakhir', 'Available after the current plan ends')}</p>
               ) : plan.id === 'free' ? (
                 <p className="mt-4 flex h-9 items-center justify-center text-[12.5px] text-ink-500">{t('Otomatis untuk setiap akun baru', 'Given to every new account')}</p>
               ) : (
-                <button type="button" onClick={() => setNotice(plan.name)}
+                <button type="button" disabled={busy !== ''} onClick={() => void buy({ kind: 'plan', plan: plan.id as PaidTier }, plan.name)}
                   className={`mt-4 inline-flex h-9 w-full items-center justify-center rounded-full text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 ${plan.popular ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`}>
-                  {t(`Pilih ${plan.name}`, `Choose ${plan.name}`)}
+                  {busy === plan.id ? t('Membuka pembayaran…', 'Opening payment…') : t(`Pilih ${plan.name}`, `Choose ${plan.name}`)}
                 </button>
               )}
             </li>
@@ -206,7 +241,7 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
         })}
       </ul>
 
-      <TopUps t={t} />
+      <TopUps t={t} canBuy={Boolean(billing?.checkoutOpen && running)} busy={busy} onBuy={(pack) => void buy({ kind: 'topup', pack }, t('Tambahan karakter', 'Character top-up'))} />
 
       <section aria-label={t('Perbandingan fitur', 'Feature comparison')} className="mt-10">
         <h3 className="text-center text-[15px] font-semibold text-ink-900">{t('Bandingkan semua fitur', 'Compare all features')}</h3>
@@ -259,7 +294,7 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
 
       <footer className="mt-8 flex w-full flex-col gap-1.5 border-t border-line pt-4 text-[11.5px] text-ink-500 sm:flex-row sm:items-center sm:justify-between">
         <p>{t('Harga dalam Rupiah per bulan. Perpanjangan manual, tanpa penarikan otomatis.', 'Prices in Rupiah per month. Renewal is manual, with no automatic charge.')}</p>
-        <p>{t('Kuota bulanan saat ini direset tiap awal bulan kalender (UTC).', 'The monthly allowance currently resets at the start of each calendar month (UTC).')}</p>
+        <p>{t('Kuota bulanan mengikuti periode paketmu: satu bulan kalender sejak paket aktif.', 'The monthly allowance follows your plan period: one calendar month from activation.')}</p>
       </footer>
     </Modal>
   );

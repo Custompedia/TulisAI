@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { Database, Gauge, ScrollText, type LucideIcon } from 'lucide-react';
+import { Database, Gauge, ScrollText, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { PageHeader, useShell } from '@/components/app/AppShell';
 import { StatusScreen } from '@/components/ui/StatusScreen';
@@ -9,11 +9,12 @@ import type { AdminSummary, UsersPage } from './admin-shared';
 import { AiMonitor } from './AiMonitor';
 import { AdminLog } from './AdminLog';
 import { UserDatabase } from './UserDatabase';
+import { PaymentsPanel } from './PaymentsPanel';
 import { UserDetailModal } from './UserDetailModal';
 
-type Tab = 'ai' | 'database' | 'log';
+type Tab = 'ai' | 'database' | 'payments' | 'log';
 type Notice = { tone: 'success' | 'error'; message: string };
-const TABS: Tab[] = ['database', 'ai', 'log'];
+const TABS: Tab[] = ['database', 'payments', 'ai', 'log'];
 const tabFromHash = (hash: string): Tab => { const value = hash.replace(/^#/, ''); return (TABS as string[]).includes(value) ? value as Tab : 'database'; };
 
 export function AdminView() {
@@ -39,7 +40,7 @@ export function AdminView() {
     return <StatusScreen kind="error" title={t('Halaman khusus admin', 'Admins only')} description={t('Akunmu tidak punya akses ke panel admin.', 'Your account does not have access to the admin panel.')} secondary={{ label: t('Kembali ke beranda', 'Back to home'), href: '/app' }} />;
   }
 
-  const tabs: Array<{ id: Tab; icon: LucideIcon; label: string }> = [{ id: 'database', icon: Database, label: 'Database' }, { id: 'ai', icon: Gauge, label: 'Monitoring AI' }, { id: 'log', icon: ScrollText, label: 'Log' }];
+  const tabs: Array<{ id: Tab; icon: LucideIcon; label: string }> = [{ id: 'database', icon: Database, label: 'Database' }, { id: 'payments', icon: Wallet, label: t('Pembayaran', 'Payments') }, { id: 'ai', icon: Gauge, label: 'Monitoring AI' }, { id: 'log', icon: ScrollText, label: 'Log' }];
 
   return (
     <main className="mx-auto w-full max-w-7xl px-4 pb-12 pt-8 sm:px-6">
@@ -56,6 +57,7 @@ export function AdminView() {
       <div className="mt-5">
         {tab === 'ai' && <AiMonitor summary={summary} onOpenUser={setSelected} />}
         {tab === 'database' && <UserDatabase onOpenUser={setSelected} onPage={onPage} refreshKey={refreshKey} notify={notify} />}
+        {tab === 'payments' && <PaymentsPanel onOpenUser={setSelected} />}
         {tab === 'log' && <AdminLog onOpenUser={setSelected} refreshKey={refreshKey} />}
       </div>
 

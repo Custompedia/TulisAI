@@ -122,6 +122,15 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'SELF_BAN' || code === 'YOU_CANNOT_BAN_YOURSELF': return t('Kamu tidak bisa menonaktifkan akunmu sendiri.', 'You cannot disable your own account.');
     case code === 'SELF_DELETE' || code === 'YOU_CANNOT_REMOVE_YOURSELF': return t('Kamu tidak bisa menghapus akunmu sendiri dari sini.', 'You cannot delete your own account from here.');
     case code === 'LAST_ADMIN': return t('Harus tersisa minimal satu admin aktif.', 'At least one active admin must remain.');
+    case code === 'PAYMENTS_CLOSED': return t('Pembayaran belum dibuka. Paket dan kuota yang sudah kamu punya tetap berlaku.', 'Payments are not open yet. Your current plan and allowance stay as they are.');
+    case code === 'PLAN_ACTIVE': return t('Paket lain masih berjalan. Paket bisa diganti setelah periodenya berakhir.', 'Another plan is still running. You can switch after its period ends.');
+    case code === 'PAID_PLAN_REQUIRED': return t('Tambahan karakter hanya untuk paket Plus, Pro, atau Max yang sedang aktif.', 'Top-ups are only for an active Plus, Pro, or Max plan.');
+    case code === 'RENEWAL_LIMIT': return t('Paket sudah dibayar lebih dari setahun ke depan.', 'This plan is already paid more than a year ahead.');
+    case code === 'PAYMENT_PAGE_UNAVAILABLE': return t('Halaman pembayaran belum bisa dibuka. Coba lagi sebentar lagi.', 'The payment page could not be opened. Try again shortly.');
+    case code === 'PAYMENT_STATUS_UNAVAILABLE': return t('Status pembayaran belum bisa dicek. Coba lagi sebentar lagi.', 'The payment status could not be checked. Try again shortly.');
+    case code === 'TIER_READ_ONLY': return t('Tier tidak diubah langsung. Pakai tab Paket untuk memberi atau mengakhiri paket.', 'The tier is not edited directly. Use the Plan tab to grant or end a plan.');
+    case code === 'NO_ACTIVE_PLAN': return t('Akun ini tidak punya paket yang berjalan.', 'This account has no running plan.');
+    case code === 'PLAN_CHANGED_CONCURRENTLY': return t('Paket berubah saat disimpan. Muat ulang lalu coba lagi.', 'The plan changed while saving. Reload and try again.');
     case code === 'ADMIN_DELETE': return t('Cabut role admin dulu sebelum menghapus akun ini.', 'Remove the admin role before deleting this account.');
     case code === 'USER_ALREADY_EXISTS' || code === 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL': return t('Email ini sudah terdaftar.', 'This email is already registered.');
     case code === 'USER_NOT_FOUND': return t('Pengguna tidak ditemukan.', 'User not found.');
