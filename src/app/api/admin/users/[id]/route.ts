@@ -3,13 +3,14 @@ import { auth, requireAdmin } from "@/server/auth/auth";
 import { handleRouteError, idempotencyKey, readJson } from "@/server/http";
 import { assertRemove, audit, getUser, listAudit, updateUser, UserPatchSchema } from "@/server/admin/service";
 import { purgeUserData } from "@/server/account/purge";
+import { listAdminGrants } from "@/server/usage/admin-grants";
 type Context = { params: Promise<{ id: string }> };
 
 export async function GET(request: Request, { params }: Context) {
   try {
     await requireAdmin(request); const { id } = await params;
-    const [user, sessions, history] = await Promise.all([getUser(id), auth().api.listUserSessions({ headers: request.headers, body: { userId: id } }), listAudit({ targetUserId: id })]);
-    return jsonData({ user, sessions: sessions.sessions.map((session) => ({ id: session.id, token: session.token, createdAt: session.createdAt, expiresAt: session.expiresAt, ipAddress: session.ipAddress ?? null, userAgent: session.userAgent ?? null })), history: history.items });
+    const [user, sessions, history, grants] = await Promise.all([getUser(id), auth().api.listUserSessions({ headers: request.headers, body: { userId: id } }), listAudit({ targetUserId: id }), listAdminGrants(id)]);
+    return jsonData({ user, sessions: sessions.sessions.map((session) => ({ id: session.id, token: session.token, createdAt: session.createdAt, expiresAt: session.expiresAt, ipAddress: session.ipAddress ?? null, userAgent: session.userAgent ?? null })), history: history.items, grants });
   } catch (error) { return handleRouteError(error); }
 }
 

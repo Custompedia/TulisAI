@@ -3,6 +3,7 @@ import { auth, requireAdmin } from "@/server/auth/auth";
 import { handleRouteError, idempotencyKey, readJson } from "@/server/http";
 import { ActionSchema, assertBan, assertRoleChange, audit, getUser } from "@/server/admin/service";
 import { adminActivatePlan, adminEndPlan } from "@/server/access/periods";
+import { grantAdminCharacters } from "@/server/usage/admin-grants";
 type Context = { params: Promise<{ id: string }> };
 
 // One endpoint for account lifecycle actions; each delegates to the Better Auth admin plugin and writes an audit entry.
@@ -21,6 +22,8 @@ export async function POST(request: Request, { params }: Context) {
       // Plan grants audit themselves (plan.admin.*). Admins may receive plans too.
       case "activate-plan": await adminActivatePlan({ actorId: admin.id, ownerId: id, plan: input.plan, note: input.note }); break;
       case "end-plan": await adminEndPlan({ actorId: admin.id, ownerId: id, reason: input.reason }); break;
+      // Audited in the same batch as the grant (wallet.admin.grant).
+      case "grant-characters": await grantAdminCharacters({ actorId: admin.id, ownerId: id, amount: input.amount, validityDays: input.validityDays, note: input.note, requestKey: input.requestKey }); break;
     }
     return jsonData(await getUser(id));
   } catch (error) { return handleRouteError(error); }
