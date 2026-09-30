@@ -11,7 +11,7 @@ import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
 import { DRAFT_RESERVE_CHARACTERS, DRAFT_TARGET_CHARACTERS, FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
-import {collapseBlankLines, crossesBlocks, draftTarget, insertBlocksAt, type StructuredBlock} from '@/lib/editor/document';
+import {collapseBlankLines, crossesBlocks, draftTarget, insertBlocksAt, replaceBlocksKeepingStructure, type StructuredBlock} from '@/lib/editor/document';
 import { readMeta } from '@/lib/writing/notebook-meta';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, DraftInput, GenerateInput } from '@/lib/contracts';
@@ -94,6 +94,14 @@ export function applyFormat(promptId: PromptId, sourceText: string, output: stri
   if (requested) return requested;
   if (spansParagraphs) return 'paragraph';
   return !sourceText.includes('\n') && output.includes('\n') ? 'paragraph' : undefined;
+}
+// UX 3: P01–P06 over several blocks (or the whole notebook) are applied block by block when their result keeps one
+// line per block. A requested shape (list, table, summary, email, script, thread) decides its own lines, so it keeps
+// the paragraph path, and so do P07 and P08.
+const BLOCKWISE: ReadonlySet<PromptId> = new Set(['P01_STANDARD_REWRITE', 'P02_ACADEMIC', 'P03_HUMANIZER', 'P04_PROFESSIONAL', 'P05_CREATIVE', 'P06_SIMPLIFY']);
+export function keepsStructure(promptId: PromptId, controls: RuntimeInput, spansParagraphs: boolean): boolean {
+  const format = controls.request?.format;
+  return BLOCKWISE.has(promptId) && spansParagraphs && (format === undefined || format === 'paragraf');
 }
 // Paraphrase runs share one per-tier budget whether the scope is a selection or the whole notebook; inline actions keep their own small cap.
 export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLimits) {
@@ -248,6 +256,12 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     const soft = output.no_change_needed === true || freeform ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
     if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
+    // Said before applying, not after: a structured scope whose result lost the one-line-per-block shape will be
+    // applied as plain paragraphs, the way every multi-block apply worked before UX 3.
+    if (output.no_change_needed !== true && keepsStructure(input.promptId,controls,anchor?crossesBlocks(source.document.content,anchor.from,anchor.to):true)) {
+      const check=replaceBlocksKeepingStructure(source.document.content,anchor?.from??0,anchor?.to??source.text.length,collapseBlankLines(outputText(output)));
+      if (!check.content && check.structured) output={...output,warnings:mergeWarnings(output.warnings,[controls.language==='en'?'The result has a different number of lines, so headings, lists and tables would become plain paragraphs.':'Jumlah baris hasil berbeda, jadi judul, daftar, dan tabel akan menjadi paragraf biasa.'])};
+    }
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
   // OD-11/AI Mode: ordinary operations charge exact source code points; AI
@@ -294,7 +308,10 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
   }
   const replacement=collapseBlankLines(outputText(output,selectedAlternative));
   const spansParagraphs=anchor?crossesBlocks(document.document.content,anchor.from,anchor.to):true;
-  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,replacement,applyFormat(preview.prompt_id,preview.source_text,replacement,controls,spansParagraphs));
+  const from=anchor?.from??0;const to=anchor?.to??document.text.length;
+  // UX 3: a rewrite that kept one line per block goes back block by block, so headings, lists and tables survive.
+  const kept=keepsStructure(preview.prompt_id,controls,spansParagraphs)?replaceBlocksKeepingStructure(document.document.content,from,to,replacement).content:null;
+  const content=kept??replaceTextInDocument(document.document.content,from,to,replacement,applyFormat(preview.prompt_id,preview.source_text,replacement,controls,spansParagraphs));
   return saveDocument(ownerId,preview.document_id,expectedRevision,{content},'ai_apply',null,{previewId,expectedLockIds:locks.map(lock=>lock.id),promptId:preview.prompt_id,scopeType:anchor?'selection':'document'});
 }
 export async function discardPreview(ownerId:string,previewId:string) {

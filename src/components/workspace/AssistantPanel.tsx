@@ -351,8 +351,8 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
           <p className="flex gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-relaxed text-amber-900">
             <TriangleAlert size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
             <span>{scope === 'section'
-              ? t('Tabel dan catatan kaki di bagian ini akan menjadi paragraf biasa. Judulnya tetap.', 'Tables and footnotes in this section will become plain paragraphs. The heading stays.')
-              : t('Judul, tabel, dan catatan kaki akan menjadi paragraf biasa. Olah per bagian: pilih “Bagian ini”.', 'Headings, tables and footnotes will become plain paragraphs. Work section by section: choose “This section”.')}</span>
+              ? t('Daftar dan tabel di bagian ini tetap terjaga bila hasilnya punya satu baris per blok; pratinjau memberi tahu bila tidak. Judulnya tetap.', 'Lists and tables in this section are kept when the result has one line per block; the preview tells you when it does not. The heading stays.')
+              : t('Judul, daftar, dan tabel tetap terjaga bila hasilnya punya satu baris per blok. Bila tidak, atau bila baris yang berubah memuat catatan kaki, pratinjau memberi tahu dan semuanya menjadi paragraf biasa.', 'Headings, lists and tables are kept when the result has one line per block. If not, or if a changed line holds a footnote, the preview says so and everything becomes plain paragraphs.')}</span>
           </p>
         )}
         {emptyDocument && <p className="text-xs leading-relaxed text-ink-600">{t('AI Tulis Lab mengolah teks yang sudah ada. Tulis minimal 3 kata dulu.', 'Tulis Lab’s AI works on text that already exists. Write at least 3 words first.')}</p>}

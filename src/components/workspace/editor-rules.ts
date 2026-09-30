@@ -30,7 +30,8 @@ export function shouldDiscard(input: { source: string | null | undefined; revisi
   return input.original !== null && input.text === input.original;
 }
 
-// Applying to the whole document flattens headings, tables and footnotes into paragraphs, so the panel warns
+// Applying to the whole document keeps headings, lists and tables only when the result keeps one line per block
+// (UX 3), so the panel says so
 // before a run on a structured notebook.
 const STRUCTURE = new Set(['heading', 'table', 'footnote', 'tableOfContents']);
 type Walkable = { descendants: (visit: (node: { type: { name: string } }) => boolean | void) => void };
