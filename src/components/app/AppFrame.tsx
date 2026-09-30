@@ -12,7 +12,7 @@ import { MobileBar, Rail } from './AppNavigation';
 import { CommandPalette } from './CommandPalette';
 import { MobileContextBar, ResizableSidebar, SidebarContent, sidebarLabel } from './ContextSidebar';
 import { QuotaPill } from './QuotaPill';
-import { NewWritingHost, PlansHost, ShortcutsHost } from './ShellHosts';
+import { NewWritingHost, NoticeHost, PlansHost, ShortcutsHost } from './ShellHosts';
 import { openPalette } from './shell-events';
 
 const subscribe = () => () => {};
@@ -52,7 +52,7 @@ function TopBar() {
 
 // Everything the frame owns beyond the layout: palette, shortcuts, plans and the Tulis baru entry point.
 function Hosts() {
-  return <><CommandPalette /><ShortcutsHost /><PlansHost /><NewWritingHost /></>;
+  return <><CommandPalette /><ShortcutsHost /><PlansHost /><NewWritingHost /><NoticeHost /></>;
 }
 
 // Three layers from Mari Rekap: top bar, icon rail, and a context sidebar for the sections that have one.

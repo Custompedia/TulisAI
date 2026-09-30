@@ -1,9 +1,10 @@
 'use client';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowRight, ChevronDown, ClipboardPaste, Plus, SlidersHorizontal, Trash2, TriangleAlert, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
+import { guardedPush } from '@/lib/client/navigation-guard';
 import { plainTextDocument } from '@/lib/editor/document';
 import { countWords } from '@/lib/editor/metrics';
 import { numberFormat } from '@/lib/client/format';
@@ -16,7 +17,8 @@ import { StyleMark } from '@/components/writing/StyleMark';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
 import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
-import { COMPOSER_FOCUS_EVENT, openPlans, showPlanNotice } from '@/components/app/shell-events';
+import { COMPOSER_DRAFT_EVENT, COMPOSER_FOCUS_EVENT, COMPOSER_STYLE_EVENT, openPlans, showPlanNotice } from '@/components/app/shell-events';
+import { clampPreferenceValues, type DocSource } from '@/lib/writing/notebook-meta';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -48,7 +50,9 @@ const sendLabelFor = (mode: Mode | null, t: T) => mode === null ? t('Perbaiki te
   professional: t('Buat profesional', 'Make it professional'), creative: t('Buat kreatif', 'Make it creative'), simplify: t('Sederhanakan', 'Simplify text'),
 }[mode];
 
-export function Composer() {
+// `embedded`: step 2 of the Tulis baru dialog. It shares Beranda's session draft, so there are never two
+// different composers; `initialStyleId` starts it on a saved skill (the Pakai skill card).
+export function Composer({ embedded = false, initialStyleId }: { embedded?: boolean; initialStyleId?: string } = {}) {
   const { t, locale } = useLocale();
   const router = useRouter();
   const guard = useSessionGuard();
@@ -76,13 +80,15 @@ export function Composer() {
   const manualPicked = useRef(false);
 
   const focus = useCallback(() => { const node = textarea.current; if (!node) return; node.focus(); node.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, []);
-  useEffect(() => { try { const saved = sessionStorage.getItem(DRAFT_KEY); if (saved) setText(saved); } catch { /* storage unavailable */ } }, []);
+  const readDraft = useCallback(() => { try { setText(sessionStorage.getItem(DRAFT_KEY) ?? ''); } catch { /* storage unavailable */ } }, []);
+  useEffect(() => { readDraft(); }, [readDraft]);
   useEffect(() => { try { if (text) sessionStorage.setItem(DRAFT_KEY, text); else sessionStorage.removeItem(DRAFT_KEY); } catch { /* storage unavailable */ } }, [text]);
+  // The dialog's composer tells Beranda's to pick the shared draft up again when it closes.
   useEffect(() => {
-    if (window.location.hash === '#compose') focus();
-    window.addEventListener(COMPOSER_FOCUS_EVENT, focus);
-    return () => window.removeEventListener(COMPOSER_FOCUS_EVENT, focus);
-  }, [focus]);
+    if (embedded) { textarea.current?.focus(); return () => { window.dispatchEvent(new Event(COMPOSER_DRAFT_EVENT)); }; }
+    window.addEventListener(COMPOSER_FOCUS_EVENT, focus); window.addEventListener(COMPOSER_DRAFT_EVENT, readDraft);
+    return () => { window.removeEventListener(COMPOSER_FOCUS_EVENT, focus); window.removeEventListener(COMPOSER_DRAFT_EVENT, readDraft); };
+  }, [embedded, focus, readDraft]);
   useLayoutEffect(() => {
     const node = textarea.current; if (!node) return;
     node.style.height = 'auto';
@@ -123,6 +129,18 @@ export function Composer() {
     if (!style) return;
     setSettings(applyStyle(settings, style)); setCustomizing(false); setPicked(true); textarea.current?.focus();
   };
+  // A skill chosen outside the composer: Beranda's "Skill saya" chips, or the dialog's Pakai skill card.
+  const pickStyleEvent = useEffectEvent((id: string) => pickStyle(id));
+  const startStyle = useRef(initialStyleId);
+  useEffect(() => {
+    if (startStyle.current && styles.some((style) => style.id === startStyle.current)) { pickStyleEvent(startStyle.current); startStyle.current = undefined; }
+  }, [styles]);
+  useEffect(() => {
+    if (embedded) return;
+    const onStyle = (event: Event) => { const id = (event as CustomEvent<string>).detail; if (typeof id === 'string') { pickStyleEvent(id); focus(); } };
+    window.addEventListener(COMPOSER_STYLE_EVENT, onStyle);
+    return () => window.removeEventListener(COMPOSER_STYLE_EVENT, onStyle);
+  }, [embedded, focus]);
   // Removing a skill hands the row back to the manual configuration the user had before.
   const clearStyle = () => { setSettings(tabSettings('mode', settings, memory.current, styles, manualBase.current)); setPicked(manualPicked.current); };
   const styleChip = styles.length > 0 && (stylesLocked ? (
@@ -141,7 +159,9 @@ export function Composer() {
     const title = deriveTitle(text, t('Notebook tanpa judul', 'Untitled notebook'));
     try {
       // A skill id without saved_styles is refused on create, so a locked account never sends one.
-      const preferences = stylesLocked ? { ...settings, styleId: null } : settings;
+      // Every string is capped at create's 500 characters, so a long writing sample never turns into a 400.
+      const source: DocSource = settings.styleId && !stylesLocked ? 'skill' : 'compose';
+      const preferences = clampPreferenceValues({ ...settings, ...(stylesLocked ? { styleId: null } : {}), docSource: source });
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences }, newKey());
       try {
         if (autorun) {
@@ -151,7 +171,8 @@ export function Composer() {
         }
         sessionStorage.removeItem(DRAFT_KEY);
       } catch { /* storage unavailable */ }
-      router.push(`/notebooks/${doc.id}${autorun ? '?autoGenerate=1' : ''}`);
+      // Through the leave guard: from the dialog over an unsaved notebook, the editor asks before it lets go.
+      if (!guardedPush(router, `/notebooks/${doc.id}${autorun ? '?autoGenerate=1' : ''}`)) setBusy(false);
     } catch (caught) {
       if (!guard(caught)) { showPlanNotice(caught); setError(errorText(caught, locale === 'en')); }
       setBusy(false);
@@ -180,7 +201,7 @@ export function Composer() {
   const ModeIcon = modeIcon[settings.mode];
 
   return (
-    <div id="compose" className="scroll-mt-20">
+    <div id={embedded ? undefined : 'compose'} className="scroll-mt-20">
       <section aria-label={t('Mulai menulis', 'Start writing')} className="rounded-[22px] border border-brand-300 bg-brand-50 p-1.5 shadow-[0_14px_36px_-20px_rgb(66_91_52/0.45)]">
         <div className="rounded-2xl bg-white shadow-[0_1px_3px_rgb(31_32_29/0.08)]">
           <label htmlFor="composer-text" className="sr-only">{t('Teks yang ingin diperbaiki', 'Text to improve')}</label>

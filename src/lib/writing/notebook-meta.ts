@@ -1,5 +1,5 @@
 import { ADVANCED_PREFERENCE, PAGE_LAYOUT_PREFERENCES } from '@/lib/plans';
-import type { Settings } from './settings';
+import { normalizeSettings, type Settings } from './settings';
 
 // Notebook facts that are not writing settings: the kind of writing, where it came from, a word target and the
 // writer's own brief. They share the notebook's preferences row with the settings and the page layout, so every
@@ -56,6 +56,14 @@ export function clampPreferenceValues(preferences: Record<string, unknown>): Rec
 }
 
 export type CopyAccess = { advancedNotebook: boolean; savedStyles: boolean };
+
+// A stored preferences row split back into the parts copyPreferences takes, for a copy made without the editor
+// open (Duplikat on a library card).
+export function storedParts(stored: Record<string, unknown> | null | undefined): { settings: Settings; layout: Record<string, unknown>; advanced: boolean; meta: NotebookMeta } {
+  const source = stored ?? {};
+  const layout = Object.fromEntries(PAGE_LAYOUT_PREFERENCES.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]));
+  return { settings: normalizeSettings(source), layout, advanced: source[ADVANCED_PREFERENCE] === true, meta: readMeta(source) };
+}
 
 // Preferences for a new notebook made from an existing one (duplicate, save-as-copy, recovery copy). Create refuses
 // page-layout keys and the canvas flag without advanced_notebook, and a skill id without saved_styles, with

@@ -2,7 +2,7 @@
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useEffectEvent, useState } from 'react';
-import { ArrowLeft, Copy, Lock, PencilLine, Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowLeft, Copy, FilePlus2, Lock, PencilLine, Plus, RotateCw, Sparkles, Trash2 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText } from '@/lib/client/api';
 import { useBilling } from '@/lib/client/billing-store';
@@ -11,7 +11,7 @@ import { defaults } from '@/lib/writing/settings';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { PageHeader, useEntitlements, useSessionGuard } from '@/components/app/AppShell';
 import { useRequiredTierName } from '@/components/app/PaidLock';
-import { openPlans } from '@/components/app/shell-events';
+import { openPlans, requestNewWriting } from '@/components/app/shell-events';
 import { Alert } from '@/components/ui/Alert';
 import { Button, buttonClass } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -125,6 +125,8 @@ export function SkillsView() {
             <div className="flex items-start gap-3">
               <StyleMark style={selected} size={44} />
               <div className="min-w-0 flex-1"><h2 id="skill-title" className="truncate text-lg font-semibold text-ink-950">{selected.name}</h2><p className="text-[13px] text-ink-500">{t('Skill tersimpan', 'Saved skill')}</p></div>
+              {/* The Tulis baru dialog's Pakai skill card, already on this skill: paste the text and send. */}
+              <Button variant="primary" icon={locked ? Lock : FilePlus2} disabled={locked} className="shrink-0" onClick={() => requestNewWriting({ step: 'skill', styleId: selected.id })}>{t('Pakai di notebook baru', 'Use in a new notebook')}</Button>
             </div>
             <SkillSummary style={selected} t={t} />
             <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
