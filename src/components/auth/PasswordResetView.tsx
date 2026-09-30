@@ -54,7 +54,7 @@ export function ForgotPasswordView() {
     finally { setBusy(false); }
   }
 
-  return <AuthCard title={t('Lupa password', 'Forgot password')} description={t('Masukkan email akunmu. Kami kirim link untuk membuat password baru.', 'Enter your account email. We will send a link to create a new password.')} footer={<BackToLogin />}>
+  return <AuthCard title={t('Lupa kata sandi', 'Forgot password')} description={t('Masukkan email akunmu. Kami kirim link untuk membuat kata sandi baru.', 'Enter your account email. We will send a link to create a new password.')} footer={<BackToLogin />}>
     {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Toast>}
     {sent ? (
       <div className={styles.stack}>
@@ -93,8 +93,8 @@ export function ResetPasswordView() {
     event.preventDefault();
     if (busy || !token) return;
     const errors = {
-      ...(!validateSignupPassword(values.password) ? { password: t('Gunakan password 10–128 karakter.', 'Use a password of 10–128 characters.') } : {}),
-      ...(!values.confirm || values.confirm !== values.password ? { confirm: t('Konfirmasi password belum sama.', 'Passwords do not match.') } : {}),
+      ...(!validateSignupPassword(values.password) ? { password: t('Gunakan kata sandi 10–128 karakter.', 'Use a password of 10–128 characters.') } : {}),
+      ...(!values.confirm || values.confirm !== values.password ? { confirm: t('Konfirmasi kata sandi belum sama.', 'Passwords do not match.') } : {}),
     };
     setFieldErrors(errors);
     if (Object.keys(errors).length) return;
@@ -104,13 +104,13 @@ export function ResetPasswordView() {
     finally { setBusy(false); }
   }
 
-  const titles = { form: t('Buat password baru', 'Create a new password'), done: t('Password diperbarui', 'Password updated'), invalid: t('Link tidak valid', 'Invalid link') };
-  const descriptions = { form: t('Gunakan password yang belum pernah kamu pakai di akun ini.', 'Use a password you have not used for this account.'), done: t('Kamu bisa masuk dengan password baru sekarang.', 'You can sign in with your new password now.'), invalid: t('Link reset sudah kedaluwarsa atau pernah dipakai.', 'The reset link has expired or was already used.') };
+  const titles = { form: t('Buat kata sandi baru', 'Create a new password'), done: t('Kata sandi diperbarui', 'Password updated'), invalid: t('Link tidak valid', 'Invalid link') };
+  const descriptions = { form: t('Gunakan kata sandi yang belum pernah kamu pakai di akun ini.', 'Use a password you have not used for this account.'), done: t('Kamu bisa masuk dengan kata sandi baru sekarang.', 'You can sign in with your new password now.'), invalid: t('Link reset sudah kedaluwarsa atau pernah dipakai.', 'The reset link has expired or was already used.') };
 
   return <AuthCard title={titles[state]} description={descriptions[state]} footer={state === 'invalid' ? <Link href="/forgot-password">{t('Minta link baru', 'Request a new link')}<ArrowRight size={13} aria-hidden="true" /></Link> : <BackToLogin />}>
     {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Toast>}
     {state === 'done' && <div className={styles.stack}>
-      <div className={styles.notice} role="status"><CircleCheck size={18} aria-hidden="true" /><span>{t('Password berhasil diganti.', 'Your password was changed.')}</span></div>
+      <div className={styles.notice} role="status"><CircleCheck size={18} aria-hidden="true" /><span>{t('Kata sandi berhasil diganti.', 'Your password was changed.')}</span></div>
       <Link href="/login" className={styles.submit}>{t('Masuk', 'Sign in')}<ArrowRight size={16} aria-hidden="true" /></Link>
     </div>}
     {state === 'invalid' && <div className={styles.stack}>
@@ -120,14 +120,14 @@ export function ResetPasswordView() {
     {state === 'form' && <form onSubmit={(event) => void submit(event)} noValidate aria-busy={busy}>
       <fieldset disabled={busy} className={styles.fields}>
         {(['password', 'confirm'] as Secret[]).map((field) => <div key={field} className={styles.field}>
-          <label htmlFor={`reset-${field}`}>{field === 'password' ? t('Password baru', 'New password') : t('Ulangi password', 'Confirm password')}</label>
+          <label htmlFor={`reset-${field}`}>{field === 'password' ? t('Kata sandi baru', 'New password') : t('Ulangi kata sandi', 'Confirm password')}</label>
           <div className={`${styles.inputWrap} ${styles.passwordWrap}`}>
             <input id={`reset-${field}`} type={shown[field] ? 'text' : 'password'} autoComplete="new-password" required maxLength={128} value={values[field]} aria-invalid={Boolean(fieldErrors[field])} aria-describedby={fieldErrors[field] ? `reset-${field}-error` : field === 'password' ? 'reset-password-hint' : undefined} onChange={(event) => { setValues((current) => ({ ...current, [field]: event.target.value })); setFieldErrors((current) => ({ ...current, [field]: undefined })); }} />
-            <button type="button" className={styles.reveal} aria-pressed={shown[field]} aria-label={shown[field] ? t('Sembunyikan password', 'Hide password') : t('Tampilkan password', 'Show password')} onClick={() => setShown((current) => ({ ...current, [field]: !current[field] }))}>{shown[field] ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}</button>
+            <button type="button" className={styles.reveal} aria-pressed={shown[field]} aria-label={shown[field] ? t('Sembunyikan kata sandi', 'Hide password') : t('Tampilkan kata sandi', 'Show password')} onClick={() => setShown((current) => ({ ...current, [field]: !current[field] }))}>{shown[field] ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}</button>
           </div>
           {fieldErrors[field] ? <p id={`reset-${field}-error`} role="alert" className={styles.fieldError}>{fieldErrors[field]}</p> : field === 'password' && <p id="reset-password-hint" className={styles.hint}>{t('10–128 karakter.', '10–128 characters.')}</p>}
         </div>)}
-        <button type="submit" className={styles.submit} disabled={busy}>{busy ? <><Spinner size={17} />{t('Menyimpan…', 'Saving…')}</> : <>{t('Simpan password', 'Save password')}<ArrowRight size={16} aria-hidden="true" /></>}</button>
+        <button type="submit" className={styles.submit} disabled={busy}>{busy ? <><Spinner size={17} />{t('Menyimpan…', 'Saving…')}</> : <>{t('Simpan kata sandi', 'Save password')}<ArrowRight size={16} aria-hidden="true" /></>}</button>
       </fieldset>
     </form>}
   </AuthCard>;

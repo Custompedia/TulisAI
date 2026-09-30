@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 import { ForgotPasswordView } from '@/components/auth/PasswordResetView';
-import { LocaleScope } from '@/lib/client/locale';
 
-export const metadata: Metadata = { title: 'Forgot password', description: 'Request a password reset link for Tulis Lab.', robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: 'Lupa kata sandi', description: 'Minta link untuk membuat kata sandi baru Tulis Lab.', robots: { index: false, follow: false } };
 
 export default function ForgotPasswordPage() {
-  return <LocaleScope locale="en"><ForgotPasswordView /></LocaleScope>;
+  return <ForgotPasswordView />;
 }

@@ -2,17 +2,19 @@ import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { safeAuthNext } from '@/lib/auth/form';
+import { LocaleScope } from '@/lib/client/locale';
 
 vi.mock('next/image', () => ({ default: ({ src, alt }: { src: string; alt: string }) => createElement('img', { src, alt }) }));
 vi.mock('next/link', () => ({ default: ({ children, ...props }: { children: React.ReactNode; href: string }) => createElement('a', props, children) }));
 vi.mock('@/components/ui/Toast', () => ({ Toast: ({ children }: { children: React.ReactNode }) => createElement('div', { role: 'alert', 'data-toast': '' }, children) }));
 import { AuthView } from '@/components/auth/AuthView';
 
-function render(overrides: Partial<ComponentProps<typeof AuthView>> = {}) {
-  return renderToStaticMarkup(createElement(AuthView, {
+function render(overrides: Partial<ComponentProps<typeof AuthView>> = {}, locale?: 'id' | 'en') {
+  const view = createElement(AuthView, {
     values: { name: '', username: '', email: '', password: '', confirm: '' }, remember: true, busy: null, error: '', fieldErrors: {}, next: null,
     inputRefs: { name: { current: null }, username: { current: null }, email: { current: null }, password: { current: null }, confirm: { current: null } }, onChange: vi.fn(), onRemember: vi.fn(), onSubmit: vi.fn(), onGoogle: vi.fn(), ...overrides,
-  }));
+  });
+  return renderToStaticMarkup(locale ? createElement(LocaleScope, { locale }, view) : view);
 }
 
 describe('login presentation', () => {
@@ -22,13 +24,18 @@ describe('login presentation', () => {
     // Rebrand (2026-09-30): the product is Tulis Lab.
     expect(html).toContain('aria-label="Tulis Lab"');
     expect(html).not.toContain('AI Writing Workspace');
-    expect(html).toContain('Continue with Google');
-    expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Continue with Google'));
+    // UX 1a: auth pages are Indonesian by default, like the rest of the app.
+    expect(html).toContain('lang="id"');
+    expect(html).toContain('Selamat datang kembali');
+    expect(html).toContain('Lanjutkan dengan Google');
+    expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Lanjutkan dengan Google'));
     expect(html).toContain('type="email"');
     expect(html).toContain('type="password"');
     expect(html).toContain('autoComplete="current-password"');
-    expect(html).toContain('aria-label="Show password"');
-    expect(html).toContain('Keep me signed in');
+    expect(html).toContain('aria-label="Tampilkan kata sandi"');
+    expect(html).toContain('Tetap masuk');
+    expect(html).toContain('Lupa kata sandi?');
+    expect(html).not.toMatch(/Welcome back|Continue with Google|Keep me signed in/);
     expect(html).toContain('href="/register"');
     expect(html).toContain('href="/"');
     expect(html).not.toContain('role="dialog"');
@@ -40,7 +47,16 @@ describe('login presentation', () => {
     const html = render({ busy });
     expect(html).toMatch(/<fieldset[^>]*disabled=""/);
     expect(html.match(/<button[^>]*disabled=""/g)).toHaveLength(2);
-    expect(html).toContain(busy === 'google' ? 'Connecting to Google…' : 'Signing in…');
+    expect(html).toContain(busy === 'google' ? 'Menghubungkan ke Google…' : 'Sedang masuk…');
+  });
+
+  it('follows an English interface language', () => {
+    const html = render({}, 'en');
+    expect(html).toContain('lang="en"');
+    expect(html).toContain('Welcome back');
+    expect(html).toContain('Continue with Google');
+    expect(html).toContain('aria-label="Show password"');
+    expect(html).toContain('Keep me signed in');
   });
 
   it('connects field errors to inputs and displays recoverable provider errors', () => {
@@ -62,10 +78,11 @@ describe('registration presentation', () => {
     const html = render({ register: true });
     for (const field of ['name', 'username', 'email', 'password', 'confirm']) expect(html).toContain(`id="auth-${field}"`);
     expect(html).toContain('autoComplete="new-password"');
-    expect(html).toContain('Show confirmed password');
+    expect(html).toContain('Tampilkan ulangan kata sandi');
+    expect(html).toContain('Buat akunmu');
     expect(html).toContain('href="/login"');
-    expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Continue with Google'));
-    expect(html).not.toContain('Keep me signed in');
+    expect(html.indexOf('</form>')).toBeLessThan(html.indexOf('Lanjutkan dengan Google'));
+    expect(html).not.toContain('Tetap masuk');
     expect(html).not.toContain('/forgot-password');
   });
 });

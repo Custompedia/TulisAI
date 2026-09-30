@@ -20,7 +20,19 @@ describe('landing product contract', () => {
     }
   });
 
-  it.each(['id', 'en'] as const)('keeps the landing English with %s app preferences', locale => {
+  // Owner decision (UX 1a): the landing is Indonesian by default, with an ID/EN toggle on the app's own locale.
+  it('renders in Indonesian by default with an ID/EN toggle', () => {
+    const html = renderToStaticMarkup(createElement(Landing));
+    expect(html).toContain('Tulisanmu, lebih jelas.');
+    expect(html).toContain('lang="id"');
+    expect(html).toContain('Mulai Menulis');
+    expect(html).not.toContain('Your writing, clearer.');
+    expect(html).not.toContain('Dashboard');
+    expect(html).toMatch(/<button[^>]*lang="id"[^>]*aria-pressed="true"[^>]*>ID<\/button>/);
+    expect(html).toMatch(/<button[^>]*lang="en"[^>]*aria-pressed="false"[^>]*>EN<\/button>/);
+  });
+
+  it.each(['id', 'en'] as const)('renders a complete %s landing', locale => {
     const html = renderToStaticMarkup(createElement(LocaleScope, { locale }, createElement(Landing)));
     const ids = new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), match => match[1]));
     const anchors = Array.from(html.matchAll(/href="#([^"]+)"/g), match => match[1]);
@@ -33,12 +45,12 @@ describe('landing product contract', () => {
     expect(html).toContain('aria-live="polite"');
     expect(html.match(/<summary>/g)).toHaveLength(7);
     expect(html.match(/<h1\b/g)).toHaveLength(1);
-    expect(html).toContain('Your writing, clearer.');
-    expect(html).toContain('lang="en"');
-    expect(html).toContain(SAMPLES.en.source.split(' ').slice(0, 5).join(' ').replaceAll("'", '&#x27;'));
-    expect(html).not.toMatch(/>ID<|>EN<|Interface language|ID or EN/);
-    expect(html).not.toContain('Tulisanmu, lebih jelas.');
-    expect(html).not.toContain('Mulai Menulis');
+    expect(html).toContain(locale === 'en' ? 'Your writing, clearer.' : 'Tulisanmu, lebih jelas.');
+    expect(html).not.toContain(locale === 'en' ? 'Tulisanmu, lebih jelas.' : 'Your writing, clearer.');
+    expect(html).toContain(`lang="${locale}"`);
+    expect(html).toContain(SAMPLES[locale].source.split(' ').slice(0, 5).join(' ').replaceAll("'", '&#x27;'));
+    expect(html).toContain('>ID</button>');
+    expect(html).toContain('>EN</button>');
     expect(html).not.toMatch(/href="#"|<form\b|<textarea\b/);
   });
 });

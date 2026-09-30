@@ -4,7 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowRight, Bot, Check, ChevronRight, Columns2, Copy, EllipsisVertical, Eye, EyeOff, Feather, History, Info, Languages, Lock, Menu, PanelRightClose, Plus, Redo2, RefreshCw, Save, ShieldCheck, TextSelect, Undo2, X, type LucideIcon } from 'lucide-react';
-import { LocaleScope, useLocale } from '@/lib/client/locale';
+import { useLocale, type Locale } from '@/lib/client/locale';
 import { request } from '@/lib/client/api';
 import { numberFormat } from '@/lib/client/format';
 import { changePercentage, countWords, wordDelta } from '@/lib/editor/metrics';
@@ -35,7 +35,16 @@ function useSignedIn() {
 
 function StartLink({ signedIn, arrow = false }: { signedIn: boolean; arrow?: boolean }) {
   const { t } = useLocale();
-  return <Link className={styles.primary} href={signedIn ? '/app' : '/register'}>{signedIn ? t('Buka Dashboard', 'Open Dashboard') : t('Mulai Menulis', 'Start Writing')}{arrow && <ArrowRight size={15} aria-hidden="true" />}</Link>;
+  return <Link className={styles.primary} href={signedIn ? '/app' : '/register'}>{signedIn ? t('Buka Tulis Lab', 'Open Tulis Lab') : t('Mulai Menulis', 'Start Writing')}{arrow && <ArrowRight size={15} aria-hidden="true" />}</Link>;
+}
+
+// ID/EN switch for the landing. It uses the app's own locale store, so the choice carries into sign-in and the app.
+function LanguageToggle() {
+  const { locale, setLocale, t } = useLocale();
+  const options: Array<[Locale, string, string]> = [['id', 'ID', 'Bahasa Indonesia'], ['en', 'EN', 'English']];
+  return <div role="group" aria-label={t('Bahasa halaman', 'Page language')} className={styles.langToggle}>
+    {options.map(([value, label, name]) => <button key={value} type="button" lang={value} aria-pressed={locale === value} aria-label={name} onClick={() => setLocale(value)}>{label}</button>)}
+  </div>;
 }
 
 function Nav({ signedIn }: { signedIn: boolean }) {
@@ -60,10 +69,11 @@ function Nav({ signedIn }: { signedIn: boolean }) {
     <nav className={styles.nav} aria-label={t('Navigasi utama', 'Main navigation')}>
       <div className={styles.brand}><Logo /></div>
       <div className={styles.navLinks}>{links.map(link => <a key={link.href} href={link.href}>{link.label}</a>)}</div>
-      <div className={styles.navActions}>{!signedIn && <Link className={styles.signIn} href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} /></div>
+      <div className={styles.navActions}><LanguageToggle />{!signedIn && <Link className={styles.signIn} href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} /></div>
       <button ref={toggle} type="button" className={styles.menuToggle} aria-expanded={open} aria-controls="landing-menu" aria-label={open ? t('Tutup menu', 'Close menu') : t('Buka menu', 'Open menu')} onClick={() => setOpen(!open)}>{open ? <X size={21} /> : <Menu size={21} />}</button>
       <div id="landing-menu" className={styles.mobileMenu} hidden={!open}>
         {links.map(link => <a key={link.href} href={link.href} onClick={() => setOpen(false)}>{link.label}</a>)}
+        <LanguageToggle />
         {!signedIn && <Link href="/login">{t('Masuk', 'Sign In')}</Link>}<StartLink signedIn={signedIn} />
       </div>
     </nav>
@@ -280,7 +290,7 @@ function Footer({ signedIn }: { signedIn: boolean }) {
       <div className={styles.footerTop}><div className={styles.footerAbout}><div className={styles.brand}><Logo /></div><p>{t('Ruang kerja untuk merawat ide, merapikan kata, dan menemukan suara tulisanmu.', 'Clearer writing. Your voice, preserved.')}</p></div>
         <nav aria-label={t('Navigasi produk', 'Product navigation')}><strong>{t('Produk', 'Product')}</strong><a href="#produk">{t('Fitur', 'Features')}</a><a href="#cara-kerja">{t('Cara Kerja', 'How It Works')}</a><a href="#mode">{t('Mode Penulisan', 'Writing Modes')}</a></nav>
         <nav aria-label={t('Navigasi bantuan', 'Help navigation')}><strong>{t('Jelajahi', 'Explore')}</strong><a href="#contoh">{t('Coba Contoh', 'Try Example')}</a><a href="#faq">FAQ</a></nav>
-        <nav aria-label={t('Navigasi akun', 'Account navigation')}><strong>{t('Ruang Kerjamu', 'Your Workspace')}</strong>{signedIn ? <Link href="/app">Dashboard</Link> : <><Link href="/login">{t('Masuk', 'Sign In')}</Link><Link href="/register">{t('Mulai Menulis', 'Start Writing')}</Link></>}</nav>
+        <nav aria-label={t('Navigasi akun', 'Account navigation')}><strong>{t('Ruang Kerjamu', 'Your Workspace')}</strong>{signedIn ? <Link href="/app">{t('Buka Tulis Lab', 'Open Tulis Lab')}</Link> : <><Link href="/login">{t('Masuk', 'Sign In')}</Link><Link href="/register">{t('Mulai Menulis', 'Start Writing')}</Link></>}</nav>
       </div>
     </div>
   </footer>;
@@ -288,10 +298,11 @@ function Footer({ signedIn }: { signedIn: boolean }) {
 
 function LandingContent() {
   const signedIn = useSignedIn();
-  const { t } = useLocale();
-  return <div id="page-top" lang="en" className={styles.page}><div className={styles.canvas}><a className={styles.skipLink} href="#main-content">{t('Lewati ke konten', 'Skip to content')}</a><Nav signedIn={signedIn} /><main id="main-content"><Hero signedIn={signedIn} /><SupportingSections /></main><div className={styles.ending}><Image className={styles.endingArt} src="/images/landing/hero.webp" alt="" width={1536} height={1024} sizes="100vw" /><Closing signedIn={signedIn} /><Footer signedIn={signedIn} /></div></div></div>;
+  const { t, locale } = useLocale();
+  return <div id="page-top" lang={locale} className={styles.page}><div className={styles.canvas}><a className={styles.skipLink} href="#main-content">{t('Lewati ke konten', 'Skip to content')}</a><Nav signedIn={signedIn} /><main id="main-content"><Hero signedIn={signedIn} /><SupportingSections /></main><div className={styles.ending}><Image className={styles.endingArt} src="/images/landing/hero.webp" alt="" width={1536} height={1024} sizes="100vw" /><Closing signedIn={signedIn} /><Footer signedIn={signedIn} /></div></div></div>;
 }
 
+// Indonesian by default (owner decision), with an ID/EN toggle; the app-wide locale provider holds the choice.
 export function Landing() {
-  return <LocaleScope locale="en"><LandingContent /></LocaleScope>;
+  return <LandingContent />;
 }
