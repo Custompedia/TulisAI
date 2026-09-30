@@ -58,7 +58,7 @@ async function callback(flow: Awaited<ReturnType<typeof begin>>, cookie = flow.c
 
 beforeEach(async () => {
   db = new DatabaseSync(":memory:"); applyMigrations(db);
-  state.env = { DB: d1(), BETTER_AUTH_SECRET: "a test secret that is long enough for Better Auth", BETTER_AUTH_URL: APP, MKL_ISSUER: ISSUER, MKL_CLIENT_ID: "tulis-test", MKL_CLIENT_SECRET: "test-client-secret" };
+  state.env = { DB: d1(), BETTER_AUTH_SECRET: "a test secret that is long enough for Better Auth", BETTER_AUTH_URL: APP, MKL_SSO_ENABLED: "true", MKL_ISSUER: ISSUER, MKL_CLIENT_ID: "tulis-test", MKL_CLIENT_SECRET: "test-client-secret" };
   const pair = await generateKeyPair("RS256"); privateKey = pair.privateKey; publicJwk = { ...await exportJWK(pair.publicKey), kid: "current", alg: "RS256", use: "sig" };
   subject = "mkl-subject-1"; profileEmail = "ada@example.test"; profileName = "Ada MKL"; profileVerified = true; tokenCalls = 0; tokenFailure = false; advertiseAuthTime = false; tokenAuthTime = null;
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -78,6 +78,17 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); db.close(); delete (globalThis as typeof globalThis & { __mklNonce?: string }).__mklNonce; });
 
 function rememberNonce(flow: Awaited<ReturnType<typeof begin>>) { (globalThis as typeof globalThis & { __mklNonce?: string }).__mklNonce = flow.url.searchParams.get("nonce")!; }
+
+describe("retired MKL identity service", () => {
+  it.each([undefined, "false", "1", "TRUE"])("keeps every MKL auth endpoint unmounted when MKL_SSO_ENABLED=%s", async (value) => {
+    state.env = { ...state.env, MKL_SSO_ENABLED: value };
+    expect((await post("/mkl/start", { returnTo: "/app" })).status).toBe(404);
+    // Linking needs a fresh session first, so an anonymous call is refused before the disabled check.
+    expect([401, 404]).toContain((await post("/mkl/link/start", { returnTo: "/app" })).status);
+    const callback = await auth().handler(new Request(`${APP}/api/auth/mkl/callback?code=x&state=y`));
+    expect(callback.status).toBe(404);
+  });
+});
 
 describe("MKL sign-in", () => {
   it("provisions one free local customer, creates an ordinary session, and consumes state once", async () => {

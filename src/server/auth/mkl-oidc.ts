@@ -42,6 +42,15 @@ export class MklProtocolError extends Error {
   }
 }
 
+/**
+ * MKL retired its identity service on 2026-09-28 (the site is a landing page
+ * now), so the bridge stays dormant unless this is explicitly "true". The code
+ * is kept so existing links and history remain readable.
+ */
+export function mklSsoEnabled(env: RuntimeEnv): boolean {
+  return env.MKL_SSO_ENABLED?.trim() === "true";
+}
+
 export function mklConfig(env: RuntimeEnv): MklConfig {
   const issuer = normalizeIssuer(env.MKL_ISSUER);
   const clientId = env.MKL_CLIENT_ID?.trim();

@@ -1,7 +1,7 @@
 import { jsonData } from "@/lib/contracts";
 import { writeAudit } from "@/server/audit";
 import { requireUser } from "@/server/auth/auth";
-import { mklConfig } from "@/server/auth/mkl-oidc";
+import { mklConfig, mklSsoEnabled } from "@/server/auth/mkl-oidc";
 import { mklCookieNames, readCookie, serializeCookie, sha256 } from "@/server/auth/mkl-state";
 import { confirmMklLink, pendingConsent } from "@/server/identity/links";
 import { handleRouteError, idempotencyKey, RequestError } from "@/server/http";
@@ -18,6 +18,7 @@ function expireConsent(response: Response, name: string, secure: boolean): Respo
 }
 
 function consentContext(request: Request) {
+  if (!mklSsoEnabled(runtime())) throw new RequestError("MKL_SSO_DISABLED", "MKL sign-in is no longer available.", 404);
   const config = mklConfig(runtime()); const names = mklCookieNames(config);
   const receipt = readCookie(request.headers, names.consent);
   return { config, names, receipt };

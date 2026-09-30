@@ -79,6 +79,8 @@ Implicit provider linking dinonaktifkan untuk mencegah pengambilalihan akun berd
 
 ## MKL OIDC identity bridge
 
+> **Status 30 September 2026:** MKL menghentikan layanan identitasnya pada 28 September 2026 (situs MKL kini hanya landing page). Karena itu bridge di bawah dimatikan secara default dengan `MKL_SSO_ENABLED="false"`: tombol "Continue with MKL" dan penawaran tautan MKL tidak lagi tampil, dan endpoint `/api/auth/mkl/*` serta `/api/account/mkl/link/confirm` menjawab 404. Login yang berlaku adalah email + password dan Google. Kode bridge tetap disimpan agar tautan dan riwayat lama tetap terbaca.
+
 Bridge MKL memakai Authorization Code + PKCE S256 dan mempertahankan Better Auth sebagai otoritas sesi lokal. Konfigurasi identity runtime adalah `MKL_ISSUER`, `MKL_CLIENT_ID`, `MKL_CLIENT_SECRET`, dan `BETTER_AUTH_URL`. B3 juga mengenal `MKL_APP_KEY`, `MKL_CATALOG_ITEM_ID`, serta secret commerce/API yang terpisah, `MKL_APP_API_SECRET`. `MKL_APP_API_SECRET` tidak boleh memakai ulang `MKL_CLIENT_SECRET`. Semua secret hanya boleh diberikan melalui binding secret lokal/Cloudflare dan tidak boleh ditaruh di repository. Nilai produksi yang dikunci adalah:
 
 - issuer: `https://marikitalembur.com`

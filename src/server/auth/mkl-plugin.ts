@@ -5,7 +5,7 @@ import { writeAudit } from "../audit";
 import { activeBan, emailOwner, getIdentityOwner, getMklLinkByUserId, provisionMklUser, updateAuthenticatedLink } from "../identity/links";
 import { runtime } from "../runtime";
 import { refreshMklAuthority } from "../entitlements/authority";
-import { authorizationUrl, discoverMkl, exchangeMklCode, mklConfig, MklProtocolError, safeLocalReturnTo, verifyMklIdToken, type MklConfig, type MklIdentity } from "./mkl-oidc";
+import { authorizationUrl, discoverMkl, exchangeMklCode, mklConfig, mklSsoEnabled, MklProtocolError, safeLocalReturnTo, verifyMklIdToken, type MklConfig, type MklIdentity } from "./mkl-oidc";
 import { cookieAttributes, createAuthorizationState, createConsentState, mklCookieNames, randomToken, readCookie, sha256, consumeAuthorizationState, stateIdentifier } from "./mkl-state";
 import { clearReauth, markReauthOnSignOut, reauthRequested } from "./mkl-reauth";
 
@@ -34,7 +34,14 @@ function headersOf(ctx: { headers?: Headers; request?: Request }): Headers { ret
 const validOpaqueCookie = (value: string | null): string | null => value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 const isAdmin = (role: unknown) => typeof role === "string" && role.split(",").some((value) => value.trim() === "admin");
 
+// The endpoints stay registered so Better Auth keeps its typed API, but they
+// answer 404 unless the retired MKL identity service is explicitly re-enabled.
+function assertMklEnabled(): void {
+  if (!mklSsoEnabled(runtime())) throw APIError.from("NOT_FOUND", { code: "MKL_SSO_DISABLED", message: "MKL sign-in is no longer available." });
+}
+
 async function begin(rawContext: unknown, intent: "sign_in" | "link") {
+  assertMklEnabled();
   const ctx = rawContext as Parameters<typeof getAuthoritativeSessionFromCtx>[0] & { body?: z.infer<typeof startBody> };
   try {
     const config = mklConfig(runtime()); const names = mklCookieNames(config);
@@ -79,6 +86,7 @@ export function mklIdentityPlugin() {
       mklStart: createAuthEndpoint("/mkl/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware], body: startBody }, (ctx) => begin(ctx, "sign_in")),
       mklLinkStart: createAuthEndpoint("/mkl/link/start", { method: "POST", requireHeaders: true, use: [formCsrfMiddleware, sensitiveSessionMiddleware], body: startBody }, (ctx) => begin(ctx, "link")),
       mklCallback: createAuthEndpoint("/mkl/callback", { method: "GET", requireHeaders: true, query: callbackQuery }, async (ctx) => {
+        assertMklEnabled();
         let config: MklConfig;
         try { config = mklConfig(runtime()); } catch (error) { apiError(error); }
         const stateToken = ctx.query.state;
