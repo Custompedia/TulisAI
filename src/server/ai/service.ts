@@ -260,7 +260,7 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     // applied as plain paragraphs, the way every multi-block apply worked before UX 3.
     if (output.no_change_needed !== true && keepsStructure(input.promptId,controls,anchor?crossesBlocks(source.document.content,anchor.from,anchor.to):true)) {
       const check=replaceBlocksKeepingStructure(source.document.content,anchor?.from??0,anchor?.to??source.text.length,collapseBlankLines(outputText(output)));
-      if (!check.content && check.structured) output={...output,warnings:mergeWarnings(output.warnings,[controls.language==='en'?'The result has a different number of lines, so headings, lists and tables would become plain paragraphs.':'Jumlah baris hasil berbeda, jadi judul, daftar, dan tabel akan menjadi paragraf biasa.'])};
+      if (!check.content && check.structured) output={...output,warnings:mergeWarnings(output.warnings,[check.misaligned?(controls.language==='en'?'The result lines no longer match the original blocks, so headings, lists and tables would become plain paragraphs.':'Baris hasil tidak lagi cocok dengan blok aslinya, jadi judul, daftar, dan tabel akan menjadi paragraf biasa.'):(controls.language==='en'?'The result has a different number of lines, so headings, lists and tables would become plain paragraphs.':'Jumlah baris hasil berbeda, jadi judul, daftar, dan tabel akan menjadi paragraf biasa.')])};
     }
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
