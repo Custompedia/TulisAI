@@ -42,7 +42,8 @@ function imageSpaceRun(node: EditorNode): string {
 // tallest space (margins included): the most portable empty space Word, Google Docs and LibreOffice all keep.
 function pictureOnlyLine(node: EditorNode): number | null {
   const inline = node.content ?? [];
-  if (!inline.length || !inline.every((child) => child.type === 'imageSpace')) return null;
+  // A floated space is written as a floating frame instead: its text flowed beside it, not under it.
+  if (!inline.length || !inline.every((child) => child.type === 'imageSpace' && (imageWrap(child.attrs?.wrap) === 'inline' || imageWrap(child.attrs?.wrap) === 'block'))) return null;
   const tallest = Math.max(...inline.map((child) => (imagePoints(child.attrs?.height) ?? 0) + Number(child.attrs?.marginTop ?? 0) + Number(child.attrs?.marginBottom ?? 0)));
   const twips = Math.round(tallest * 20);
   return twips > 0 && twips <= MAX_EXACT_LINE_TWIPS ? twips : null;
