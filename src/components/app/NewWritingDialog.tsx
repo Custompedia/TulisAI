@@ -36,7 +36,7 @@ type Props = { initialStep: Step; initialStyleId?: string; onClose: () => void; 
 const CARD = 'group relative flex min-h-[76px] w-full flex-col items-start gap-1.5 rounded-xl border border-line bg-white p-3 text-left transition-colors hover:border-brand-300 hover:bg-brand-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 disabled:cursor-wait disabled:opacity-60';
 
 // "Tulis baru": at most two clicks to an open notebook. A skeleton or Kosong card creates straight away;
-// Olah teks, Impor DOCX and Pakai skill have a second step. Phones get the same cards as a full-screen sheet.
+// Olah teks, Impor dokumen and Pakai skill have a second step. Phones get the same cards as a full-screen sheet.
 export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImport }: Props) {
   const { t, locale } = useLocale();
   const { has } = useEntitlements();
@@ -132,7 +132,7 @@ export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImpor
               <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <li><KindCard kind="blank" label={t('Kosong', 'Blank')} busy={busy === 'blank'} disabled={busyAny} onPick={() => pickCard('blank')} onOptions={() => setOptions('blank')} /></li>
                 <li><ActionCard icon={ScanText} label={t('Olah teks', 'Work on text')} hint={t('Tempel teks, pilih mode', 'Paste text, pick a mode')} disabled={busyAny} onPick={() => setStep('rewrite')} /></li>
-                <li><ActionCard icon={Upload} label={t('Impor DOCX', 'Import DOCX')} hint={canImport ? t('Dibuka di kanvas Halaman', 'Opens on the Page canvas') : importTier} locked={!canImport} disabled={busyAny} onPick={pickImport} /></li>
+                <li><ActionCard icon={Upload} label={t('Impor dokumen', 'Import document')} hint={canImport ? t('DOCX atau PDF, dibuka di kanvas Halaman', 'DOCX or PDF, opens on the Page canvas') : importTier} locked={!canImport} disabled={busyAny} onPick={pickImport} /></li>
                 <li><ActionCard icon={Sparkles} label={t('Pakai skill', 'Use a skill')} hint={canSkill ? t('Gaya tulisan tersimpan', 'A saved writing style') : skillTier} locked={!canSkill} disabled={busyAny} onPick={pickSkill} /></li>
                 <li><ActionCard icon={PenLine} label={t('Draf dari brief (AI)', 'Draft from brief (AI)')} hint={canDraft ? t('Kerangka + brief, draf per bagian', 'Outline + brief, one section at a time') : draftTier} locked={!canDraft} disabled={busyAny} onPick={pickDraft} /></li>
               </ul>

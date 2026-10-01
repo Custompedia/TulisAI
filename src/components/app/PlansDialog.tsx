@@ -84,7 +84,7 @@ function groups(t: T, freeCharacters: number): Array<{ title: string; rows: Arra
       rows: [
         { label: t('Riwayat versi & bandingkan', 'Version history & compare'), cells: [true, true, true, true] },
         { label: t('Ruang kerja dokumen lanjutan', 'Advanced document workspace'), cells: [false, false, true, true] },
-        { label: t('Impor DOCX', 'DOCX import'), cells: [false, false, true, true] },
+        { label: t('Impor dokumen (DOCX, PDF)', 'Document import (DOCX, PDF)'), cells: [false, false, true, true] },
         { label: t('Ekspor DOCX', 'DOCX export'), cells: [false, false, true, true] },
       ],
     },

@@ -13,7 +13,7 @@ import { PICKER_SEARCH_DELAY_MS, searchQuery } from '@/lib/navigation/library';
 import { requiredTierFor } from '@/lib/plans';
 import { Spinner } from '@/components/ui/Spinner';
 import { useEntitlements, useShell, type DocumentSummary } from './AppShell';
-import { ImportDocxDialog } from './ImportDocxDialog';
+import { ImportDocumentDialog } from './ImportDocumentDialog';
 import { OPEN_PALETTE_EVENT, openShortcuts, requestNewWriting, showLockedFeature } from './shell-events';
 
 type Entry = Command & { icon: LucideIcon; run: () => void };
@@ -34,7 +34,7 @@ export function CommandPalette() {
   return (
     <>
       {open && <PaletteDialog onClose={() => setOpen(false)} onImport={() => { setOpen(false); setImporting(true); }} />}
-      {importing && <ImportDocxDialog onClose={() => setImporting(false)} />}
+      {importing && <ImportDocumentDialog onClose={() => setImporting(false)} />}
     </>
   );
 }
@@ -81,7 +81,7 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
   const entries = useMemo<Entry[]>(() => {
     const actions: Entry[] = [
       { id: 'new', group: 'actions', icon: Plus, label: t('Tulis baru', 'New writing'), keywords: 'baru buat notebook tulis new create write', run: () => { onClose(); requestNewWriting(); } },
-      { id: 'import', group: 'actions', icon: Upload, label: t('Impor DOCX', 'Import DOCX'), description: has('docx_import') ? undefined : t('Paket Pro', 'Pro plan'), keywords: 'impor import word docx unggah upload', run: () => { if (has('docx_import')) onImport(); else { onClose(); showLockedFeature(requiredTierFor('docx_import')); } } },
+      { id: 'import', group: 'actions', icon: Upload, label: t('Impor dokumen', 'Import document'), description: has('docx_import') ? undefined : t('Paket Pro', 'Pro plan'), keywords: 'impor import dokumen document word docx pdf unggah upload', run: () => { if (has('docx_import')) onImport(); else { onClose(); showLockedFeature(requiredTierFor('docx_import')); } } },
       { id: 'skill', group: 'actions', icon: Sparkles, label: t('Buat skill', 'Create skill'), keywords: 'skill gaya style buat create', run: () => go('/skills?new=1') },
       { id: 'usage', group: 'actions', icon: Gauge, label: t('Pemakaian & paket', 'Usage & plan'), keywords: 'kuota karakter paket pemakaian usage plan quota billing pembayaran', run: () => go('/settings#pemakaian') },
       { id: 'shortcuts', group: 'actions', icon: Keyboard, label: t('Pintasan keyboard', 'Keyboard shortcuts'), keywords: 'shortcut pintasan keyboard tombol', run: () => { onClose(); openShortcuts(); } },
