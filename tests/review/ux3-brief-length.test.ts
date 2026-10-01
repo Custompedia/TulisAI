@@ -27,10 +27,12 @@ describe('UX 3: the brief may hold 2,000 characters per value, nothing else may'
       expect(() => DocumentCreateSchema.parse({ title: 'B', preferences: { [key]: 'b'.repeat(BRIEF_VALUE_LIMIT + 1) } })).toThrow();
       expect(() => DocumentPatchSchema.parse({ expectedRevision: 0, preferences: { [key]: 'b'.repeat(BRIEF_VALUE_LIMIT) } })).not.toThrow();
     }
-    for (const key of ['docType', 'sample', 'extra', 'anything']) {
+    for (const key of ['docType', 'extra', 'anything']) {
       expect(metaLimit(key)).toBe(META_VALUE_LIMIT);
       expect(() => DocumentCreateSchema.parse({ title: 'B', preferences: { [key]: 'x'.repeat(META_VALUE_LIMIT + 1) } })).toThrow();
     }
+    // UX 4: a Max writing sample keeps its own SAMPLE_LIMIT (see ux4-sample-limit.test.ts).
+    expect(metaLimit('sample')).toBe(1_000);
   });
 
   it('clamps on the client with the same per-key rule', () => {
