@@ -154,7 +154,7 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
       <PaidLock size={13} />{t('Skill', 'Skill')}<span className="text-ink-400">· {skillTier}</span>
     </button>
   ) : (
-    <ChipSelect label={t('Skill', 'Skill')} title={t('Skills', 'Skills')} value="" disabled={busy} onChange={pickStyle} width="w-72"
+    <ChipSelect label={t('Skill', 'Skill')} title={t('Skill', 'Skills')} value="" disabled={busy} onChange={pickStyle} width="w-72"
       options={styles.map((style) => ({ value: style.id, label: style.name, hint: style.description ?? requestSummary(style.settings, t) }))} />
   ));
 

@@ -110,7 +110,7 @@ function EditorDemo({ signedIn }: { signedIn: boolean }) {
   const title = t('Draf penelitian', 'Research draft');
   const chip = 'inline-flex h-6 items-center rounded-md px-2 text-xs font-medium';
   const compareLabel = compare ? t('Keluar dari Bandingkan', 'Exit Compare') : t('Bandingkan', 'Compare');
-  const tabs: Array<[LucideIcon, string, boolean]> = [[Bot, t('Asisten', 'Assistant'), true], [History, t('Riwayat', 'History'), false], [Info, 'Info', false]];
+  const tabs: Array<[LucideIcon, string, boolean]> = [[Bot, t('Asisten', 'Assistant'), true], [History, t('Riwayat', 'History'), false], [Info, t('Tinjau', 'Review'), false]];
 
   return <div id="contoh" className={styles.demoFrame}>
     <div className={`${styles.demo} flex flex-col font-sans text-ink-900`}>

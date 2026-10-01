@@ -4,6 +4,7 @@ import { useCallback, useRef, useState } from 'react';
 import { ArchiveRestore, CopyPlus, MoreHorizontal, Palette, PencilLine, Pin, PinOff, Trash2 } from 'lucide-react';
 import { del } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
+import { shownTitle } from '@/lib/writing/title';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { relativeTime } from '@/lib/client/format';
 import { notifyLibraryChanged } from '@/lib/navigation/library';
@@ -150,7 +151,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
           <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${tone.fill} ${tone.ink}`}><NotebookIcon icon={doc.icon} mode={doc.mode} size={19} /></span>
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-ink-900">
-              {trashed ? doc.title : <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:inset-0 after:z-10 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>}
+              {trashed ? shownTitle(doc.title, t) : <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:inset-0 after:z-10 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{shownTitle(doc.title, t)}</Link>}
             </h3>
             {meta}
           </div>
@@ -164,7 +165,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
           </div>
           <div className="px-0.5 pt-3">
             <h3 className="line-clamp-2 text-sm font-semibold leading-snug tracking-[-0.01em] text-ink-900">
-              {trashed ? doc.title : <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:-inset-1.5 after:z-10 after:rounded-[18px] focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>}
+              {trashed ? shownTitle(doc.title, t) : <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:-inset-1.5 after:z-10 after:rounded-[18px] focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{shownTitle(doc.title, t)}</Link>}
             </h3>
             {meta}
           </div>
@@ -188,7 +189,7 @@ export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplica
       )}
       {dialog === 'purge' && (
         <ConfirmDialog title={t('Hapus permanen?', 'Delete permanently?')} tone="danger" busy={busy} confirmLabel={t('Hapus permanen', 'Delete permanently')} onClose={close} onConfirm={() => void remove(true)}>
-          <p>{t('Notebook', 'The notebook')} <b className="text-ink-900">“{doc.title}”</b> {t('beserta semua versi dan pratinjaunya akan dihapus. Tindakan ini tidak bisa dibatalkan.', 'and all its versions and previews will be deleted. This cannot be undone.')}</p>
+          <p>{t('Notebook', 'The notebook')} <b className="text-ink-900">“{shownTitle(doc.title, t)}”</b> {t('beserta semua versi dan pratinjaunya akan dihapus. Tindakan ini tidak bisa dibatalkan.', 'and all its versions and previews will be deleted. This cannot be undone.')}</p>
         </ConfirmDialog>
       )}
       {error && <Toast tone="error" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Toast>}

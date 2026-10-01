@@ -187,7 +187,9 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   const noteLocked = !has('persistent_personalization');
   const limit = limits.runLimit;
   const overLimit = scopeChars > limit;
-  const needsSelection = scope === 'selection' && !hasSelection;
+  // An empty or untouched notebook says why up front (or offers a draft), so the scope line does not nag as well.
+  const needsSelection = scope === 'selection' && !hasSelection && !emptyDocument;
+  const offersDraft = !!draft && !previewId && !generating;
   const disabled = busy || !canGenerate || overLimit || emptyDocument;
   const nameOf = (value: 'id' | 'en') => (value === 'id' ? t('Indonesia', 'Indonesian') : 'English');
   // The writing language is a real instruction: picking the other language makes the run a translation.
@@ -220,7 +222,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
 
           {children}
 
-          {draft && !previewId && !generating && <DraftOffer draft={draft} busy={busy} onDraft={onDraft} onOpenBrief={onOpenBrief} onUpgrade={onUpgrade} />}
+          {offersDraft && draft && <DraftOffer draft={draft} busy={busy} onDraft={onDraft} onOpenBrief={onOpenBrief} onUpgrade={onUpgrade} />}
 
           {suggestion && (
             <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-paper px-3 py-2.5">
@@ -238,7 +240,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
             <div className="mb-2.5 flex items-center justify-between gap-2">
               <div className="w-44 shrink-0">
                 <Segmented<'mode' | 'skills'> size="sm" label={t('Pilih mode atau skill', 'Choose a mode or a skill')} value={tab} disabled={busy} onChange={chooseTab}
-                  options={[{ value: 'mode', label: 'Mode' }, { value: 'skills', label: 'Skills' }]} />
+                  options={[{ value: 'mode', label: 'Mode' }, { value: 'skills', label: t('Skill', 'Skills') }]} />
               </div>
               {tab === 'skills' && !stylesLocked && (
                 <button type="button" onClick={onSaveAsStyle} disabled={busy || stylesLoading || styles.length >= STYLE_LIMIT} className={pillButton}
@@ -355,7 +357,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               : t('Judul, daftar, dan tabel tetap terjaga bila hasilnya punya satu baris per blok. Bila tidak, atau bila baris yang berubah memuat catatan kaki, pratinjau memberi tahu dan semuanya menjadi paragraf biasa.', 'Headings, lists and tables are kept when the result has one line per block. If not, or if a changed line holds a footnote, the preview says so and everything becomes plain paragraphs.')}</span>
           </p>
         )}
-        {emptyDocument && <p className="text-xs leading-relaxed text-ink-600">{t('AI Tulis Lab mengolah teks yang sudah ada. Tulis minimal 3 kata dulu.', 'Tulis Lab’s AI works on text that already exists. Write at least 3 words first.')}</p>}
+        {emptyDocument && !offersDraft && <p className="text-xs leading-relaxed text-ink-600">{t('AI Tulis Lab mengolah teks yang sudah ada. Tulis minimal 3 kata dulu.', 'Tulis Lab’s AI works on text that already exists. Write at least 3 words first.')}</p>}
         {mismatch && (
           <div role="alert" className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
             <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />

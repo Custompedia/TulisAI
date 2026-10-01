@@ -47,3 +47,9 @@ export function sanitizeSuggestedTitle(value: unknown): string | null {
   const title = fit(picked.map(capitalise));
   return title.length >= 2 && hasLetter(title) ? title : null;
 }
+
+// What a title shows as in the UI. "Untitled document" is the API's stored default (create without a title, a DOCX
+// with no usable name), so it stays in the data and is only shown in the interface language, like an empty title.
+export const STORED_UNTITLED = 'Untitled document';
+export const shownTitle = (title: string | null | undefined, t: (id: string, en: string) => string): string =>
+  !title?.trim() || title.trim() === STORED_UNTITLED ? t('Tanpa judul', 'Untitled') : title;

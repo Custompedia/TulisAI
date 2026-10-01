@@ -56,7 +56,7 @@ export default function OnboardingPage() {
           <div className="mt-10 animate-fade-up rounded-2xl border border-line bg-white p-6 shadow-sm sm:p-8">
             <p className="text-xs font-semibold uppercase tracking-[0.08em] text-brand-700">{t('Satu langkah lagi', 'One more step')}</p>
             <h1 className="mt-2 font-serif text-[28px] font-semibold leading-tight text-ink-950">{t('Sesuaikan ruang kerjamu', 'Tailor your workspace')}</h1>
-            <p className="mt-2 text-sm text-ink-500">{t('Bisa diubah kapan saja di Pengaturan.', 'You can change this anytime in Settings.')}</p>
+            <p className="mt-2 text-sm text-ink-500">{t('Bisa diubah kapan saja di Akun & Paket › Preferensi menulis.', 'You can change this anytime in Account & Plan › Writing preferences.')}</p>
 
             <fieldset className="mt-7">
               <legend className="mb-3 text-sm font-semibold text-ink-800">{t('Bahasa tulisan utama', 'Main writing language')}</legend>

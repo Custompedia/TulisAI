@@ -23,10 +23,14 @@ export function compareDefault(versions: Version[], originalId: string | null, m
 
 // Leaving a skeleton or blank notebook that was never touched deletes it, so empty notebooks do not pile up
 // while delete is permanent. "Never touched" is strict: still at revision 0 (no autosave, no AI apply, no version)
-// with nothing pending on screen, and the text still what the notebook was created with.
-export function shouldDiscard(input: { source: string | null | undefined; revision: number | null; dirty: boolean; text: string; original: string | null }): boolean {
+// with nothing pending on screen, and the text still what the notebook was created with. Nothing may be in flight
+// either (an AI apply, a restore), and a local recovery copy keeps the notebook: one is waiting to be resolved
+// (`recovery`), or this device holds a cached draft that differs from the server (`cachedDraft`). The server checks
+// the revision and the kind again, so a stale tab cannot wipe a notebook that has content.
+export type DiscardInput = { source: string | null | undefined; revision: number | null; dirty: boolean; text: string; original: string | null; busy?: boolean; recovery?: boolean; cachedDraft?: boolean };
+export function shouldDiscard(input: DiscardInput): boolean {
   if (input.source !== 'skeleton' && input.source !== 'blank') return false;
-  if (input.revision !== 0 || input.dirty) return false;
+  if (input.revision !== 0 || input.dirty || input.busy || input.recovery || input.cachedDraft) return false;
   if (input.source === 'blank') return !input.text.trim();
   return input.original !== null && input.text === input.original;
 }
@@ -82,9 +86,16 @@ export function draftSpotAt(blocks: Block[], position: number): DraftSpot | null
   }
   return null;
 }
-// The first outline section nobody has written yet, for "Tulis bagian pertama".
+// The first outline section nobody has written yet, for "Tulis bagian pertama" and the Asisten's draft card. A
+// heading whose next block is a deeper heading (an article's H1 title above its H2 sections) heads the sections
+// under it, not a section of its own, so it is skipped.
 export function firstDraftSpot(blocks: Block[]): DraftSpot | null {
-  for (const block of blocks) if (block.type === 'heading') { const spot = draftSpotAt(blocks, block.pos + 1); if (spot) return spot; }
+  for (const [index, block] of blocks.entries()) {
+    if (block.type !== 'heading') continue;
+    const next = blocks.slice(index + 1).find((item) => item.type === 'heading' || item.text.trim());
+    if (next?.type === 'heading' && (next.level ?? 1) > (block.level ?? 1)) continue;
+    const spot = draftSpotAt(blocks, block.pos + 1); if (spot) return spot;
+  }
   return null;
 }
 
@@ -95,7 +106,7 @@ export function firstDraftSpot(blocks: Block[]): DraftSpot | null {
 // "Pilih bagian berikutnya" (an outline's still-empty sections are skipped). Null when the caret's heading has no
 // block under it.
 export type SectionBody = { from: number; to: number; heading: string | null; next: number | null };
-type Block = { type: string; text: string; pos: number; size: number };
+type Block = { type: string; text: string; pos: number; size: number; level?: number };
 export function sectionBodyAt(blocks: Block[], position: number): SectionBody | null {
   if (!blocks.length) return null;
   let index = blocks.findIndex((block) => position >= block.pos && position <= block.pos + block.size);

@@ -65,7 +65,11 @@ export function planNoticeCopy(notice: PlanNotice, t: T, oneTime: boolean): { ti
   switch (notice.code) {
     case 'QUOTA_EXCEEDED': return {
       title: oneTime ? t('Karakter sekali pakai sudah habis', 'One-time characters used up') : t('Karakter bulan ini habis', 'This month’s characters are used up'),
-      message: t('Tulisanmu tetap bisa dibuka, diedit, dan disimpan. Fitur AI berhenti sampai kuota terisi lagi.', 'Your writing stays open, editable, and saved. AI pauses until the allowance refills.'), showPlans: true,
+      // Free's characters are a one-time allowance that never refills, so only paid plans are told to wait for it.
+      message: oneTime
+        ? t('Karakter sekali pakai sudah habis. Tulisanmu tetap bisa dibuka, diedit, dan disimpan; pilih paket untuk memakai AI lagi.', 'Your one-time characters are used up. Your writing stays open, editable, and saved; choose a plan to use AI again.')
+        : t('Tulisanmu tetap bisa dibuka, diedit, dan disimpan. Fitur AI berhenti sampai kuota terisi lagi.', 'Your writing stays open, editable, and saved. AI pauses until the allowance refills.'),
+      showPlans: true,
     };
     case 'REQUEST_LIMIT_REACHED': return { title: t('Batas permintaan tercapai', 'Request limit reached'), message: t('Batas permintaan AI bulan ini untuk paketmu sudah tercapai.', 'Your plan’s AI request limit for this month has been reached.'), showPlans: true };
     default: {

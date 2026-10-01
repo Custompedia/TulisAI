@@ -91,7 +91,43 @@ function keepingOriginals(document:unknown,doc:PMNode,result:PMNode):EditorDocum
 // caller then falls back to plain paragraphs, as before), or when a changed block holds a footnote the new text
 // could not carry. `structured` says whether the range has any structure to lose.
 const LINE_MARKER=/^\s*(?:[-*•]|\d{1,3}[.)])\s+/u;
-export function replaceBlocksKeepingStructure(document:unknown,from:number,to:number,output:string):{content:EditorDocument|null;structured:boolean} {
+// How alike two lines are, 0..1: the Dice coefficient of their character bigrams, after lower-casing and keeping
+// letters and digits only. A heading may be reworded ("Metode" → "Metodologi" is about 0.57) but not replaced.
+export function lineSimilarity(left:string,right:string):number {
+  const norm=(value:string)=>value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
+  const a=norm(left);const b=norm(right);
+  if(a===b)return 1;
+  if(a.length<2||b.length<2)return 0;
+  const grams=(value:string)=>{const out=new Map<string,number>();for(let index=0;index<value.length-1;index++){const gram=value.slice(index,index+2);out.set(gram,(out.get(gram)??0)+1);}return out;};
+  const ga=grams(a);const gb=grams(b);let shared=0;
+  for(const [gram,count] of ga)shared+=Math.min(count,gb.get(gram)??0);
+  return (2*shared)/(a.length-1+b.length-1);
+}
+// A heading that kept its words and gained a few ("Metode" → "Metode penelitian") is the same heading; a long line
+// that merely mentions the heading word is not.
+function headingKept(line:string,heading:string):boolean {
+  if(lineSimilarity(line,heading)>=HEADING_SIMILARITY)return true;
+  const norm=(value:string)=>` ${value.toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()} `;
+  const a=norm(line);const b=norm(heading);const [short,long]=a.length<=b.length?[a,b]:[b,a];
+  return short.trim().length>0&&long.includes(short)&&short.length*3>=long.length;
+}
+export const HEADING_SIMILARITY=0.5;
+// Each result line must still belong to its own block: a heading slot keeps a line like the old heading, and no line
+// looks clearly more like a neighbouring block's original than its own (the sign of a merge or split upstream).
+export function linesAligned(originals:Array<{text:string;heading:boolean}>,lines:string[]):boolean {
+  if(originals.length!==lines.length)return false;
+  return originals.every((original,index)=>{
+    const line=lines[index]!;
+    if(line===original.text)return true;
+    const own=lineSimilarity(line,original.text);
+    if(original.heading&&!headingKept(line,original.text))return false;
+    // A heading that turns up in a body slot shifted there.
+    if(!original.heading&&originals.some((other,at)=>at!==index&&other.heading&&lineSimilarity(line,other.text)>=0.9&&own<0.9))return false;
+    for(const near of [index-1,index+1]){const other=originals[near];if(!other)continue;const theirs=lineSimilarity(line,other.text);if(theirs>=0.6&&theirs-own>=0.25)return false;}
+    return true;
+  });
+}
+export function replaceBlocksKeepingStructure(document:unknown,from:number,to:number,output:string):{content:EditorDocument|null;structured:boolean;misaligned?:boolean} {
   const doc=parsed(document);const {text,spans}=mapping(doc);
   if(!Number.isInteger(from)||!Number.isInteger(to)||from<0||to<=from||to>text.length)return {content:null,structured:false};
   const plainAt=(position:number)=>{const span=spans.find(item=>position>=item.pmFrom&&position<=item.pmTo);if(span)return span.from+Math.min(position-span.pmFrom,span.to-span.from);return spans.find(item=>item.pmFrom>position)?.from??text.length;};
@@ -126,6 +162,10 @@ export function replaceBlocksKeepingStructure(document:unknown,from:number,to:nu
   // The scope must be exactly these blocks, and the result must keep one line per block.
   const scoped=text.slice(from,to).split('\n').map(line=>line.trim()).filter(Boolean);
   if(lines.length!==filled.length||scoped.length!==filled.length||scoped.some((line,index)=>line!==filled[index]!.text.trim()))return {content:null,structured};
+  // The same count is not enough: a model that merges two lines and splits another keeps the count but shifts every
+  // line in between, which would put body text into a heading slot. Any doubt falls back to plain paragraphs.
+  const compared=filled.map((unit,index)=>{const line=lines[index]!;if(unit.kind==='row')return line.replace(/^\||\|$/g,'').split('|').map(cell=>cell.trim()).join(' | ');let value=line;if(unit.structured&&!LINE_MARKER.test(unit.text))value=value.replace(LINE_MARKER,'');if(unit.node.type.name==='heading')value=value.replace(/^#{1,6}\s+/u,'');return value;});
+  if(!linesAligned(filled.map(unit=>({text:unit.text.trim(),heading:unit.kind==='block'&&unit.node.type.name==='heading'})),compared))return {content:null,structured,misaligned:true};
   type Change={from:number;to:number;nodes:PMNode[]};const changes:Change[]=[];
   const inlineFor=(block:PMNode,value:string):PMNode[]=>{
     const texts:PMNode[]=[];let other=false;block.forEach(child=>{if(child.isText)texts.push(child);else other=true;});

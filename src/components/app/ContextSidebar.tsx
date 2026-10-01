@@ -112,8 +112,8 @@ function SidebarTitle({ children, action }: { children: React.ReactNode; action?
 }
 const GroupLabel = ({ children }: { children: React.ReactNode }) => <p className="mb-1 mt-5 px-2.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-500">{children}</p>;
 
-function NavRow({ href, icon: Icon, label, active, count, hash = false }: { href: string; icon: LucideIcon; label: string; active: boolean; count?: number | null; hash?: boolean }) {
-  const body = <><Icon size={16} aria-hidden="true" className={`shrink-0 ${active ? 'text-brand-700' : 'text-ink-400'}`} /><span className="min-w-0 flex-1 truncate">{label}</span>{typeof count === 'number' && <span className="shrink-0 text-[12px] font-medium tabular-nums text-ink-400">{count}</span>}{!hash && <LinkPending className="right-1.5 top-1/2 -translate-y-1/2" />}</>;
+function NavRow({ href, icon: Icon, label, active, count, badge, hash = false }: { href: string; icon: LucideIcon; label: string; active: boolean; count?: number | null; badge?: string; hash?: boolean }) {
+  const body = <><Icon size={16} aria-hidden="true" className={`shrink-0 ${active ? 'text-brand-700' : 'text-ink-400'}`} /><span className="min-w-0 flex-1 truncate">{label}</span>{badge && <span className="shrink-0 text-[11px] font-semibold text-ink-400">{badge}</span>}{typeof count === 'number' && <span className="shrink-0 text-[12px] font-medium tabular-nums text-ink-400">{count}</span>}{!hash && <LinkPending className="right-1.5 top-1/2 -translate-y-1/2" />}</>;
   const props = { href, 'aria-current': active ? 'page' as const : undefined, className: `${ROW} ${rowTone(active)}` };
   return hash ? <HashLink {...props}>{body}</HashLink> : <Link {...props}>{body}</Link>;
 }
@@ -197,7 +197,7 @@ function SkillsSidebar() {
         )}
       <GroupLabel>{t('Template skill', 'Skill templates')}</GroupLabel>
       <ul className="space-y-0.5">
-        {styleTemplates(t).map((template, index) => <li key={template.name}><NavRow href={`/skills?template=${index}`} icon={Sparkles} label={template.name} active={currentTemplate === String(index)} /></li>)}
+        {styleTemplates(t).map((template, index) => <li key={template.name}><NavRow href={`/skills?template=${index}`} icon={Sparkles} label={template.name} badge={template.tier ? tierName(template.tier, t) : undefined} active={currentTemplate === String(index)} /></li>)}
       </ul>
     </>
   );

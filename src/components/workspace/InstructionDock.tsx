@@ -131,7 +131,7 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
             maxLength={INSTRUCTION_LIMIT}
             disabled={busy || !target || !open}
             aria-label={t('Perintah untuk AI', 'Instruction for the AI')}
-            placeholder={busy ? t('AI sedang mengerjakan…', 'The AI is working…') : target ? t('Deskripsikan perubahan yang ingin Anda buat…', 'Describe the change you want…') : t('Letakkan kursor di paragraf atau blok teks dulu.', 'Put the cursor in a paragraph or select text first.')}
+            placeholder={busy ? t('AI sedang mengerjakan…', 'The AI is working…') : target ? t('Jelaskan perubahan yang kamu inginkan…', 'Describe the change you want…') : t('Letakkan kursor di paragraf atau blok teks dulu.', 'Put the cursor in a paragraph or select text first.')}
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); send(); } }}
             className="h-10 min-w-0 flex-1 bg-transparent px-2 text-[15px] text-ink-900 placeholder:text-ink-400 focus:outline-none disabled:cursor-not-allowed"
@@ -143,7 +143,7 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
           )}
           {target && (
             <span className="hidden shrink-0 whitespace-nowrap rounded-full bg-paper-deep px-2.5 py-1 text-[12px] font-medium text-ink-600 sm:inline">
-              {target.label}{target.words > 0 && ` · ${numberFormat(target.words, locale)}w`}
+              {target.label}{target.words > 0 && ` · ${numberFormat(target.words, locale)} ${t('kata', 'words')}`}
             </span>
           )}
           {value && (

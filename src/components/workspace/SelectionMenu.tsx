@@ -110,7 +110,7 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles,
             {styles.length > 0 && (
               <>
                 <div className="my-1 h-px bg-line" />
-                <p className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400">{t('Skills', 'Skills')}{stylesLocked && <span className="normal-case tracking-normal">· {t(`buka dengan ${skillTier}`, `unlock with ${skillTier}`)}</span>}</p>
+                <p className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400">{t('Skill', 'Skills')}{stylesLocked && <span className="normal-case tracking-normal">· {t(`buka dengan ${skillTier}`, `unlock with ${skillTier}`)}</span>}</p>
                 {styles.map((style) => (
                   <button key={style.id} type="button" role="menuitem" disabled={disabled || (!stylesLocked && overSelection)} onMouseDown={keep} onClick={runStyle(style)}
                     title={stylesLocked ? t(`Skill tersimpan — buka dengan ${skillTier}`, `Saved skills — unlock with ${skillTier}`) : undefined}

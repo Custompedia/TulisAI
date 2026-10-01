@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import {
   AlignCenter, AlignJustify, AlignLeft, AlignRight, Baseline, Bold, CaseSensitive, EllipsisVertical, FileCog, Highlighter, Indent, Italic,
@@ -16,6 +16,7 @@ import { FootnoteButton, SpecialCharacterButton, TocButton } from './toolbar/Ins
 import { TableButton } from './toolbar/TableTools';
 import { ACTIVE, Chevron, ChoiceList, CONTROL, Control, DIVIDER, IDLE, keepSelection, Popover, type Choice } from './toolbar/Popover';
 import { ZOOM_LEVELS, type Zoom } from './toolbar/zoom';
+import { overflowingGroups } from './toolbar/overflow';
 import {
   applyFormat, canShiftIndent, captureFormat, clearFormatting, currentBlockStyle, DEFAULT_SPACE_AFTER, FONT_SIZES, FONTS, LINE_SPACINGS,
   lineHeightFor, lineMultiple, paragraphSpacing, selectionFontFamily, selectionFontSize, setBlockStyle, setFontSize, shiftIndent,
@@ -31,6 +32,10 @@ const GROUP = 'flex shrink-0 items-center gap-0.5';
 const LABEL_IDLE = 'text-ink-800 enabled:hover:bg-paper-deep';
 // Unset <mark> colour in globals.css, shown on the highlight button when the mark carries none.
 const DEFAULT_HIGHLIGHT = '#fff2cc';
+// Every group in bar order; history and marks never leave the bar. The gap matches the bar's gap-0.5.
+const GROUP_IDS = ['history', 'style', 'marks', 'link', 'paragraph', 'indent', 'insert', 'layout', 'text', 'zoom', 'tools'] as const;
+const PINNED_GROUPS = new Set<string>(['history', 'marks']);
+const BAR_GAP = 2;
 const isMac = () => typeof navigator !== 'undefined' && /Mac|iPhone|iPad/u.test(navigator.platform);
 
 function FontSizeField({ editor, disabled }: { editor: Editor; disabled: boolean }) {
@@ -120,6 +125,31 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
   }, [editor, painter]);
   useEffect(() => { if (off) setPainter(null); }, [off]);
 
+  // Groups that no longer fit move into ⋮, measured from the rendered groups (a hidden group keeps its last width),
+  // so ⋮ always stays on the bar whatever the labels, locale or panel widths.
+  const barRef = useRef<HTMLDivElement>(null);
+  const widths = useRef(new Map<string, number>());
+  const moreWidth = useRef(41);
+  const [collapsed, setCollapsed] = useState<string[]>([]);
+  const remeasure = useEffectEvent(() => {
+    const bar = barRef.current; if (!bar) return;
+    for (const node of bar.querySelectorAll<HTMLElement>('[data-toolbar-group]')) { const width = node.getBoundingClientRect().width; if (width > 0) widths.current.set(node.dataset.toolbarGroup!, width); }
+    const more = bar.querySelector<HTMLElement>('[data-toolbar-more]')?.getBoundingClientRect().width; if (more) moreWidth.current = more;
+    const style = getComputedStyle(bar);
+    // One pixel of slack for sub-pixel widths.
+    const available = bar.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 1;
+    const next = overflowingGroups(GROUP_IDS.map((id) => ({ id, width: widths.current.get(id) ?? 0, pinned: PINNED_GROUPS.has(id) })), available, BAR_GAP, moreWidth.current);
+    setCollapsed((previous) => (previous.join() === next.join() ? previous : next));
+  });
+  useLayoutEffect(() => {
+    const bar = barRef.current; if (!bar || !editor) return;
+    remeasure();
+    const observer = new ResizeObserver(() => remeasure());
+    observer.observe(bar);
+    for (const node of bar.querySelectorAll<HTMLElement>('[data-toolbar-group], [data-toolbar-more]')) observer.observe(node);
+    return () => observer.disconnect();
+  }, [editor]);
+
   if (!editor) return null;
   const active = editor;
   const chain = () => active.chain().focus();
@@ -186,28 +216,28 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
 
   // Order (UX plan, section 9): Urungkan/Ulangi/Cari · Gaya paragraf · B I U S · Tautan · Perataan, spasi, daftar,
   // indentasi · Sisipkan ▾ · Tata letak ▾ · Aa ▾ · Zoom, ejaan, kuas · ⋮. Structure and layout come before the
-  // font controls so they stay on the bar at the default panel widths. Groups still collapse into ⋮ right to
-  // left as the toolbar narrows; each bar/panel pair of classes must stay in step.
-  const groups: Array<{ id: string; bar: string; panel: string; divider: boolean; render: () => React.ReactNode }> = [
-    { id: 'history', bar: '', panel: 'hidden', divider: false, render: () => <>
+  // font controls so they stay on the bar at the default panel widths. Groups collapse into ⋮ right to left as the
+  // toolbar narrows, from measured widths (see overflowingGroups); the ids must match GROUP_IDS.
+  const groups: Array<{ id: (typeof GROUP_IDS)[number]; divider: boolean; render: () => React.ReactNode }> = [
+    { id: 'history', divider: false, render: () => <>
       <Control icon={Undo2} label={t('Urungkan', 'Undo')} shortcut={`${mod}+Z`} disabled={off || !active.can().undo()} onRun={() => chain().undo().run()} />
       <Control icon={Redo2} label={t('Ulangi', 'Redo')} shortcut={`${mod}+Y`} disabled={off || !active.can().redo()} onRun={() => chain().redo().run()} />
       <Control icon={Search} label={t('Cari dan ganti', 'Find and replace')} shortcut={`${mod}+F`} active={!!find} onRun={() => (find ? setFind(null) : openFind(false))} />
     </> },
-    { id: 'style', bar: '@max-[420px]:hidden', panel: 'hidden @max-[420px]:flex', divider: true, render: () => (
+    { id: 'style', divider: true, render: () => (
       <Popover label={t('Gaya paragraf', 'Paragraph style')} disabled={off} triggerClassName={labelTrigger('w-[112px]')} idleClassName={LABEL_IDLE}
         trigger={<><span className="truncate">{styles.find((style) => style.value === blockStyle)?.label}</span><Chevron /></>}>
         {(close) => <div className="w-56"><ChoiceList close={close} items={styles.map((style) => ({ key: style.value, label: style.label, style: style.style, checked: style.value === blockStyle, onSelect: () => setBlockStyle(active, style.value) }))} /></div>}
       </Popover>
     ) },
-    { id: 'marks', bar: '', panel: 'hidden', divider: true, render: () => <>
+    { id: 'marks', divider: true, render: () => <>
       <Control icon={Bold} label={t('Tebal', 'Bold')} shortcut={`${mod}+B`} active={editor.isActive('bold')} disabled={off} onRun={() => chain().toggleBold().run()} />
       <Control icon={Italic} label={t('Miring', 'Italic')} shortcut={`${mod}+I`} active={editor.isActive('italic')} disabled={off} onRun={() => chain().toggleItalic().run()} />
       <Control icon={Underline} label={t('Garis bawah', 'Underline')} shortcut={`${mod}+U`} active={editor.isActive('underline')} disabled={off} onRun={() => chain().toggleUnderline().run()} />
       <Control icon={Strikethrough} label={t('Coret', 'Strikethrough')} shortcut={`${mod}+Shift+S`} active={editor.isActive('strike')} disabled={off} onRun={() => chain().toggleStrike().run()} />
     </> },
-    { id: 'link', bar: '@max-[462px]:hidden', panel: 'hidden @max-[462px]:flex', divider: true, render: () => <LinkPopover editor={active} disabled={off} /> },
-    { id: 'paragraph', bar: '@max-[675px]:hidden', panel: 'hidden @max-[675px]:flex', divider: true, render: () => <>
+    { id: 'link', divider: true, render: () => <LinkPopover editor={active} disabled={off} /> },
+    { id: 'paragraph', divider: true, render: () => <>
       <Popover label={t('Perataan', 'Align')} disabled={off} role="menu" trigger={<><AlignIcon size={15} aria-hidden="true" /><Chevron /></>}>
         {(close) => (
           <div className="flex gap-0.5">
@@ -250,11 +280,11 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
       </span>
       <Control icon={ListChecks} label={t('Daftar periksa', 'Checklist')} shortcut={`${mod}+Shift+9`} active={editor.isActive('taskList')} disabled={off} onRun={() => chain().toggleTaskList().run()} />
     </> },
-    { id: 'indent', bar: '@max-[740px]:hidden', panel: 'hidden @max-[740px]:flex', divider: false, render: () => <>
+    { id: 'indent', divider: false, render: () => <>
       <Control icon={Outdent} label={t('Kurangi indentasi', 'Decrease indent')} shortcut={`${mod}+[`} disabled={off || !canShiftIndent(active, -1)} onRun={() => shiftIndent(active, -1)} />
       <Control icon={Indent} label={t('Tambah indentasi', 'Increase indent')} shortcut={`${mod}+]`} disabled={off || !canShiftIndent(active, 1)} onRun={() => shiftIndent(active, 1)} />
     </> },
-    { id: 'insert', bar: '@max-[792px]:hidden', panel: 'hidden @max-[792px]:flex', divider: true, render: () => toolPanel(t('Sisipkan', 'Insert'), <><SquarePlus size={15} aria-hidden="true" /><span>{t('Sisipkan', 'Insert')}</span></>, <>
+    { id: 'insert', divider: true, render: () => toolPanel(t('Sisipkan', 'Insert'), <><SquarePlus size={15} aria-hidden="true" /><span>{t('Sisipkan', 'Insert')}</span></>, <>
       <TableButton editor={active} disabled={off} />
       <FootnoteButton editor={active} disabled={off} />
       <TocButton editor={active} disabled={off} />
@@ -265,7 +295,7 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
       <Control icon={Subscript} label={t('Subskrip', 'Subscript')} shortcut={`${mod}+,`} active={editor.isActive('subscript')} disabled={off} onRun={() => chain().toggleSubscript().run()} />
       <Control icon={Minus} label={t('Garis horizontal', 'Horizontal line')} disabled={off} onRun={() => chain().setHorizontalRule().run()} />
     </>) },
-    { id: 'layout', bar: '@max-[845px]:hidden', panel: 'hidden @max-[845px]:flex', divider: false, render: () => (
+    { id: 'layout', divider: false, render: () => (
       <Popover label={t('Tata letak', 'Layout')} disabled={disabled} triggerClassName={labelTrigger('w-auto')} idleClassName={LABEL_IDLE} trigger={<><FileCog size={15} aria-hidden="true" /><span>{t('Tata letak', 'Layout')}</span><Chevron /></>}>
         {(close) => <div className="w-56"><ChoiceList close={close} checkable={false} items={[
           { key: 'setup', icon: FileCog, label: t('Pengaturan halaman', 'Page setup'), onSelect: onPageSetup },
@@ -273,7 +303,7 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
         ]} /></div>}
       </Popover>
     ) },
-    { id: 'text', bar: '@max-[900px]:hidden', panel: 'hidden @max-[900px]:flex', divider: false, render: () => toolPanel(t('Font, ukuran, dan warna', 'Font, size and colour'), <CaseSensitive size={17} aria-hidden="true" />, <>
+    { id: 'text', divider: false, render: () => toolPanel(t('Font, ukuran, dan warna', 'Font, size and colour'), <CaseSensitive size={17} aria-hidden="true" />, <>
       {fontPicker}
       {sizeControls}
       <ColorPicker icon={Baseline} label={t('Warna teks', 'Text colour')} value={textColor} fallback="#000000" resetLabel={t('Reset', 'Reset')} disabled={off}
@@ -282,7 +312,7 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
         onPick={(color) => chain().unsetBackgroundColor().setHighlight({ color }).run()} onReset={() => chain().unsetHighlight().unsetBackgroundColor().run()} />
       <Control icon={RemoveFormatting} label={t('Hapus format', 'Clear formatting')} shortcut={`${mod}+\\`} disabled={off} onRun={() => clearFormatting(active)} />
     </>) },
-    { id: 'zoom', bar: '@max-[975px]:hidden', panel: 'hidden @max-[975px]:flex', divider: true, render: () => (
+    { id: 'zoom', divider: true, render: () => (
       <Popover label={t('Perbesaran', 'Zoom')} triggerClassName={labelTrigger('w-[64px]')} idleClassName={LABEL_IDLE} trigger={<><span className="tabular-nums">{zoomLabel}</span><Chevron /></>}>
         {(close) => <ChoiceList close={close} items={[
           { key: 'fit', label: t('Pas lebar', 'Fit width'), checked: zoom === 'fit', onSelect: () => onZoom('fit') },
@@ -290,7 +320,7 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
         ]} />}
       </Popover>
     ) },
-    { id: 'tools', bar: '@max-[1000px]:hidden', panel: 'hidden @max-[1000px]:flex', divider: false, render: () => <>
+    { id: 'tools', divider: false, render: () => <>
       <Control icon={SpellCheck} label={spellOn ? t('Matikan periksa ejaan', 'Turn spell check off') : t('Nyalakan periksa ejaan', 'Turn spell check on')} active={spellOn} onRun={() => setSpellcheck(active.view, !spellOn)} />
       <Control icon={PaintRoller} label={t('Salin format (klik dua kali untuk mengunci)', 'Paint format (double-click to lock)')} active={!!painter} disabled={off}
         onRun={(event) => { if (event.detail >= 2) setPainter({ format: captureFormat(active), sticky: true }); else setPainter(painter ? null : { format: captureFormat(active), sticky: false }); }} />
@@ -298,21 +328,21 @@ export function FormattingToolbar({ editor, disabled, zoom, onZoom, onPageSetup,
   ];
 
   return (
-    <div role="toolbar" aria-label={t('Format tulisan', 'Text formatting')} aria-disabled={off}
-      className="@container relative z-20 flex min-w-0 shrink-0 items-center gap-0.5 border-b border-line bg-white px-2 py-1">
+    <div ref={barRef} role="toolbar" aria-label={t('Format tulisan', 'Text formatting')} aria-disabled={off}
+      className="relative z-20 flex min-w-0 shrink-0 items-center gap-0.5 border-b border-line bg-white px-2 py-1">
       {groups.map((group) => (
-        <div key={group.id} className={`${GROUP} ${group.bar}`}>
+        <div key={group.id} data-toolbar-group={group.id} className={`${GROUP} ${collapsed.includes(group.id) ? 'hidden' : ''}`}>
           {group.divider && <span aria-hidden="true" className={DIVIDER} />}
           {group.render()}
         </div>
       ))}
-      <div className="ml-auto hidden shrink-0 items-center @max-[1000px]:flex">
+      <div data-toolbar-more="" className={`ml-auto shrink-0 items-center ${collapsed.length ? 'flex' : 'hidden'}`}>
         <span aria-hidden="true" className={DIVIDER} />
         <Popover label={t('Opsi lainnya', 'More options')} role="dialog" focusFirst={false} triggerClassName={CONTROL}
           trigger={<EllipsisVertical size={15} aria-hidden="true" />} align="end" scrollable={false}>
           {() => (
             <div className="flex w-max max-w-[min(22rem,calc(100vw-2rem))] flex-wrap items-center gap-1 p-0.5">
-              {groups.map((group) => <div key={group.id} className={`${GROUP} ${group.panel}`}>{group.render()}</div>)}
+              {groups.filter((group) => collapsed.includes(group.id)).map((group) => <div key={group.id} className={GROUP}>{group.render()}</div>)}
             </div>
           )}
         </Popover>

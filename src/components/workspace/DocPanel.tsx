@@ -6,6 +6,7 @@ import { useEditorState } from '@tiptap/react';
 import { ArrowLeft, ChevronDown, ChevronsLeft, Copy, Heading, LockKeyhole, MoreHorizontal, NotebookPen, PenLine, Plus, Search, Sparkles, Target, TextSelect, X } from 'lucide-react';
 import { PaidLock } from '@/components/app/PaidLock';
 import { useLocale } from '@/lib/client/locale';
+import { shownTitle } from '@/lib/writing/title';
 import { request } from '@/lib/client/api';
 import { numberFormat, relativeTime } from '@/lib/client/format';
 import { clampDocPanelWidth, DOC_PANEL_MAX_WIDTH, DOC_PANEL_MIN_WIDTH } from '@/lib/navigation/doc-panel';
@@ -118,7 +119,7 @@ function Switcher({ docId, title }: { docId: string; title: string }) {
     <div ref={root} className="relative">
       <button type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}
         className="flex h-9 w-full items-center gap-2 rounded-lg border border-line bg-white px-2.5 text-left text-[13px] font-semibold text-ink-900 transition-colors hover:border-line-strong">
-        <NotebookPen size={15} aria-hidden="true" className="shrink-0 text-brand-700" /><span className="min-w-0 flex-1 truncate">{title || t('Notebook tanpa judul', 'Untitled notebook')}</span><ChevronDown size={14} aria-hidden="true" className="shrink-0 text-ink-400" />
+        <NotebookPen size={15} aria-hidden="true" className="shrink-0 text-brand-700" /><span className="min-w-0 flex-1 truncate">{shownTitle(title, t)}</span><ChevronDown size={14} aria-hidden="true" className="shrink-0 text-ink-400" />
       </button>
       {open && (
         <div role="dialog" aria-label={t('Ganti notebook', 'Switch notebook')} className="absolute inset-x-0 top-full z-40 mt-1 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)] animate-fade-up">
@@ -131,7 +132,7 @@ function Switcher({ docId, title }: { docId: string; title: string }) {
               : shown.length === 0 ? <li className="px-2.5 py-2 text-xs text-ink-500">{trimmed ? t(`Tidak ada notebook yang cocok dengan “${trimmed}”.`, `No notebooks match “${trimmed}”.`) : t('Tidak ada notebook lain.', 'No other notebooks.')}</li>
               : shown.map((doc) => (
                 <li key={doc.id}><Link href={`/notebooks/${doc.id}`} onClick={() => setOpen(false)} className="block rounded-lg px-2.5 py-1.5 transition-colors hover:bg-paper-deep">
-                  <span className="block truncate text-[13px] font-medium text-ink-900">{doc.title}</span>
+                  <span className="block truncate text-[13px] font-medium text-ink-900">{shownTitle(doc.title, t)}</span>
                   <span className="block truncate text-[11px] text-ink-500">{t('Diedit', 'Edited')} {relativeTime(doc.updatedAt, locale)}</span>
                 </Link></li>
               ))}

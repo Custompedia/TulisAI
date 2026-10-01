@@ -11,6 +11,7 @@ import { defaults } from '@/lib/writing/settings';
 import { STYLE_LIMIT, type WritingStyle } from '@/lib/writing/styles';
 import { PageHeader, useEntitlements, useSessionGuard } from '@/components/app/AppShell';
 import { useRequiredTierName } from '@/components/app/PaidLock';
+import { tierName } from '@/lib/client/quota';
 import { openPlans, requestNewWriting } from '@/components/app/shell-events';
 import { Alert } from '@/components/ui/Alert';
 import { Button, buttonClass } from '@/components/ui/Button';
@@ -139,7 +140,7 @@ export function SkillsView() {
           <section className="rounded-2xl border border-line bg-white p-5 sm:p-6" aria-labelledby="template-title">
             <div className="flex items-start gap-3">
               <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-brand-50 text-brand-700"><Sparkles size={20} aria-hidden="true" /></span>
-              <div className="min-w-0 flex-1"><h2 id="template-title" className="truncate text-lg font-semibold text-ink-950">{template.name}</h2><p className="text-[13px] text-ink-500">{t('Template skill', 'Skill template')}</p></div>
+              <div className="min-w-0 flex-1"><h2 id="template-title" className="truncate text-lg font-semibold text-ink-950">{template.name}</h2><p className="text-[13px] text-ink-500">{t('Template skill', 'Skill template')}{template.tier && ` · ${t(`paling pas di paket ${tierName(template.tier, t)}`, `works best on ${tierName(template.tier, t)}`)}`}</p></div>
             </div>
             <SkillSummary style={{ settings: template.settings, description: template.description }} t={t} />
             {/* Below Max the server drops the instructions and the sample; Plus and Pro keep the format and length. */}
@@ -191,7 +192,7 @@ export function SkillsView() {
                 <li key={draft.name}>
                   <Link href={`/skills?template=${index}`} className="flex items-center gap-3 rounded-xl border border-line bg-white px-3.5 py-3 transition-colors hover:border-line-strong">
                     <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-brand-50 text-brand-700"><Sparkles size={16} aria-hidden="true" /></span>
-                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-ink-900">{draft.name}</span><span className="mt-0.5 block truncate text-xs text-ink-500">{draft.description}</span></span>
+                    <span className="min-w-0 flex-1"><span className="flex items-center gap-1.5"><span className="min-w-0 truncate text-sm font-semibold text-ink-900">{draft.name}</span>{draft.tier && <span className="shrink-0 rounded bg-ink-100 px-1.5 py-px text-[11px] font-semibold text-ink-600">{tierName(draft.tier, t)}</span>}</span><span className="mt-0.5 block truncate text-xs text-ink-500">{draft.description}</span></span>
                   </Link>
                 </li>
               ))}

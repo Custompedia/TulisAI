@@ -10,7 +10,8 @@ import { openPlans } from './shell-events';
 
 // The character pill in the top bar (and the editor header). It opens a small popover with what is left,
 // the per-run limit, and the way to the full usage page; "Lihat paket" stays a small link, never the main action.
-export function QuotaPill() {
+// `compact`: on a phone only the gauge shows (the editor header needs the room for the title); the count is in the popover.
+export function QuotaPill({ compact = false }: { compact?: boolean }) {
   const { t, locale } = useLocale();
   const { usage } = useShell();
   const { limits } = useEntitlements();
@@ -40,10 +41,10 @@ export function QuotaPill() {
     <div ref={root} className="relative">
       <button ref={button} type="button" onClick={() => setOpen(!open)} aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined}
         aria-label={t(`Karakter AI: ${numberFormat(usage.charactersRemaining, 'id')} tersisa, ${scope}`, `AI characters: ${numberFormat(usage.charactersRemaining, 'en')} left, ${scope}`)}
-        className={`inline-flex h-10 items-center gap-2 rounded-full border px-3 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:px-4 ${tone}`}>
+        className={`inline-flex h-10 items-center gap-2 rounded-full border text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:px-4 ${compact ? 'w-10 justify-center px-0 sm:w-auto' : 'px-3'} ${tone}`}>
         <Gauge size={16} aria-hidden="true" className={level === 'ok' ? 'text-brand-700' : ''} />
         {/* A phone gets the compact remaining count; wider screens get used/limit and the scope. */}
-        <span className="font-semibold tabular-nums text-ink-900 sm:hidden">{compactCharacters(usage.charactersRemaining, locale)}</span>
+        <span className={`font-semibold tabular-nums text-ink-900 sm:hidden ${compact ? 'hidden' : ''}`}>{compactCharacters(usage.charactersRemaining, locale)}</span>
         <span className="hidden sm:inline"><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{numberFormat(usage.characterLimit, locale)}</span> {oneTime ? t('karakter sekali pakai', 'one-time characters') : t('karakter bulan ini', 'characters this month')}</span>
       </button>
 
