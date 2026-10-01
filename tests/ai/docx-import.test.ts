@@ -388,10 +388,11 @@ describe('DOCX import: section and limits', () => {
 
   it('splits huge runs of formatting into a valid document instead of failing', async () => {
     const runs = Array.from({ length: 6000 }, (_, index) => r(`k${index} `, index % 2 ? '<w:b/>' : '')).join('');
-    const result = await docxToEditorDocument(await docx(p(runs))).catch((caught: unknown) => caught);
-    // More than 5000 inline nodes cannot be stored; the importer says so rather than a generic failure.
-    expect(result).toBeInstanceOf(DocxError);
-    expect((result as Error).message).toMatch(/too large or too complex/);
+    // 6,000 alternating runs used to pass the old 5,000-node cap; the cap is now 50,000 children per node.
+    const result = await docxToEditorDocument(await docx(p(runs)));
+    const inline = result.content.content[0]!.content!;
+    expect(inline).toHaveLength(6000);
+    expect(inline.filter((node) => node.marks?.some((mark) => mark.type === 'bold'))).toHaveLength(3000);
   });
 });
 

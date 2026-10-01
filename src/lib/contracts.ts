@@ -2,30 +2,98 @@ import { z } from "zod";
 import { INSTRUCTION_LIMIT } from "@/lib/writing/instruction";
 import { NotebookAppearanceSchema } from "@/lib/notebook/appearance";
 import { BRIEF_VALUE_LIMIT, metaLimit } from "@/lib/writing/notebook-meta";
+import { MAX_CHILD_NODES, MAX_TEXT_NODE_CHARACTERS, MAX_TOP_LEVEL_BLOCKS } from "@/lib/limits";
 
 export const ApiErrorSchema = z.object({ error: z.object({ code: z.string(), message: z.string(), details: z.unknown().optional() }) });
-const MAX_EDITOR_NODES = 12_000;
 const httpUrl = (value: string) => /^https?:\/\//i.test(value);
-// Attribute values stay primitive and bounded; the TipTap schema itself decides which keys exist, so new defaults never break loading.
-const EditorAttrValueSchema = z.union([z.string().max(2048), z.number().finite(), z.boolean(), z.null(), z.array(z.number().finite().min(0).max(100_000)).max(100)]);
-const EditorAttrsSchema = z.record(z.string().max(40), EditorAttrValueSchema).refine((attrs) => Object.keys(attrs).length <= 40, "Too many attributes.").refine((attrs) => typeof attrs.href !== "string" || httpUrl(attrs.href), "Only HTTP(S) links are supported.");
-const EditorMarkSchema = z.object({ type: z.enum(["bold", "italic", "underline", "strike", "link", "textStyle", "highlight", "subscript", "superscript"]), attrs: EditorAttrsSchema.optional() }).strict().superRefine((mark, ctx) => { if (mark.type === "link" && (typeof mark.attrs?.href !== "string" || !httpUrl(mark.attrs.href))) ctx.addIssue({ code: "custom", message: "Only HTTP(S) links are supported." }); });
-type EditorNode = { type: string; text?: string; attrs?: Record<string, unknown>; marks?: Array<z.infer<typeof EditorMarkSchema>>; content?: EditorNode[] };
-const EditorNodeSchema: z.ZodType<EditorNode> = z.lazy(() => z.object({
-  type: z.enum(["paragraph", "heading", "text", "bulletList", "orderedList", "listItem", "taskList", "taskItem", "hardBreak", "blockquote", "horizontalRule", "pageBreak", "footnote", "tableOfContents", "table", "tableRow", "tableHeader", "tableCell"]),
-  text: z.string().max(200_000).optional(), attrs: EditorAttrsSchema.optional(), marks: z.array(EditorMarkSchema).max(10).optional(), content: z.array(EditorNodeSchema).max(5000).optional()
-}).strict().superRefine((node, ctx) => { if (node.type === "text" && node.text === undefined) ctx.addIssue({ code: "custom", message: "Text nodes require text." }); if (node.type !== "text" && node.text !== undefined) ctx.addIssue({ code: "custom", message: "Only text nodes may contain text." }); }));
-// TipTap writes every attribute, defaults included; null attrs are dropped so stored bodies stay small (ProseMirror refills them on load).
-const compactNode = (node: unknown): unknown => {
-  if (!node || typeof node !== "object" || Array.isArray(node)) return node;
-  const { attrs, marks, content, ...rest } = node as { attrs?: Record<string, unknown>; marks?: unknown[]; content?: unknown[] };
-  const kept = attrs && typeof attrs === "object" ? Object.fromEntries(Object.entries(attrs).filter(([, value]) => value !== null && value !== undefined)) : undefined;
-  return { ...rest, ...(kept && Object.keys(kept).length ? { attrs: kept } : {}), ...(Array.isArray(marks) && marks.length ? { marks: marks.map(compactNode) } : {}), ...(Array.isArray(content) ? { content: content.map(compactNode) } : {}) };
-};
-// D1 caps a row at 2 MB of UTF-8 and non-ASCII takes up to 3 bytes per UTF-16 unit, so bytes are capped too, with room for the other columns.
-const MAX_BODY_UNITS = 1_500_000; const MAX_BODY_BYTES = 1_900_000;
-const utf8Length = (value: string) => { let bytes = value.length; for (let index = 0; index < value.length; index++) { const code = value.charCodeAt(index); if (code >= 0x80) bytes += code >= 0x800 && (code < 0xd800 || code > 0xdfff) ? 2 : 1; } return bytes; };
-export const EditorDocumentSchema = z.preprocess(compactNode, z.object({ type: z.literal("doc"), content: z.array(EditorNodeSchema).max(MAX_EDITOR_NODES).default([]) }).strict().superRefine((document, ctx) => { const encoded = JSON.stringify(document); if (encoded.length > MAX_BODY_UNITS || (encoded.length > MAX_BODY_BYTES / 3 && utf8Length(encoded) > MAX_BODY_BYTES)) ctx.addIssue({ code: "custom", message: "Document exceeds the inline safety limit." }); }));
+export const EDITOR_NODE_TYPES = ["paragraph", "heading", "text", "bulletList", "orderedList", "listItem", "taskList", "taskItem", "hardBreak", "blockquote", "horizontalRule", "pageBreak", "footnote", "tableOfContents", "table", "tableRow", "tableHeader", "tableCell", "imageSpace"] as const;
+export const EDITOR_MARK_TYPES = ["bold", "italic", "underline", "strike", "link", "textStyle", "highlight", "subscript", "superscript"] as const;
+export type EditorMark = { type: (typeof EDITOR_MARK_TYPES)[number]; attrs?: Record<string, unknown> };
+export type EditorNode = { type: string; text?: string; attrs?: Record<string, unknown>; marks?: EditorMark[]; content?: EditorNode[] };
+export type EditorDocument = { type: "doc"; content: EditorNode[] };
+const NODE_TYPES = new Set<string>(EDITOR_NODE_TYPES);
+const MARK_TYPES = new Set<string>(EDITOR_MARK_TYPES);
+const NODE_KEYS = new Set(["type", "text", "attrs", "marks", "content"]);
+const isRecord = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+
+// Attribute values stay primitive and bounded; the TipTap schema itself decides which keys exist, so new defaults never
+// break loading. Null attributes are dropped in place: TipTap writes every attribute, defaults included, and
+// ProseMirror refills them on load, so the stored body stays small.
+function attrsProblem(owner: Record<string, unknown>): string | null {
+  const attrs = owner.attrs;
+  if (attrs === undefined) return null;
+  if (!isRecord(attrs)) return "Attributes must be an object.";
+  let kept = 0;
+  for (const key of Object.keys(attrs)) {
+    const value = attrs[key];
+    if (value === null || value === undefined) { delete attrs[key]; continue; }
+    if (key.length > 40) return "Attribute names are at most 40 characters.";
+    if (++kept > 40) return "Too many attributes.";
+    if (typeof value === "string") {
+      if (value.length > 2048) return "Attribute values are at most 2,048 characters.";
+      if (key === "href" && !httpUrl(value)) return "Only HTTP(S) links are supported.";
+      continue;
+    }
+    if (typeof value === "number") { if (!Number.isFinite(value)) return "Attribute numbers must be finite."; continue; }
+    if (typeof value === "boolean") continue;
+    if (Array.isArray(value)) {
+      if (value.length > 100 || value.some((item) => typeof item !== "number" || !Number.isFinite(item) || item < 0 || item > 100_000)) return "Attribute lists hold at most 100 numbers.";
+      continue;
+    }
+    return "Attribute values must be text, numbers or booleans.";
+  }
+  if (!kept) delete owner.attrs;
+  return null;
+}
+
+// The stored-document contract, checked by hand in one walk instead of a Zod tree: Zod copied every node, which for a
+// 2,000-page thesis cost seconds of CPU and a second copy of the whole document in memory. The rules are the ones the
+// Zod schema had (strict keys, known types, bounded attributes and marks, text only on text nodes) with the size caps
+// of src/lib/limits.ts. The walk is iterative, so nesting cannot overflow the stack. Whether the nodes fit together
+// is ProseMirror's call: see schemaProblem in src/lib/editor/validate.ts.
+export function editorDocumentProblem(value: unknown): string | null {
+  if (!isRecord(value) || value.type !== "doc") return "The document must be a doc node.";
+  for (const key of Object.keys(value)) if (key !== "type" && key !== "content") return "Unknown document field.";
+  if (value.content === undefined) value.content = [];
+  if (!Array.isArray(value.content)) return "Document content must be a list.";
+  if (value.content.length > MAX_TOP_LEVEL_BLOCKS) return "The document has too many blocks.";
+  const stack: unknown[] = [...value.content];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!isRecord(node)) return "Every node must be an object.";
+    for (const key of Object.keys(node)) if (!NODE_KEYS.has(key)) return "Unknown node field.";
+    if (typeof node.type !== "string" || !NODE_TYPES.has(node.type)) return "Unknown node type.";
+    if (node.type === "text") {
+      if (typeof node.text !== "string") return "Text nodes require text.";
+      if (node.text.length > MAX_TEXT_NODE_CHARACTERS) return "A text node is too long.";
+    } else if (node.text !== undefined) return "Only text nodes may contain text.";
+    const problem = attrsProblem(node);
+    if (problem) return problem;
+    if (node.marks !== undefined) {
+      if (!Array.isArray(node.marks) || node.marks.length > 10) return "At most 10 marks per node.";
+      for (const mark of node.marks) {
+        if (!isRecord(mark) || typeof mark.type !== "string" || !MARK_TYPES.has(mark.type)) return "Unknown mark.";
+        for (const key of Object.keys(mark)) if (key !== "type" && key !== "attrs") return "Unknown mark field.";
+        const markProblem = attrsProblem(mark);
+        if (markProblem) return markProblem;
+        if (mark.type === "link" && (!isRecord(mark.attrs) || typeof mark.attrs.href !== "string" || !httpUrl(mark.attrs.href))) return "Only HTTP(S) links are supported.";
+      }
+      if (!node.marks.length) delete node.marks;
+    }
+    if (node.content !== undefined) {
+      if (!Array.isArray(node.content)) return "Node content must be a list.";
+      if (node.content.length > MAX_CHILD_NODES) return "A node has too many children.";
+      for (const child of node.content) stack.push(child);
+    }
+  }
+  return null;
+}
+
+// Validates and compacts null attributes in place: the parsed value is the same object, never a copy.
+export const EditorDocumentSchema = z.custom<EditorDocument>().superRefine((value, ctx) => {
+  const problem = editorDocumentProblem(value);
+  if (problem) ctx.addIssue({ code: "custom", message: problem });
+});
 // Every string preference stays ≤500 characters except the brief (UX 3), whose values may reach BRIEF_VALUE_LIMIT,
 // and the writing sample, which may reach SAMPLE_LIMIT (see metaLimit).
 const DocumentPreferencesSchema = z.record(z.string(), z.union([z.string().max(BRIEF_VALUE_LIMIT), z.number().finite(), z.boolean(), z.null(), z.array(z.string().max(300)).max(20)]))
@@ -68,7 +136,7 @@ export type GenerateInput = z.infer<typeof GenerateSchema>;
 export type DraftInput = z.infer<typeof DraftSchema>;
 export type AnalyzeQualityInput = z.infer<typeof AnalyzeQualitySchema>;
 export type ApiError = z.infer<typeof ApiErrorSchema>;
-export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean; content: z.infer<typeof EditorDocumentSchema>; createdAt: string; updatedAt: string };
+export type DocumentDTO = { id: string; title: string; revision: number; language: "auto" | "id" | "en"; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean; content: EditorDocument; createdAt: string; updatedAt: string };
 export type VersionDTO = { id: string; documentId: string; kind: "original" | "checkpoint" | "ai_apply" | "restore" | "auto"; revision: number; createdAt: string; label: string | null; promptId?: string | null; scopeType?: string | null };
 
 export function apiError(code: string, message: string, status: number, details?: unknown) {

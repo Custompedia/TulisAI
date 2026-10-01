@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { documentText, plainTextDocument, replaceTextInDocument, selectionOffsets } from "../../src/lib/editor/document";
 import { EditorDocumentSchema } from "../../src/lib/contracts";
+import { encodeDocument, serializeDocument, utf8Length } from "../../src/lib/editor/serialize";
 import { documentSchema } from "../../src/lib/editor/extensions";
 
 describe("editor document serialization", () => {
@@ -149,11 +150,16 @@ describe('paragraph-format replacement of a partial range', () => {
   });
 });
 
-// Regression: the inline limit counted UTF-16 units, so a non-ASCII body could pass it yet exceed D1's 2 MB row size.
-describe('stored body size limit', () => {
+// Bodies live in R2 now and are capped in UTF-8 bytes of their canonical JSON (src/lib/limits.ts), so the byte count
+// must be what TextEncoder writes, not UTF-16 units: a non-ASCII body takes up to three bytes per unit.
+describe('stored body size', () => {
   const body = (char: string) => ({ type: 'doc', content: Array.from({ length: 4 }, () => ({ type: 'paragraph', content: [{ type: 'text', text: char.repeat(180_000) }] })) });
   it('counts UTF-8 bytes, not UTF-16 units', () => {
-    expect(() => EditorDocumentSchema.parse(body('a'))).not.toThrow();
-    expect(() => EditorDocumentSchema.parse(body('中'))).toThrow(/inline safety limit/);
+    for (const char of ['a', '中', '😀', 'é']) {
+      const doc = EditorDocumentSchema.parse(body(char));
+      expect(encodeDocument(doc).length).toBe(new TextEncoder().encode(serializeDocument(doc)).length);
+      expect(utf8Length(serializeDocument(doc))).toBe(encodeDocument(doc).length);
+    }
+    expect(encodeDocument(EditorDocumentSchema.parse(body('中'))).length).toBeGreaterThan(3 * 720_000);
   });
 });

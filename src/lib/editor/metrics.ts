@@ -3,8 +3,28 @@ import { diffWords } from "diff";
 const MAX_EXACT_WORDS = 4_000;
 const MAX_EDIT_LENGTH = 10_000;
 
-export function countWords(text: string): number { const value = text.trim(); return value ? value.split(/\s+/u).length : 0; }
-export function countCharacters(text: string): number { return Array.from(text).length; }
+// JavaScript's \s, spelled out so counting does not run a regular expression per character.
+export const isSpaceCode = (code: number) => code === 32 || (code >= 9 && code <= 13) || code === 0xa0 || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
+  || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
+// Maximal runs of non-space characters: the same count as splitting the trimmed text on /\s+/u, without the copies.
+export function wordsIn(text: string): number {
+  let count = 0; let inWord = false;
+  for (let index = 0; index < text.length; index++) { const space = isSpaceCode(text.charCodeAt(index)); if (!space && !inWord) count++; inWord = !space; }
+  return count;
+}
+// Code points, as Array.from(text).length counts them: a surrogate pair is one character, a lone surrogate is one too.
+export function codePoints(text: string): number {
+  let count = 0;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff && index + 1 < text.length && (text.charCodeAt(index + 1) & 0xfc00) === 0xdc00) index++;
+    count++;
+  }
+  return count;
+}
+// Counted without splitting or copying the text, so the status bar stays cheap on a 2,000-page notebook.
+export function countWords(text: string): number { return wordsIn(text); }
+export function countCharacters(text: string): number { return codePoints(text); }
 export function readingMinutes(text: string): number { const words = countWords(text); return words ? Math.max(1, Math.ceil(words / 200)) : 0; }
 // Approximate large-input change percentage from word frequency deltas to keep work bounded.
 function fallbackPercentage(before: string[], after: string[]): number {
