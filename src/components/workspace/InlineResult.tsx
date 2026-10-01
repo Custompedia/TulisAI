@@ -2,7 +2,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { Editor } from '@tiptap/react';
 import { posToDOMRect } from '@tiptap/core';
-import { Check, Eye, EyeOff, RefreshCw, TriangleAlert, X } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, RefreshCw, TriangleAlert, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { changePercentage } from '@/lib/editor/metrics';
 import { Button } from '@/components/ui/Button';
@@ -15,6 +15,8 @@ export type InlineStatus = 'loading' | 'ready' | 'error';
 type Props = {
   editor: Editor; label: string; status: InlineStatus; preview: Preview | null; message: string; stale: boolean; busy: boolean; applying: boolean;
   onApply: (alternative?: number) => void; onRetry?: () => void; onDiscard: () => void;
+  // How many alternatives an inline run asks for (the backend accepts 3 to 5); changing it runs again.
+  count?: 3 | 5; onCount?: (count: 3 | 5) => void;
 };
 type Placement = { top: number; left: number; width: number };
 
@@ -64,6 +66,20 @@ function Result({ preview, alternative }: { preview: Preview; alternative: numbe
   );
 }
 
+// Copies one option without replacing the text, for trying hooks side by side.
+function CopyOption({ text }: { text: string }) {
+  const { t } = useLocale();
+  const [done, setDone] = useState(false);
+  useEffect(() => { if (!done) return; const timer = setTimeout(() => setDone(false), 1500); return () => clearTimeout(timer); }, [done]);
+  const label = done ? t('Tersalin', 'Copied') : t('Salin alternatif ini', 'Copy this alternative');
+  return (
+    <button type="button" aria-label={label} title={label} onClick={() => { void navigator.clipboard.writeText(text).then(() => setDone(true), () => undefined); }}
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-400 transition-colors hover:bg-paper-deep hover:text-ink-900">
+      {done ? <Check size={14} aria-hidden="true" className="text-brand-700" /> : <Copy size={14} aria-hidden="true" />}
+    </button>
+  );
+}
+
 function Alternatives({ options, disabled, onPick }: { options: NonNullable<Preview['output']['alternatives']>; disabled: boolean; onPick: (index: number) => void }) {
   const { t } = useLocale();
   return (
@@ -71,12 +87,13 @@ function Alternatives({ options, disabled, onPick }: { options: NonNullable<Prev
       <p className="mb-1.5 text-xs text-ink-500">{t('Klik salah satu untuk langsung mengganti teks.', 'Click one to replace the text right away.')}</p>
       <ul className="space-y-1">
         {options.map((option, index) => (
-          <li key={index}>
+          <li key={index} className="flex items-start gap-1">
             <button type="button" disabled={disabled} onClick={() => onPick(index)}
               className="flex w-full items-start gap-2.5 rounded-lg border border-line px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50 focus-visible:border-brand-400 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line disabled:hover:bg-transparent">
               <span className="min-w-0 flex-1 font-serif text-[15px] leading-relaxed text-ink-900">{option.text}</span>
               {option.variation_level && <span className="mt-1 shrink-0 rounded bg-paper-deep px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-ink-500">{option.variation_level.replace(/_/g, ' ')}</span>}
             </button>
+            <CopyOption text={option.text} />
           </li>
         ))}
       </ul>
@@ -84,7 +101,7 @@ function Alternatives({ options, disabled, onPick }: { options: NonNullable<Prev
   );
 }
 
-export function InlineResult({ editor, label, status, preview, message, stale, busy, applying, onApply, onRetry, onDiscard }: Props) {
+export function InlineResult({ editor, label, status, preview, message, stale, busy, applying, onApply, onRetry, onDiscard, count = 3, onCount }: Props) {
   const { t } = useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const primary = useRef<HTMLButtonElement>(null);
@@ -134,7 +151,16 @@ export function InlineResult({ editor, label, status, preview, message, stale, b
         <footer className="flex flex-wrap items-center gap-1.5 border-t border-line bg-paper/40 px-3 py-2">
           {ready && !alternatives && !unchanged && <Button ref={primary} size="sm" variant="primary" icon={Check} loading={applying} disabled={!canApply} onClick={() => onApply()}>{t('Ganti teks', 'Replace text')}</Button>}
           {onRetry && <Button size="sm" variant="ghost" icon={RefreshCw} disabled={busy} onClick={onRetry}>{alternatives ? t('Alternatif lain', 'Other alternatives') : t('Coba lagi', 'Try again')}</Button>}
-          <Button size="sm" variant="ghost" icon={X} disabled={busy} className="ml-auto" onClick={onDiscard}>{t('Buang', 'Discard')}</Button>
+          {alternatives && onCount && (
+            <div role="radiogroup" aria-label={t('Jumlah alternatif', 'Number of alternatives')} className="ml-auto inline-flex items-center gap-0.5 rounded-lg border border-line bg-white p-0.5">
+              {([3, 5] as const).map((value) => (
+                <button key={value} type="button" role="radio" aria-checked={count === value} disabled={busy} onClick={() => { if (value !== count) onCount(value); }}
+                  className={`h-6 rounded-md px-2 text-[12px] font-semibold tabular-nums transition-colors disabled:opacity-50 ${count === value ? 'bg-brand-800 text-white' : 'text-ink-600 hover:bg-paper-deep'}`}>{value}</button>
+              ))}
+              <span className="px-1 text-[11px] text-ink-500">{t('alternatif', 'options')}</span>
+            </div>
+          )}
+          <Button size="sm" variant="ghost" icon={X} disabled={busy} className={alternatives && onCount ? '' : 'ml-auto'} onClick={onDiscard}>{t('Buang', 'Discard')}</Button>
         </footer>
       )}
     </div>

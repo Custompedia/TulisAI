@@ -75,8 +75,9 @@ export function normalizeSettings(raw: Record<string, unknown> | null | undefine
 }
 
 // Sends exactly the controls the selected prompt uses; the request block only when Sesuaikan was applied.
-export function runtimeControls(settings: Settings, language: 'id' | 'en', inlineAction?: string): Record<string, unknown> {
-  if (inlineAction) return { language, action: inlineAction };
+// `alternatives`: how many options an inline (P07) run returns; the backend accepts 3 to 5.
+export function runtimeControls(settings: Settings, language: 'id' | 'en', inlineAction?: string, alternatives?: number): Record<string, unknown> {
+  if (inlineAction) return { language, action: inlineAction, ...(alternatives && alternatives >= 3 && alternatives <= 5 ? { n: Math.trunc(alternatives) } : {}) };
   const controls: Record<Mode, Record<string, unknown>> = {
     standard: { strength: settings.strength },
     academic: { academic_context: settings.academic },

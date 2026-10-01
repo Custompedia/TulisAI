@@ -2,32 +2,40 @@
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { Filter, House, Lock, NotebookPen, Plus, Search, SearchX, Upload, X } from 'lucide-react';
+import { Filter, House, LayoutGrid, List, Lock, NotebookPen, Plus, Search, SearchX, Upload, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, request } from '@/lib/client/api';
 import { PageHeader, useEntitlements, useSessionGuard, type DocumentSummary } from '@/components/app/AppShell';
 import { NotebookCard, NotebookCardSkeleton } from '@/components/app/NotebookCard';
-import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
 import { ImportDocxDialog } from '@/components/app/ImportDocxDialog';
 import { useRequiredTierName } from '@/components/app/PaidLock';
-import { showLockedFeature } from '@/components/app/shell-events';
+import { requestNewWriting, showLockedFeature } from '@/components/app/shell-events';
 import { modeLabel } from '@/components/writing/modes';
 import { filterByMode, libraryMode, publishLibrary } from '@/lib/navigation/library';
 import { requiredTierFor } from '@/lib/plans';
 import { Toast } from '@/components/ui/Toast';
 import { Button, buttonClass } from '@/components/ui/Button';
-import { inputClass } from '@/components/ui/Field';
+import { inputClass, Segmented } from '@/components/ui/Field';
 
 export default function NotebooksPage() {
   return <Suspense><Notebooks /></Suspense>;
 }
 
 const GRID = 'grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-5';
+const LIST = 'grid gap-2';
+// Grid | Daftar is a per-device choice, so it lives in localStorage rather than on the account.
+const VIEW_KEY = 'tulis_library_view';
+type View = 'grid' | 'list';
+function useLibraryView(): [View, (view: View) => void] {
+  const [view, setView] = useState<View>('grid');
+  useEffect(() => { try { if (window.localStorage.getItem(VIEW_KEY) === 'list') setView('list'); } catch { /* storage unavailable */ } }, []);
+  return [view, (next) => { setView(next); try { window.localStorage.setItem(VIEW_KEY, next); } catch { /* storage unavailable */ } }];
+}
 
 function Notebooks() {
   const { t, locale } = useLocale();
-  const [creating, setCreating] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [view, setView] = useLibraryView();
   const { has } = useEntitlements();
   const guard = useSessionGuard();
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
@@ -63,7 +71,7 @@ function Notebooks() {
       {t('Impor DOCX', 'Import DOCX')}
     </Button>
   );
-  const newNotebook = <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>{t('Notebook baru', 'New notebook')}</Button>;
+  const newNotebook = <Button variant="primary" icon={Plus} onClick={() => requestNewWriting()}>{t('Tulis baru', 'New writing')}</Button>;
   const headerActions = <div className="flex flex-wrap items-center gap-2">{importDocx}{newNotebook}</div>;
 
   return (
@@ -74,6 +82,10 @@ function Notebooks() {
           <Search size={16} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
           <input type="search" aria-label={t('Cari notebook', 'Search notebooks')} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('Cari judul notebook…', 'Search notebook titles…')} className={`${inputClass} pl-9 pr-9`} disabled={!docs?.length} />
           {query && <button type="button" onClick={() => setQuery('')} aria-label={t('Hapus pencarian', 'Clear search')} className="absolute right-1.5 top-1/2 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-md text-ink-400 hover:bg-paper-deep hover:text-ink-900"><X size={14} /></button>}
+        </div>
+        <div className="ml-auto w-[184px] shrink-0">
+          <Segmented<View> size="sm" label={t('Tampilan pustaka', 'Library view')} value={view} onChange={setView}
+            options={[{ value: 'grid', label: 'Grid', icon: LayoutGrid }, { value: 'list', label: t('Daftar', 'List'), icon: List }]} />
         </div>
       </div>
       {/* The mode filter works on the pages already loaded, and says so, until the server can filter (Fase 2). */}
@@ -92,7 +104,7 @@ function Notebooks() {
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-strong bg-white px-6 py-10 text-center">
               <span className="grid h-12 w-12 place-items-center rounded-xl bg-brand-50 text-brand-700"><NotebookPen size={22} aria-hidden="true" /></span>
               <p className="mt-3 font-semibold text-ink-900">{t('Belum ada notebook', 'No notebooks yet')}</p>
-              <p className="mt-1 text-sm text-ink-500">{t('Tempel draft di Beranda untuk membuat notebook pertamamu, atau mulai dari notebook kosong.', 'Paste a draft on Home to create your first notebook, or start from an empty one.')}</p>
+              <p className="mt-1 text-sm text-ink-500">{t('Mulai dari kerangka, tempel teks yang ingin diolah, atau impor dokumen Word.', 'Start from an outline, paste text to work on, or import a Word document.')}</p>
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {newNotebook}
                 <Link href="/app" className={buttonClass('secondary', 'md')}><House size={17} aria-hidden="true" />{t('Buka Beranda', 'Open Home')}</Link>
@@ -106,13 +118,13 @@ function Notebooks() {
               {term ? <Button size="sm" onClick={() => setQuery('')}>{t('Hapus pencarian', 'Clear search')}</Button> : <Link href="/notebooks" className={buttonClass('secondary', 'sm')}>{t('Hapus filter', 'Clear filter')}</Link>}
             </div>
           ) : (
-            <div className={GRID}>
-              {visible?.map((doc) => <NotebookCard key={doc.id} doc={doc} onChange={(next) => setDocs((current) => current?.map((item) => (item.id === next.id ? next : item)) ?? null)} onDelete={(id) => setDocs((current) => current?.filter((item) => item.id !== id) ?? null)} />)}
+            <div className={view === 'list' ? LIST : GRID}>
+              {visible?.map((doc) => <NotebookCard key={doc.id} doc={doc} view={view} onChange={(next) => setDocs((current) => current?.map((item) => (item.id === next.id ? next : item)) ?? null)} onDelete={(id) => setDocs((current) => current?.filter((item) => item.id !== id) ?? null)}
+                onDuplicate={(copy) => setDocs((current) => (current ? [copy, ...current] : [copy]))} />)}
             </div>
           )}
         {cursor && docs && <div className="mt-5 text-center"><Button loading={loadingMore} onClick={() => void load(cursor)}>{t('Muat lebih banyak', 'Load more')}</Button></div>}
       </div>
-      {creating && <NewNotebookDialog onClose={() => setCreating(false)} />}
       {importing && <ImportDocxDialog onClose={() => setImporting(false)} />}
     </main>
   );

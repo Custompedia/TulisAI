@@ -4,7 +4,8 @@ import { useLocale } from '@/lib/client/locale';
 import { Spinner } from '@/components/ui/Spinner';
 import type { SaveState } from './types';
 
-export function SaveStatus({ state }: { state: SaveState }) {
+// `compact`: the editor header on a phone keeps the icon and leaves the words to screen readers.
+export function SaveStatus({ state, compact = false }: { state: SaveState; compact?: boolean }) {
   const { t } = useLocale();
   const view = {
     loading: { icon: <Spinner size={13} />, label: t('Memuat…', 'Loading…'), tone: 'text-ink-500' },
@@ -16,5 +17,5 @@ export function SaveStatus({ state }: { state: SaveState }) {
     conflict: { icon: <TriangleAlert size={13} />, label: t('Konflik versi', 'Version conflict'), tone: 'text-red-700' },
     'local-unavailable': { icon: <TriangleAlert size={13} />, label: t('Cadangan lokal nonaktif', 'Local backup unavailable'), tone: 'text-amber-700' },
   }[state];
-  return <span role="status" className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium ${view.tone}`}>{view.icon}{view.label}</span>;
+  return <span role="status" title={view.label} className={`inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium ${view.tone}`}>{view.icon}<span className={compact ? 'sr-only sm:not-sr-only' : undefined}>{view.label}</span></span>;
 }

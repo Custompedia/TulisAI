@@ -1,12 +1,13 @@
 'use client';
 import Link from 'next/link';
 import { useCallback, useRef, useState } from 'react';
-import { MoreHorizontal, Palette, PencilLine, Trash2 } from 'lucide-react';
+import { CopyPlus, MoreHorizontal, Palette, PencilLine, Trash2 } from 'lucide-react';
 import { del } from 'idb-keyval';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
 import { relativeTime } from '@/lib/client/format';
 import { asMode } from '@/lib/writing/settings';
+import { copyPreferences, storedParts } from '@/lib/writing/notebook-meta';
 import { notebookTone, parseNotebookIcon } from '@/lib/notebook/appearance';
 import { modeLabel, modeTone, toneClass } from '@/components/writing/modes';
 import { Menu } from '@/components/ui/Menu';
@@ -14,7 +15,8 @@ import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { Toast } from '@/components/ui/Toast';
 import { inputClass } from '@/components/ui/Field';
-import { useSessionGuard, useShell, type DocumentSummary } from './AppShell';
+import { useEntitlements, useSessionGuard, useShell, type DocumentSummary } from './AppShell';
+import { showPlanNotice } from './shell-events';
 import { NotebookIcon } from './NotebookIcon';
 import { AppearancePicker, useAppearanceSave } from './AppearancePicker';
 
@@ -22,9 +24,13 @@ import { AppearancePicker, useAppearanceSave } from './AppearancePicker';
 const BACK = 'M0 26Q0 0 26 0H118C134 0 142 5 150 15L158 25C165 33 171 36 184 36H374Q400 36 400 62V274Q400 300 374 300H26Q0 300 0 274Z';
 const PAPER_LINES = { backgroundImage: 'repeating-linear-gradient(to bottom, transparent 0 13px, rgb(48 49 45 / 0.07) 13px 14px)', backgroundPosition: '0 18px' };
 
-export function NotebookCard({ doc, onChange, onDelete }: { doc: DocumentSummary; onChange?: (doc: DocumentSummary) => void; onDelete?: (id: string) => void }) {
+type StoredDoc = { id: string; title: string; language: string; revision: number; content: unknown; preferences?: Record<string, unknown>; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
+
+// `view`: the library's Grid | Daftar choice; both share the same menu and dialogs.
+export function NotebookCard({ doc, view = 'grid', onChange, onDelete, onDuplicate }: { doc: DocumentSummary; view?: 'grid' | 'list'; onChange?: (doc: DocumentSummary) => void; onDelete?: (id: string) => void; onDuplicate?: (doc: DocumentSummary) => void }) {
   const { t, locale } = useLocale();
   const { user, refresh } = useShell();
+  const { has } = useEntitlements();
   const guard = useSessionGuard();
   const [dialog, setDialog] = useState<'rename' | 'delete' | 'appearance' | null>(null);
   const [name, setName] = useState(doc.title);
@@ -54,6 +60,20 @@ export function NotebookCard({ doc, onChange, onDelete }: { doc: DocumentSummary
     finally { setBusy(false); }
   }
 
+  // GET + POST: the copy carries content, settings and notebook facts, but never layout keys or a skill id the
+  // account cannot use, which create would refuse.
+  async function duplicate() {
+    setBusy(true); setError('');
+    try {
+      const source = await request<StoredDoc>(`/api/documents/${doc.id}`);
+      const preferences = copyPreferences(storedParts(source.preferences), { advancedNotebook: has('advanced_notebook'), savedStyles: has('saved_styles') });
+      const copy = await request<StoredDoc>('/api/documents', 'POST', { title: `${source.title} (${t('salinan', 'copy')})`.slice(0, 180), content: source.content, language: source.language, preferences, ...(source.color ? { color: source.color } : {}), ...(source.icon ? { icon: source.icon } : {}) }, newKey());
+      onDuplicate?.({ id: copy.id, title: copy.title, language: copy.language, revision: copy.revision, mode: typeof copy.preferences?.mode === 'string' ? copy.preferences.mode : null, color: copy.color, icon: copy.icon, createdAt: copy.createdAt, updatedAt: copy.updatedAt });
+      void refresh();
+    } catch (caught) { if (!guard(caught) && !showPlanNotice(caught)) setError(errorText(caught, locale === 'en')); }
+    finally { setBusy(false); }
+  }
+
   async function remove() {
     setBusy(true); setError('');
     try {
@@ -64,31 +84,51 @@ export function NotebookCard({ doc, onChange, onDelete }: { doc: DocumentSummary
     finally { setBusy(false); }
   }
 
-  return (
-    <article className="group relative">
-      <div className="relative aspect-[4/3] w-full">
-        <NotebookFolder color={doc.color} icon={doc.icon} mode={doc.mode} />
-        <div ref={kebab} className="absolute right-2 top-[calc(22%+0.5rem)] z-20 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 has-[[aria-expanded=true]]:opacity-100 [@media(hover:none)]:opacity-100">
-          <Menu label={`${t('Opsi untuk', 'Options for')} ${doc.title}`}
-            triggerClassName={`grid h-8 w-8 place-items-center rounded-lg bg-white/60 outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-brand-500 ${tone.ink}`}
-            trigger={<MoreHorizontal size={17} aria-hidden="true" />}
-            items={[
-              { label: t('Ubah ikon & warna', 'Change icon & colour'), icon: Palette, onSelect: () => { appearance.clearError(); setDialog('appearance'); } },
-              { label: t('Ganti nama', 'Rename'), icon: PencilLine, onSelect: () => open('rename') },
-              { label: t('Hapus', 'Delete'), icon: Trash2, tone: 'danger', onSelect: () => open('delete') },
-            ]} />
-        </div>
-      </div>
+  const menu = (
+    <Menu label={`${t('Opsi untuk', 'Options for')} ${doc.title}`} disabled={busy}
+      triggerClassName={`grid h-8 w-8 place-items-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand-500 ${view === 'grid' ? `bg-white/60 hover:bg-white ${tone.ink}` : 'text-ink-500 hover:bg-paper-deep hover:text-ink-900'}`}
+      trigger={<MoreHorizontal size={17} aria-hidden="true" />}
+      items={[
+        { label: t('Ubah ikon & warna', 'Change icon & colour'), icon: Palette, onSelect: () => { appearance.clearError(); setDialog('appearance'); } },
+        { label: t('Ganti nama', 'Rename'), icon: PencilLine, onSelect: () => open('rename') },
+        { label: t('Duplikat', 'Duplicate'), icon: CopyPlus, onSelect: () => void duplicate() },
+        { label: t('Hapus', 'Delete'), icon: Trash2, tone: 'danger', onSelect: () => open('delete') },
+      ]} />
+  );
+  const meta = (
+    <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-ink-500">
+      <span className="truncate">{t('Diedit', 'Edited')} {relativeTime(doc.updatedAt, locale)}</span>
+      {mode && <><span aria-hidden="true">·</span><span className={`shrink-0 rounded-md border px-1.5 py-px text-[11px] font-semibold ${toneClass[modeTone[mode]].chip}`}>{modeLabel(mode, t)}</span></>}
+    </p>
+  );
 
-      <div className="px-0.5 pt-3">
-        <h3 className="line-clamp-2 text-sm font-semibold leading-snug tracking-[-0.01em] text-ink-900">
-          <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:-inset-1.5 after:z-10 after:rounded-[18px] focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>
-        </h3>
-        <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-ink-500">
-          <span className="truncate">{t('Diedit', 'Edited')} {relativeTime(doc.updatedAt, locale)}</span>
-          {mode && <><span aria-hidden="true">·</span><span className={`shrink-0 rounded-md border px-1.5 py-px text-[11px] font-semibold ${toneClass[modeTone[mode]].chip}`}>{modeLabel(mode, t)}</span></>}
-        </p>
-      </div>
+  return (
+    <article className={`group relative ${view === 'list' ? 'flex items-center gap-3 rounded-xl border border-line bg-white py-2 pl-2.5 pr-2 transition-colors hover:border-line-strong' : ''}`} aria-busy={busy || undefined}>
+      {view === 'list' ? (
+        <>
+          <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${tone.fill} ${tone.ink}`}><NotebookIcon icon={doc.icon} mode={doc.mode} size={19} /></span>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-ink-900">
+              <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:inset-0 after:z-10 after:rounded-xl focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>
+            </h3>
+            {meta}
+          </div>
+          <div ref={kebab} className="relative z-20 shrink-0">{menu}</div>
+        </>
+      ) : (
+        <>
+          <div className="relative aspect-[4/3] w-full">
+            <NotebookFolder color={doc.color} icon={doc.icon} mode={doc.mode} />
+            <div ref={kebab} className="absolute right-2 top-[calc(22%+0.5rem)] z-20 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 has-[[aria-expanded=true]]:opacity-100 [@media(hover:none)]:opacity-100">{menu}</div>
+          </div>
+          <div className="px-0.5 pt-3">
+            <h3 className="line-clamp-2 text-sm font-semibold leading-snug tracking-[-0.01em] text-ink-900">
+              <Link href={`/notebooks/${doc.id}`} className="outline-none after:absolute after:-inset-1.5 after:z-10 after:rounded-[18px] focus-visible:after:ring-2 focus-visible:after:ring-brand-500">{doc.title}</Link>
+            </h3>
+            {meta}
+          </div>
+        </>
+      )}
 
       {dialog === 'appearance' && <AppearancePicker anchor={kebab.current} color={doc.color} icon={doc.icon} mode={doc.mode} onClose={closePicker}
         onSelect={(next) => { void appearance.save(next); if (next.icon !== doc.icon && next.icon !== null) closePicker(); }} />}

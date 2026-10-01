@@ -16,6 +16,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     if (format !== "docx" && format !== "html") throw new RequestError("UNSUPPORTED_FORMAT", "Choose DOCX or HTML export.", 400);
     const documentId = (await params).id; const document = await getDocument(user.id, documentId);
     if (format === "html") {
+      // HTML is gated like DOCX (owner decision): Pro and up, or a notebook with DOCX evidence from before a
+      // downgrade. It records no evidence of its own, so an HTML download never unlocks a later DOCX export.
+      await assertDocxExport(user.id, documentId);
       const body = `<!doctype html><html lang="${document.language === "en" ? "en" : "id"}"><head><meta charset="utf-8"><title>${document.title.replace(/[&<>]/g, (value) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[value]!)}</title></head><body>${documentHtml(document.content)}</body></html>`;
       return new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `attachment; filename="${encodeURIComponent(document.title || "document")}.html"`, "Cache-Control": "no-store" } });
     }

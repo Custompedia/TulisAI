@@ -24,10 +24,12 @@ export function shortcutGroups(t: T): Array<{ title: string; items: Array<{ keys
       { keys: ['Mod', 'B'], label: t('Tebal', 'Bold') },
       { keys: ['Mod', 'I'], label: t('Miring', 'Italic') },
       { keys: ['Mod', 'U'], label: t('Garis bawah', 'Underline') },
-    ] },
-    { title: t('Kanvas Halaman', 'Page canvas'), items: [
       { keys: ['Mod', 'F'], label: t('Cari di dokumen', 'Find in document') },
       { keys: ['Mod', 'H'], label: t('Cari & ganti', 'Find & replace') },
+      { keys: ['Mod', '.'], label: t('Mode fokus', 'Focus mode') },
+      { keys: ['Mod', '/'], label: t('Perintah AI (Max)', 'AI instruction (Max)') },
+    ] },
+    { title: t('Kanvas Halaman', 'Page canvas'), items: [
       { keys: ['Mod', 'Enter'], label: t('Pemisah halaman', 'Page break') },
       { keys: ['Mod', '\\'], label: t('Hapus format', 'Clear formatting') },
       { keys: ['Mod', '[ / ]'], label: t('Kurangi / tambah indentasi', 'Decrease / increase indent') },

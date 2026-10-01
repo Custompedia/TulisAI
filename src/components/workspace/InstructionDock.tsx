@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
-import { ArrowUp, Loader2, PencilSparkles, Square, X } from 'lucide-react';
+import { ArrowUp, Languages, List, Loader2, PencilSparkles, Square, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { INSTRUCTION_COUNTER_AT, INSTRUCTION_LIMIT } from '@/lib/writing/instruction';
@@ -21,7 +21,15 @@ type Props = {
   onStop?: () => void;
 };
 
-// A small rounded tab under the canvas that grows into the instruction field on hover; it shrinks back on leave only while empty.
+// Ready-made instructions that never make the text longer, so they stay inside the hold taken before the run.
+// Kembangkan and Lanjutkan wait for an output-based reservation (Fase 2).
+export const DOCK_CHIPS = [
+  { id: 'bullets', label: ['Jadikan poin', 'Make bullets'], instruction: ['Jadikan daftar poin tanpa menambah isi baru.', 'Turn this into a bulleted list without adding anything new.'] },
+  { id: 'english', label: ['Terjemahkan ke English', 'Translate to English'], instruction: ['Terjemahkan ke bahasa Inggris.', 'Translate this into English.'] },
+] as const;
+
+// A small rounded tab under the canvas that grows into the instruction field on hover or Ctrl+/; it shrinks back
+// on leave only while empty. Below Max it stays visible as "Perintah AI · Max" and explains itself.
 export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onOpenChange, running = false, onStop }: Props) {
   const { t, locale } = useLocale();
   const tier = useRequiredTierName('freeform_prompt');
@@ -33,6 +41,16 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
   useEffect(() => { if (open && target && !busy) input.current?.focus({ preventScroll: true }); }, [open, target, busy]);
   const notify = useEffectEvent((value: boolean) => onOpenChange?.(value));
   useEffect(() => { notify(open); }, [open]);
+  const onShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key !== '/') return;
+    event.preventDefault();
+    if (locked) onUpgrade(); else setOpen(true);
+  });
+  useEffect(() => {
+    const listener = (event: KeyboardEvent) => onShortcut(event);
+    window.addEventListener('keydown', listener);
+    return () => window.removeEventListener('keydown', listener);
+  }, []);
   useEffect(() => {
     if (!open) return;
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape') { input.current?.blur(); setOpen(false); } };
@@ -61,20 +79,20 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
         onMouseLeave={() => { if (!busy && !value.trim()) collapse(); }}
         onFocus={expand}
         onBlur={(event) => { if (!box.current?.contains(event.relatedTarget as Node | null) && !busy && !value.trim()) setOpen(false); }}
-        style={{ width: expanded ? 'min(760px, 100%)' : 76 }}
-        className={`pointer-events-auto relative flex items-center overflow-hidden rounded-full border transition-[width,height,background-color,box-shadow,border-color] duration-200 ease-out motion-reduce:transition-none ${
-          expanded ? 'h-14 border-line bg-white shadow-[0_2px_6px_rgb(31_32_29/0.08),0_16px_36px_-18px_rgb(31_32_29/0.45)]' : 'h-8 border-brand-100 bg-brand-50 hover:bg-brand-100'
+        style={{ width: expanded ? 'min(760px, 100%)' : locked ? 'auto' : 76 }}
+        className={`pointer-events-auto relative flex flex-col overflow-hidden border transition-[width,height,background-color,box-shadow,border-color] duration-200 ease-out motion-reduce:transition-none ${
+          expanded ? 'rounded-3xl border-line bg-white shadow-[0_2px_6px_rgb(31_32_29/0.08),0_16px_36px_-18px_rgb(31_32_29/0.45)]' : locked ? 'h-8 rounded-full border-line bg-white hover:bg-paper' : 'h-8 rounded-full border-brand-100 bg-brand-50 hover:bg-brand-100'
         }`}
       >
         {/* Stays mounted while open so keyboard focus hands over to the field instead of being dropped. */}
         <button type="button" tabIndex={expanded ? -1 : 0} aria-hidden={expanded} onClick={() => (locked ? onUpgrade() : expand())}
           aria-label={locked ? t(`Perintah AI — buka dengan ${tier}`, `AI instruction — unlock with ${tier}`) : t('Perintah AI', 'AI instruction')}
           title={locked ? t(`Perintah AI — buka dengan ${tier}`, `AI instructions — unlock with ${tier}`) : t('Perintahkan AI untuk bagian yang sedang kamu tulis', 'Tell the AI what to do with the passage you are on')}
-          className={`absolute inset-0 grid place-items-center transition-opacity duration-100 ${expanded ? 'pointer-events-none opacity-0' : 'opacity-100'} ${locked ? 'text-ink-400' : 'text-brand-700'}`}>
-          {locked ? <PaidLock size={15} /> : <PencilSparkles size={17} aria-hidden="true" />}
+          className={`${locked && !expanded ? 'relative flex h-full items-center gap-1.5 px-3.5 text-[12.5px] font-semibold text-ink-500' : `absolute inset-0 grid place-items-center ${locked ? 'text-ink-400' : 'text-brand-700'}`} transition-opacity duration-100 ${expanded ? 'pointer-events-none opacity-0' : 'opacity-100'}`}>
+          {locked ? <><PaidLock size={14} /><span>{t(`Perintah AI · ${tier}`, `AI instruction · ${tier}`)}</span></> : <PencilSparkles size={17} aria-hidden="true" />}
         </button>
         {running && (
-          <div role="status" className="flex min-w-0 flex-1 items-center gap-3 pl-3.5 pr-2.5 animate-fade-up">
+          <div role="status" className="flex h-14 min-w-0 flex-1 items-center gap-3 pl-3.5 pr-2.5 animate-fade-up">
             <span aria-hidden="true" className="relative grid h-9 w-9 shrink-0 place-items-center text-brand-700">
               <span className="absolute inset-0 animate-spin rounded-full border-2 border-brand-100 border-t-brand-600 motion-reduce:animate-none" />
               <PencilSparkles size={16} />
@@ -88,7 +106,7 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
             )}
           </div>
         )}
-        <div aria-hidden={!open || running} className={`${running ? 'hidden' : 'flex'} min-w-0 flex-1 items-center gap-1.5 pl-5 pr-2.5 transition-opacity duration-150 motion-reduce:transition-none ${open ? 'opacity-100 delay-75' : 'pointer-events-none opacity-0'}`}>
+        <div aria-hidden={!open || running} className={`${running || !open ? 'hidden' : 'flex'} h-14 min-w-0 shrink-0 items-center gap-1.5 pl-5 pr-2.5 transition-opacity duration-150 motion-reduce:transition-none ${open ? 'opacity-100 delay-75' : 'pointer-events-none opacity-0'}`}>
           <PencilSparkles size={19} aria-hidden="true" className="shrink-0 text-brand-700" />
           <input
             ref={input}
@@ -124,6 +142,19 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
             {busy ? <Loader2 size={17} aria-hidden="true" className="animate-spin" /> : <ArrowUp size={17} aria-hidden="true" />}
           </button>
         </div>
+        {open && !running && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line px-4 pb-2.5 pt-2">
+            {DOCK_CHIPS.map((chip) => (
+              <button key={chip.id} type="button" disabled={busy || locked || !target} onClick={() => { onSubmit(t(chip.instruction[0], chip.instruction[1])); setValue(''); collapse(); }}
+                className="inline-flex h-7 items-center gap-1.5 rounded-full border border-line bg-white px-2.5 text-[12px] font-medium text-ink-700 transition-colors hover:border-line-strong hover:bg-paper disabled:opacity-40">
+                {chip.id === 'bullets' ? <List size={13} aria-hidden="true" /> : <Languages size={13} aria-hidden="true" />}{t(chip.label[0], chip.label[1])}
+              </button>
+            ))}
+            <span className="min-w-0 flex-1 text-right text-[11px] leading-snug text-ink-500">
+              {t('Perkiraan biaya: hingga 2× panjang teks terpilih', 'Estimated cost: up to 2× the selected text')} · {t('Angka dan sitasi bisa berubah', 'Numbers and citations may change')}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

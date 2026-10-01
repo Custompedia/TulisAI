@@ -1,5 +1,5 @@
 'use client';
-import { ArrowRight, BookmarkPlus, Check, ChevronRight, Languages, PencilLine, Plus, RefreshCw, Sparkles, TextSelect, TriangleAlert, X } from 'lucide-react';
+import { ArrowRight, ArrowUp, BookmarkPlus, Check, ChevronRight, Info, Languages, List, Maximize2, Minimize2, PencilLine, Plus, RefreshCw, Sparkles, Table, TextSelect, TriangleAlert, X, type LucideIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
@@ -15,8 +15,10 @@ import { Segmented } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import { Spinner } from '@/components/ui/Spinner';
 import { CustomizePanel, ModeOptions } from '@/components/writing/WritingControls';
-import { generateLabel, languageOptions, MODES, modeHint, modeIcon, modeLabel, modeTone, requestSummary, toneClass, type ModeTone } from '@/components/writing/modes';
+import { generateLabel, languageOptions, modeHint, modeIcon, modeLabel, modeTone, requestSummary, toneClass, type ModeTone } from '@/components/writing/modes';
 import { rememberSettings, tabForSettings, tabSettings, type AssistantTab, type TabMemory } from './assistant-tabs';
+import { orderModes } from '@/lib/writing/doc-types';
+import { QUICK_ACTIONS, quickActionLabel, type QuickAction } from './selection-commands';
 import type { Scope } from './types';
 
 type Props = {
@@ -29,7 +31,18 @@ type Props = {
   suggestion: WritingStyle | null; onDismissSuggestion: () => void;
   // Opens the plans dialog from a locked control (skills, the Max note).
   onUpgrade: () => void;
+  // The kind of writing orders the mode tiles; the chosen mode never changes because of it.
+  docType?: string;
+  // Ringkas · Perluas · Jadikan poin · Jadikan tabel, run once with the current mode.
+  onQuickAction: (action: QuickAction) => void;
+  // The notebook has headings, tables or footnotes, which a whole-document run turns into paragraphs.
+  structured: boolean;
+  // Nothing to work on yet: fewer than three words, or an outline that was never filled in.
+  emptyDocument: boolean;
 };
+const QUICK_ICONS: Record<QuickAction, LucideIcon> = { summarize: Minimize2, expand: Maximize2, bullets: List, table: Table };
+// RAPIKAN tidies the wording, NADA changes the register.
+const MODE_GROUPS: Array<{ id: 'tidy' | 'tone'; modes: Mode[] }> = [{ id: 'tidy', modes: ['standard', 'humanize', 'simplify'] }, { id: 'tone', modes: ['academic', 'professional', 'creative'] }];
 const ringClass: Record<ModeTone, string> = {
   green: 'ring-mode-green-ink/40', blue: 'ring-mode-blue-ink/40', orange: 'ring-mode-orange-ink/40', slate: 'ring-mode-slate-ink/40', pink: 'ring-mode-pink-ink/40', gold: 'ring-mode-gold-ink/40', gray: 'ring-mode-gray-ink/40',
 };
@@ -46,11 +59,15 @@ function SectionTitle({ children, aside }: { children: React.ReactNode; aside?: 
   );
 }
 
-function ModeTiles({ value, disabled, onChange }: { value: Mode; disabled: boolean; onChange: (mode: Mode) => void }) {
+function ModeTiles({ value, disabled, docType, onChange }: { value: Mode; disabled: boolean; docType?: string; onChange: (mode: Mode) => void }) {
   const { t } = useLocale();
   return (
-    <div role="radiogroup" aria-label={t('Mode penulisan', 'Writing mode')} className="grid grid-cols-2 gap-2">
-      {MODES.map((mode) => {
+    <div role="radiogroup" aria-label={t('Mode penulisan', 'Writing mode')} className="space-y-3">
+      {MODE_GROUPS.map((group) => (
+        <div key={group.id}>
+          <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-400">{group.id === 'tidy' ? t('Rapikan', 'Tidy') : t('Nada', 'Tone')}</p>
+          <div className="grid grid-cols-2 gap-2">
+      {orderModes(group.modes, docType).map((mode) => {
         const Icon = modeIcon[mode]; const tone = toneClass[modeTone[mode]]; const active = mode === value;
         return (
           <button key={mode} type="button" role="radio" aria-checked={active} disabled={disabled} title={modeHint(mode, t)} onClick={() => onChange(mode)}
@@ -61,6 +78,9 @@ function ModeTiles({ value, disabled, onChange }: { value: Mode; disabled: boole
           </button>
         );
       })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -99,7 +119,7 @@ function SkillTiles({ styles, activeId, disabled, full, locked, onPick, onEdit, 
   );
 }
 
-export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade }: Props) {
+export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelection, scopeWords, scopeChars, detected, busy, generating, arrival, previewId, error, manualBase, modeTabRequest, onGenerate, onRetry, onDismissError, children, canGenerate, customizeRequest, styles, stylesLoading, stylesError, onRetryStyles, onApplyStyle, onCreateStyle, onEditStyle, onSaveAsStyle, suggestion, onDismissSuggestion, onUpgrade, docType, onQuickAction, structured, emptyDocument }: Props) {
   const { t, locale } = useLocale();
   const scroller = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<AssistantTab>(() => tabForSettings(settings));
@@ -132,7 +152,7 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   const limit = limits.runLimit;
   const overLimit = scopeChars > limit;
   const needsSelection = scope === 'selection' && !hasSelection;
-  const disabled = busy || !canGenerate || overLimit;
+  const disabled = busy || !canGenerate || overLimit || emptyDocument;
   const nameOf = (value: 'id' | 'en') => (value === 'id' ? t('Indonesia', 'Indonesian') : 'English');
   // The writing language is a real instruction: picking the other language makes the run a translation.
   const mismatch = detected !== null && settings.language !== 'auto' && settings.language !== detected;
@@ -143,6 +163,14 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div ref={scroller} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
+        {/* Why the run button is gone: a result is waiting above. Stays in view while the panel scrolls. */}
+        {previewId && !generating && (
+          <div role="status" className="sticky top-0 z-10 flex items-center gap-2 border-b border-brand-100 bg-brand-50/95 px-4 py-2 text-[12.5px] text-brand-900 backdrop-blur-sm">
+            <Info size={14} aria-hidden="true" className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{t('Ada pratinjau yang belum diterapkan', 'A preview has not been applied yet')}</span>
+            <button type="button" onClick={() => scroller.current?.scrollTo({ top: 0, behavior: 'smooth' })} className="inline-flex shrink-0 items-center gap-1 font-semibold underline decoration-brand-300 underline-offset-2 hover:text-ink-900"><ArrowUp size={13} aria-hidden="true" />{t('Lihat', 'View')}</button>
+          </div>
+        )}
         <div className="space-y-4 p-4">
           {generating && (
             <div role="status" className="space-y-2.5 rounded-xl border border-brand-200 bg-brand-50 p-3.5">
@@ -181,8 +209,18 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
             </div>
             {tab === 'mode' ? (
               <>
-                <ModeTiles value={settings.mode} disabled={busy} onChange={(mode) => onSettings({ ...settings, mode, styleId: null, sample: '' })} />
+                <ModeTiles value={settings.mode} disabled={busy} docType={docType} onChange={(mode) => onSettings({ ...settings, mode, styleId: null, sample: '' })} />
                 <p className="mt-2 text-xs leading-relaxed text-ink-500">{modeHint(settings.mode, t)}</p>
+                {/* Presets for this one run: they never change the saved settings, so they work on every plan. */}
+                <div className="mt-3">
+                  <p className="mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.08em] text-ink-400">{t('Cepat', 'Quick')}</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {QUICK_ACTIONS.map((action) => {
+                      const Icon = QUICK_ICONS[action];
+                      return <button key={action} type="button" className={pillButton} disabled={disabled || (!!previewId && !generating)} title={t(`${quickActionLabel(action, t)} dengan mode ${modeLabel(settings.mode, t)}`, `${quickActionLabel(action, t)} in ${modeLabel(settings.mode, t)} mode`)} onClick={() => onQuickAction(action)}><Icon size={13} aria-hidden="true" />{quickActionLabel(action, t)}</button>;
+                    })}
+                  </div>
+                </div>
               </>
             ) : stylesLoading ? (
               <div role="status" aria-label={t('Memuat skill…', 'Loading skills…')} className="grid grid-cols-2 gap-2">
@@ -265,6 +303,13 @@ export function AssistantPanel({ settings, onSettings, scope, onScope, hasSelect
               : `${scopeLabel} · ${numberFormat(scopeWords, locale)} ${t('kata', 'words')}`}
           </span>
         </p>
+        {scope === 'document' && structured && !emptyDocument && (
+          <p className="flex gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-relaxed text-amber-900">
+            <TriangleAlert size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <span>{t('Judul, tabel, dan catatan kaki akan menjadi paragraf biasa. Olah per bagian: blok teksnya dulu.', 'Headings, tables and footnotes will become plain paragraphs. Work section by section: select the text first.')}</span>
+          </p>
+        )}
+        {emptyDocument && <p className="text-xs leading-relaxed text-ink-600">{t('AI Tulis Lab mengolah teks yang sudah ada. Tulis minimal 3 kata dulu.', 'Tulis Lab’s AI works on text that already exists. Write at least 3 words first.')}</p>}
         {mismatch && (
           <div role="alert" className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">
             <TriangleAlert size={13} className="shrink-0" aria-hidden="true" />

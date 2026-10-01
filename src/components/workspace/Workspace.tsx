@@ -4,7 +4,7 @@ import { Fragment, useCallback, useEffect, useEffectEvent, useMemo, useRef, useS
 import { EditorContent, useEditor } from '@tiptap/react';
 import type { JSONContent } from '@tiptap/core';
 import { del, get, set } from 'idb-keyval';
-import { ClipboardPaste, CopyPlus, PanelRightOpen, Redo2, RefreshCw, RotateCcw, Save, Trash2, Undo2 } from 'lucide-react';
+import { ChevronsRight, ClipboardPaste, CopyPlus, FileText, Minimize2, RefreshCw, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef, type LayoutStorage } from 'react-resizable-panels';
 import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
@@ -15,14 +15,19 @@ import { copyRichText, handleClipboardEvent } from '@/lib/editor/clipboard';
 import { normalizePastedHtml, plainTextSlice } from '@/lib/editor/paste-normalize';
 import { documentExtensions } from '@/lib/editor/extensions';
 import { countCharacters, countWords } from '@/lib/editor/metrics';
+import { docTypeHint, isDocType, isSpoken, orderActions, type DocType } from '@/lib/writing/doc-types';
+import { docPanelCookie, docPanelState, type DocPanelPreferences } from '@/lib/navigation/doc-panel';
 import { firstRunCustomKey, firstRunOverride } from '@/lib/writing/composer';
-import { AI_SCOPE_LIMIT, INLINE_LIMIT, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
+import { autosavePreferences, copyPreferences, readMeta, type NotebookMeta } from '@/lib/writing/notebook-meta';
+import { AI_SCOPE_LIMIT, INLINE_LIMIT, MIN_WORDS, asMode, customConflict, defaults, detectLanguage, modeFromPrompt, normalizeSettings, promptFor, resolveLanguage, runtimeControls, type Settings } from '@/lib/writing/settings';
 import { applyStyle, reconcileStyle, type WritingStyle } from '@/lib/writing/styles';
 import { suggestStyle } from '@/lib/writing/suggest';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
-import { openPlans, showPlanNotice } from '@/components/app/shell-events';
+import { openPlans, requestNewWriting, showPlanNotice, showShellNotice } from '@/components/app/shell-events';
+import { setFocusMode, useFocusMode, useInitialDocPanel } from '@/components/app/editor-frame';
+import { AppearancePicker, useAppearanceSave } from '@/components/app/AppearancePicker';
 import { ADVANCED_PREFERENCE } from '@/lib/plans';
 import { pageStyle } from '@/lib/docx/office-defaults';
 import { docxFilename } from '@/lib/docx/export';
@@ -50,17 +55,20 @@ import { HistoryPanel } from './HistoryPanel';
 import { layoutPreferences, readLayout, type PageLayout } from './page-layout';
 import { PageRuler } from './PageRuler';
 import { PageSetupDialog } from './PageSetupDialog';
-import { ANALYTICS_SECTION_ID, InfoPanel } from './InfoPanel';
+import { ANALYTICS_SECTION_ID, ReviewPanel } from './ReviewPanel';
+import { DocPanelContent, DocPanelFrame } from './DocPanel';
+import { StatusBar } from './StatusBar';
+import { CompactToolbar } from './CompactToolbar';
+import { compareDefault, hasStructure, meaningfulOriginal, shouldDiscard } from './editor-rules';
 import { InlineResult, type InlineStatus } from './InlineResult';
 import { getInlineTarget, inlineTargetExtension, setInlineTarget, type InlineTarget } from './inline-target';
 import { NotebookHeader } from './NotebookHeader';
 import { PreviewCard } from './PreviewCard';
 import { protectionExtension } from './protection';
-import { SaveStatus } from './SaveStatus';
-import { planInstruction, planSelectionCommand, planStyleCommand, type SelectionCommand, type SelectionPlan } from './selection-commands';
+import { planInstruction, planSelectionCommand, planStyleCommand, quickActionLabel, quickActionOverride, type QuickAction, type SelectionCommand, type SelectionPlan } from './selection-commands';
 import { SelectionMenu } from './SelectionMenu';
 import { TableContextMenu } from './toolbar/TableTools';
-import { StudioPanel, StudioStrip, type StudioTab } from './StudioPanel';
+import { StudioPanel, StudioStrip, useStudioTabs, type StudioTab } from './StudioPanel';
 import { PREVIEW, previewText, SOURCE, WORKING, type Doc, type Draft, type InlineAction, type Preview, type Quality, type SaveState, type Scope, type SelectionRange, type Surface, type Term, type Version } from './types';
 import { versionLabel } from './versions';
 
@@ -76,6 +84,8 @@ const FROZEN = new Set(['apply', 'restore', 'recover', 'delete']);
 const nextStrength = (value: string) => (value === 'light' ? 'balanced' : 'strong');
 const lowerStrength = (value: string) => (value === 'strong' ? 'balanced' : 'light');
 const PANEL_IDS = ['writing', 'studio'];
+// v2: the right panel is sized in pixels now (360, 300–480), so layouts saved as percentages are not reused.
+const LAYOUT_ID = 'notebook-layout-v2';
 const noopSubscribe = () => () => {};
 const layoutStorage: LayoutStorage = {
   getItem: (key) => { try { return typeof window === 'undefined' ? null : window.localStorage.getItem(key); } catch { return null; } },
@@ -104,6 +114,8 @@ export default function Workspace() {
   const [pageLayout, setPageLayout] = useState<PageLayout>(() => readLayout(undefined, 'id'));
   const [pageCount, setPageCount] = useState(1);
   const [advancedMode, setAdvancedMode] = useState(false);
+  // Kind of writing, word target and brief: kept beside the settings so no save or copy drops them.
+  const [meta, setMeta] = useState<NotebookMeta>({});
   const [text, setText] = useState('');
   const [editStamp, setEditStamp] = useState(0);
   const [metaTick, setMetaTick] = useState(0);
@@ -116,6 +128,23 @@ export default function Workspace() {
   const [narrow, setNarrow] = useState(false);
   const [panelOpen, setPanelOpen] = useState(true);
   const [rightTab, setRightTab] = useState<StudioTab>('assistant');
+  // Phones and small tablets: Dokumen, Asisten, Riwayat and Tinjau each open as a sheet from the action bar.
+  const [sheet, setSheet] = useState<'document' | StudioTab | null>(null);
+  // The Dokumen column: the server-read cookie when the writer chose before, otherwise open only from 1440px.
+  const savedDocPanel = useInitialDocPanel();
+  // The shell only renders pages after the session loads on the client, so the viewport is known on the first render
+  // and the panels never resize right after mounting (which would shrink the pixel-sized right panel).
+  const [docPanel, setDocPanel] = useState<DocPanelPreferences>(() => docPanelState(savedDocPanel, typeof window === 'undefined' ? 0 : window.innerWidth));
+  const focus = useFocusMode();
+  // Inline alternatives: 3 or 5 (the backend accepts 3–5); switching reruns the card.
+  const [altCount, setAltCount] = useState<3 | 5>(3);
+  const altCountRef = useRef<3 | 5>(3);
+  const [tipHidden, setTipHidden] = useState(false);
+  const studioTabs = useStudioTabs();
+  const [appearance, setAppearance] = useState<{ color: string | null; icon: string | null }>({ color: null, icon: null });
+  const [appearanceAnchor, setAppearanceAnchor] = useState<HTMLElement | null>(null);
+  const [page, setPage] = useState(1);
+  const appearanceSave = useAppearanceSave(id, appearance, setAppearance);
   // Arriving from the home composer: the Studio opens on Assistant and stays in its waiting state until the first result lands.
   const [arriving, setArriving] = useState(() => search.get('autoGenerate') === '1');
   const [versionsError, setVersionsError] = useState('');
@@ -154,12 +183,13 @@ export default function Workspace() {
   const metaDirty = useRef(false);
   const initializing = useRef(true);
   const inFlight = useRef<Promise<Doc> | null>(null);
-  const latest = useRef({ title, settings, layout: pageLayout, advanced: advancedMode });
-  // Writing settings and page layout share one preferences row; neither may drop the other on save.
-  const savedPreferences = () => ({
-    ...layoutPreferences(latest.current.layout), ...(latest.current.settings as unknown as Record<string, unknown>),
-    [ADVANCED_PREFERENCE]: latest.current.advanced,
-  });
+  const latest = useRef({ title, settings, layout: pageLayout, advanced: advancedMode, meta });
+  // Writing settings, page layout and the notebook facts share one preferences row; none may drop another on save.
+  const savedPreferences = () => autosavePreferences({ settings: latest.current.settings, layout: layoutPreferences(latest.current.layout), advanced: latest.current.advanced, meta: latest.current.meta });
+  // A new notebook made from this one: create refuses layout keys and skill ids the account cannot use, so they stay out.
+  const copiedPreferences = (settingsFor: Settings = latest.current.settings) => copyPreferences(
+    { settings: settingsFor, layout: layoutPreferences(latest.current.layout), advanced: latest.current.advanced, meta: latest.current.meta },
+    { advancedNotebook: has('advanced_notebook'), savedStyles: has('saved_styles') });
   const versionTexts = useRef(new Map<string, string>());
   const autoStarted = useRef(false);
   const arrivingRef = useRef(false);
@@ -184,14 +214,17 @@ export default function Workspace() {
   const pageZoom = usePageZoom(canvasRef, paged);
   const contentRef = useRef<JSONContent | null>(null);
   const rightPanel = usePanelRef();
-  const layout = useDefaultLayout({ id: 'notebook-layout', storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
+  const layout = useDefaultLayout({ id: LAYOUT_ID, storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
+  const deleted = useRef(false);
+  const discardNotice = useRef('');
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
-  latest.current = { title, settings, layout: pageLayout, advanced: advancedMode };
+  latest.current = { title, settings, layout: pageLayout, advanced: advancedMode, meta };
   arrivingRef.current = arriving;
   const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null;
   termsRef.current = terms.map((term) => term.term);
   protectedLabel.current = t('Dilindungi: tidak akan diubah AI', 'Protected: AI will not change this');
   englishRef.current = english;
+  discardNotice.current = t('Notebook kosong tidak disimpan.', 'The empty notebook was not kept.');
 
   const cache = useCallback((content: JSONContent) => {
     const base = current.current;
@@ -246,9 +279,27 @@ export default function Workspace() {
   useEffect(() => { if (editor && !inline) setInlineTarget(editor, null); }, [editor, inline]);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 1023px)');
-    const apply = () => { setNarrow(media.matches); if (media.matches && !arrivingRef.current) setPanelOpen(false); };
+    const apply = () => { setNarrow(media.matches); if (!media.matches) setSheet(null); };
     apply(); media.addEventListener('change', apply);
     return () => media.removeEventListener('change', apply);
+  }, []);
+  const saveDocPanel = (next: DocPanelPreferences) => { setDocPanel(next); document.cookie = docPanelCookie(next); };
+  // "hal x/y" in the status bar: the page at the top third of the viewport, from how far the sheet has scrolled.
+  useEffect(() => {
+    const node = canvasRef.current;
+    if (!node || !paged || !loaded) return;
+    const onScroll = () => { const stride = node.scrollHeight / Math.max(1, pageCount); setPage(Math.max(1, Math.floor((node.scrollTop + node.clientHeight / 3) / stride) + 1)); };
+    onScroll(); node.addEventListener('scroll', onScroll, { passive: true });
+    return () => node.removeEventListener('scroll', onScroll);
+  }, [paged, pageCount, loaded]);
+  // Mode fokus: Ctrl+. anywhere in the editor (captured before the editor's own shortcuts), Esc leaves it.
+  const toggleFocus = useEffectEvent(() => setFocusMode(!focus));
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && (event.key === '.' || event.code === 'Period')) { event.preventDefault(); event.stopPropagation(); toggleFocus(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => { window.removeEventListener('keydown', onKey, true); setFocusMode(false); };
   }, []);
   useEffect(() => {
     const update = () => { setOnline(navigator.onLine); if (navigator.onLine) setSave((state) => (state === 'offline' ? 'dirty' : state)); };
@@ -257,8 +308,16 @@ export default function Workspace() {
     return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
   }, []);
   useEffect(() => () => {
-    // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
     const base = current.current; const content = contentRef.current;
+    // An outline or blank notebook that was never touched is deleted on the way out (delete is permanent and
+    // there is no trash yet), so empty notebooks do not pile up. Only in-app leaving: a reload keeps it.
+    if (base && content && !deleted.current && shouldDiscard({ source: latest.current.meta.docSource, revision: base.revision, dirty: dirty.current || metaDirty.current || inFlight.current !== null, text: documentText(content), original: documentText(base.content) })) {
+      void fetch(`/api/documents/${id}`, { method: 'DELETE', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: '{}' }).catch(() => undefined);
+      if (cacheKey.current) void del(cacheKey.current).catch(() => undefined);
+      showShellNotice({ tone: 'info', message: discardNotice.current });
+      return;
+    }
+    // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
     if (!base || !content || inFlight.current || (!dirty.current && !metaDirty.current)) return;
     void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || 'Untitled document', language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision }) }).catch(() => undefined);
   }, [id]);
@@ -268,12 +327,12 @@ export default function Workspace() {
     return () => window.removeEventListener('beforeunload', warn);
   }, []);
   useEffect(() => {
-    if (!narrow) return;
-    const close = (event: KeyboardEvent) => { if (event.key === 'Escape') setPanelOpen(false); };
+    if (!sheet && !focus) return;
+    const close = (event: KeyboardEvent) => { if (event.key !== 'Escape' || event.defaultPrevented) return; if (sheet) setSheet(null); else setFocusMode(false); };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [narrow]);
-  useEffect(() => { if (!arriving) return; setRightTab('assistant'); setPanelOpen(true); }, [arriving]);
+  }, [sheet, focus]);
+  useEffect(() => { if (!arriving) return; setRightTab('assistant'); setPanelOpen(true); if (window.matchMedia('(max-width: 1023px)').matches) setSheet('assistant'); }, [arriving]);
   // Toggling the mode changes nothing in the document, so the gutter decorations are refreshed explicitly.
   useEffect(() => { if (!editor) return; editor.view.dispatch(editor.state.tr.setMeta(paragraphGutterKey, 'refresh')); }, [editor, paged]);
   useEffect(() => { if (notice?.tone !== 'success') return; const timer = setTimeout(() => setNotice(null), 4000); return () => clearTimeout(timer); }, [notice]);
@@ -313,22 +372,23 @@ export default function Workspace() {
       const value = await request<Doc>(`/api/documents/${id}`);
       if (!isLive()) return;
       localDrafts.current = prefs.localDrafts !== false; owner.current = user.id; cacheKey.current = `writing-draft:${user.id}:${id}`;
-      current.current = value; setDoc(value); setTitle(value.title);
+      current.current = value; setDoc(value); setTitle(value.title); setAppearance({ color: value.color ?? null, icon: value.icon ?? null });
       const base = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, ...(value.preferences ?? {}), language: value.language });
       const modeParam = asMode(search.get('mode')); if (modeParam) base.mode = modeParam;
       const account = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, language: value.language });
       setManualBase(base.styleId ? account : { ...base, styleId: null, sample: '' });
       const loadedLayout = readLayout(value.preferences, value.language === 'en' ? 'en' : prefs.interfaceLanguage === 'en' ? 'en' : 'id');
       const loadedAdvanced = (value.preferences as Record<string, unknown> | undefined)?.[ADVANCED_PREFERENCE] === true;
-      setSettings(base); setPageLayout(loadedLayout); setAdvancedMode(loadedAdvanced);
-      latest.current = { title: value.title, settings: base, layout: loadedLayout, advanced: loadedAdvanced };
+      const loadedMeta = readMeta(value.preferences);
+      setSettings(base); setPageLayout(loadedLayout); setAdvancedMode(loadedAdvanced); setMeta(loadedMeta);
+      latest.current = { title: value.title, settings: base, layout: loadedLayout, advanced: loadedAdvanced, meta: loadedMeta };
       editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
       setText(documentText(value.content)); setSave('saved');
       await Promise.all([loadVersions(), loadTerms()]);
       if (value.originalVersionId) versionText(value.originalVersionId).then(setOriginal).catch(() => setOriginal(null));
       const draft = await get<Draft>(cacheKey.current).catch(() => undefined);
       if (isLive() && localDrafts.current && draft?.owner === user.id && (JSON.stringify(draft.content) !== JSON.stringify(value.content) || draft.title !== value.title)) setRecovery(draft);
-      const panelParam = search.get('panel'); if (panelParam === 'history' || panelParam === 'analytics') { openRight(panelParam === 'history' ? 'history' : 'info'); syncUrl({ panel: null }); }
+      const panelParam = search.get('panel'); if (panelParam === 'history' || panelParam === 'analytics' || panelParam === 'review') { openRight(panelParam === 'history' ? 'history' : 'review'); syncUrl({ panel: null }); }
       if (isLive()) { initializing.current = false; setLoaded(true); }
     } catch (caught) { if (isLive() && !guard(caught)) setLoadError({ code: caught instanceof ApiError ? caught.code.toUpperCase() : '', message: errorText(caught, english) }); }
   });
@@ -429,8 +489,8 @@ export default function Workspace() {
     router.push(href);
   }
 
-  function markMetadata(nextTitle: string, nextSettings: Settings, nextLayout = latest.current.layout, nextAdvanced = latest.current.advanced) {
-    latest.current = { title: nextTitle, settings: nextSettings, layout: nextLayout, advanced: nextAdvanced };
+  function markMetadata(nextTitle: string, nextSettings: Settings, nextLayout = latest.current.layout, nextAdvanced = latest.current.advanced, nextMeta = latest.current.meta) {
+    latest.current = { title: nextTitle, settings: nextSettings, layout: nextLayout, advanced: nextAdvanced, meta: nextMeta };
     metaDirty.current = true; metaStamp.current++; setMetaTick(metaStamp.current);
     setSave((state) => (state === 'conflict' ? state : 'dirty'));
     if (editor) cache(editor.getJSON());
@@ -507,7 +567,7 @@ export default function Workspace() {
       const result = await request<{ id: string; output: Preview['output']; expiresAt: string }>('/api/ai/generate', 'POST', {
         documentId: id, promptId: req.instruction ? 'P08_CUSTOM_TRANSFORM' : req.inlineAction ? 'P07_INLINE_ALTERNATIVES' : promptFor[effective.mode],
         source: { text: resolved.source, ...(resolved.anchor ? { anchor: resolved.anchor } : {}) },
-        runtime: runtimeControls(effective, language, req.inlineAction), expectedRevision: saved.revision,
+        runtime: runtimeControls(effective, language, req.inlineAction, req.inlineAction ? altCountRef.current : undefined), expectedRevision: saved.revision,
         ...(req.suggestTitle ? { suggestTitle: true } : {}),
         ...(req.instruction ? { instruction: req.instruction } : {}),
       }, newKey());
@@ -654,10 +714,10 @@ export default function Workspace() {
     } catch (caught) { setCompare(null); if (!guard(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); }
   }
   function exitCompare() { setCompare(null); syncUrl({ compare: null }); }
-  function defaultCompare() {
-    const originalId = doc?.originalVersionId ?? versions.at(-1)?.id;
-    if (originalId) void openCompare(originalId, WORKING);
-  }
+  // Skeleton and blank notebooks compare the latest version with now; there may be nothing to compare yet.
+  const showOriginal = meaningfulOriginal(original, meta.docSource);
+  const comparePair = compareDefault(versions, doc?.originalVersionId ?? null, showOriginal);
+  function defaultCompare() { if (comparePair) void openCompare(comparePair.a, comparePair.b); }
   const runInitialCompare = useEffectEvent(() => {
     const pair = search.get('compare'); if (!loaded || !pair || compareStarted.current) return;
     compareStarted.current = true; const [a, b] = pair.split(':'); if (a && b) void openCompare(a, b);
@@ -681,9 +741,13 @@ export default function Workspace() {
     } catch { setNotice({ tone: 'error', message: t('Browser tidak mengizinkan akses clipboard. Tempel dengan Ctrl+V.', 'The browser blocked clipboard access. Paste with Ctrl+V.') }); }
   }
 
-  function openRight(tab: StudioTab) { setRightTab(tab); setPanelOpen(true); rightPanel.current?.expand(); }
-  function closeRight() { setPanelOpen(false); rightPanel.current?.collapse(); }
-  function openAnalytics() { openRight('info'); requestAnimationFrame(() => document.getElementById(ANALYTICS_SECTION_ID)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); }
+  function openRight(tab: StudioTab) {
+    setRightTab(tab); setPanelOpen(true); rightPanel.current?.expand();
+    if (window.matchMedia('(max-width: 1023px)').matches) setSheet(tab);
+    if (focus) setFocusMode(false);
+  }
+  function closeRight() { setPanelOpen(false); rightPanel.current?.collapse(); setSheet(null); }
+  function openReview() { openRight('review'); requestAnimationFrame(() => document.getElementById(ANALYTICS_SECTION_ID)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); }
   function loadMoreVersions() {
     if (!versionCursor || loadingVersions) return;
     setLoadingVersions(true); setVersionsError('');
@@ -693,7 +757,7 @@ export default function Workspace() {
   async function duplicateVersion(version: Version) {
     await run('duplicate', async () => {
       const content = (await request<{ content: JSONContent }>(`/api/documents/${id}/versions/${version.id}`)).content;
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: settings }, newKey());
+      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: copiedPreferences() }, newKey());
       guardedPush(router, `/notebooks/${copy.id}`);
     });
   }
@@ -723,7 +787,7 @@ export default function Workspace() {
     const active = dialog;
     await run(active.kind, async () => {
       if (active.kind === 'delete') {
-        await request(`/api/documents/${id}`, 'DELETE', {}, newKey()); await del(cacheKey.current).catch(() => undefined);
+        await request(`/api/documents/${id}`, 'DELETE', {}, newKey()); deleted.current = true; await del(cacheKey.current).catch(() => undefined);
         dirty.current = false; metaDirty.current = false; router.push('/notebooks'); return;
       } else if (active.kind === 'reload') {
         window.location.reload(); return;
@@ -754,7 +818,7 @@ export default function Workspace() {
     const draft = recovery;
     await run('recover', async () => {
       if (mode === 'copy') {
-        const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: draft.settings }, newKey());
+        const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: copiedPreferences(normalizeSettings(draft.settings)) }, newKey());
         await del(cacheKey.current).catch(() => undefined); setRecovery(null); router.push(`/notebooks/${copy.id}`); return;
       }
       if (mode === 'discard') { await del(cacheKey.current).catch(() => undefined); setRecovery(null); return; }
@@ -768,7 +832,7 @@ export default function Workspace() {
   async function copyAsNew() {
     if (!editor) return;
     await run('copy', async () => {
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: settings }, newKey());
+      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: copiedPreferences() }, newKey());
       dirty.current = false; metaDirty.current = false; await del(cacheKey.current).catch(() => undefined); router.push(`/notebooks/${copy.id}`);
     });
   }
@@ -783,10 +847,29 @@ export default function Workspace() {
     } catch { setNotice({ tone: 'error', message: t('Teks tidak bisa disalin. Izinkan akses papan klip di browser lalu coba lagi.', 'The text could not be copied. Allow clipboard access in your browser and try again.') }); }
   }
 
-  // The gate is on the route, so the browser just follows the download; a refusal comes back as JSON.
-  async function exportDocx() {
+  // Plain text for Instagram or TikTok: no formatting at all, whatever the browser would carry along.
+  async function copyPlain() {
+    const json = editor?.getJSON() ?? plainTextDocument(text);
+    try { await navigator.clipboard.writeText(documentText(json)); setNotice({ tone: 'success', message: t('Teks polos disalin, siap ditempel ke media sosial.', 'Plain text copied, ready to paste into social media.') }); }
+    catch { setNotice({ tone: 'error', message: t('Teks tidak bisa disalin. Izinkan akses papan klip di browser lalu coba lagi.', 'The text could not be copied. Allow clipboard access in your browser and try again.') }); }
+  }
+
+  // A copy of the whole notebook as it is now: saved first, then created from the current content and facts.
+  async function duplicateNotebook() {
+    if (!editor) return;
+    await run('duplicate', async () => {
+      await flush();
+      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${latest.current.title || title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: latest.current.settings.language, preferences: copiedPreferences(), ...(appearance.color ? { color: appearance.color } : {}), ...(appearance.icon ? { icon: appearance.icon } : {}) }, newKey());
+      guardedPush(router, `/notebooks/${copy.id}`);
+    });
+  }
+
+  // The gate is on the route, so the browser just follows the download; a refusal comes back as JSON. Word is
+  // tried even without Pro, because a notebook exported before a downgrade is still allowed.
+  async function exportFile(format: 'docx' | 'html', pageSize?: 'a4' | 'letter') {
     await run('export', async () => {
-      const response = await fetch(`/api/documents/${id}/export?format=docx`, { credentials: 'same-origin' });
+      await flush().catch(() => undefined);
+      const response = await fetch(`/api/documents/${id}/export?format=${format}${pageSize ? `&pageSize=${pageSize}` : ''}`, { credentials: 'same-origin' });
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { error?: { code?: string } } | null;
         throw new ApiError(body?.error?.code ?? 'REQUEST_FAILED', response.status);
@@ -796,13 +879,13 @@ export default function Workspace() {
       // window.document, because the Workers type globals shadow the DOM `document` in this project.
       const link = window.document.createElement('a');
       link.href = url;
-      link.download = docxFilename(latest.current.title || title);
+      link.download = format === 'docx' ? docxFilename(latest.current.title || title) : `${(latest.current.title || title || 'notebook').replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'notebook'}.html`;
       // appendChild, not append: the Workers type globals give `append` a conflicting signature here.
       // Firefox needs the anchor in the document for a programmatic click to start the download.
       window.document.body.appendChild(link); link.click(); link.remove();
       // Revoked on the next tick so the click has started the download.
       setTimeout(() => URL.revokeObjectURL(url), 0);
-      setNotice({ tone: 'success', message: t('Berkas DOCX diunduh.', 'The DOCX file was downloaded.') });
+      setNotice({ tone: 'success', message: format === 'docx' ? t('Berkas DOCX diunduh.', 'The DOCX file was downloaded.') : t('Berkas HTML diunduh.', 'The HTML file was downloaded.') });
     });
   }
 
@@ -812,6 +895,15 @@ export default function Workspace() {
     markMetadata(latest.current.title, latest.current.settings, latest.current.layout, next);
   }
 
+
+  // Kind of writing, word target and brief: saved like any other metadata, never sent to the AI.
+  function updateMeta(patch: Partial<typeof meta>) {
+    const next = { ...latest.current.meta, ...patch };
+    setMeta(next); markMetadata(latest.current.title, latest.current.settings, latest.current.layout, latest.current.advanced, next);
+  }
+  function runQuick(action: QuickAction) {
+    void generate({ scope, surface: 'panel', label: quickActionLabel(action, t), override: quickActionOverride(action, latest.current.settings) });
+  }
 
   // Clears the style marker as soon as the settings drift from the saved preset.
   const updateSettings = (next: Settings) => { const value = reconcileStyle(next, styleList.styles); setSettings(value); markMetadata(title, value); };
@@ -872,6 +964,12 @@ export default function Workspace() {
     ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text) }
     : null;
   const words = countWords(text);
+  const spoken = isSpoken(meta.docType);
+  const docType: DocType | null = isDocType(meta.docType) ? meta.docType : null;
+  // An outline nobody filled in is not text to work on yet, even though its headings count as words.
+  const emptyDocument = words < MIN_WORDS || (meta.docSource === 'skeleton' && original !== null && text === original);
+  const structured = !!editor && loaded && scope === 'document' && hasStructure(editor.state.doc);
+  const compareHint = comparePair ? null : t('Belum ada versi untuk dibandingkan', 'No version to compare yet');
   // On the Halaman canvas the hint sits inside the page margins, so it lines up with the first line of text.
   const emptyHint = (
     <div className="pointer-events-none absolute z-10" style={paged ? { top: 'var(--page-margin-top)', left: 'var(--page-margin-left)', right: 'var(--page-margin-right)' } : { top: 0, left: 0, right: 0 }}>
@@ -883,7 +981,7 @@ export default function Workspace() {
       )}
     </div>
   );
-  const closeOnNarrow = () => { if (narrow) setPanelOpen(false); };
+  const closeOnNarrow = () => { if (narrow) setSheet(null); };
   const assistant = (
     <AssistantPanel
       suggestion={suggestion} onDismissSuggestion={dismissSuggestion}
@@ -895,7 +993,7 @@ export default function Workspace() {
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
       onGenerate={() => void generate({ scope, surface: 'panel' })} customizeRequest={customizeRequest}
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
-      onUpgrade={openPlans}
+      onUpgrade={openPlans} docType={meta.docType} onQuickAction={runQuick} structured={structured} emptyDocument={loaded && emptyDocument}
     >
       {panelPreview && (
         <PreviewCard
@@ -909,45 +1007,36 @@ export default function Workspace() {
     </AssistantPanel>
   );
 
-  const studio = (
-    <StudioPanel tab={rightTab} onTab={setRightTab} onClose={closeRight} narrow={narrow}>
-      {rightTab === 'assistant' ? assistant : rightTab === 'history' ? (
-        <HistoryPanel
-          versions={versions} currentRevision={doc?.revision ?? null} originalId={doc?.originalVersionId ?? null} loading={!loaded} hasMore={!!versionCursor} loadingMore={loadingVersions} error={versionsError}
-          busy={busy !== ''} canSave={loaded && !frozen} onLoadMore={loadMoreVersions} onRetry={loadMoreVersions} onSave={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} loadText={versionText}
-          onCompare={(version) => { closeOnNarrow(); void openCompare(version.id, WORKING); }} onRestore={(version) => setDialog({ kind: 'restore', version })}
-          onRename={(version) => { setField(version.label ?? ''); setDialog({ kind: 'rename', version }); }} onDuplicate={(version) => void duplicateVersion(version)}
-        />
-      ) : (
-        <InfoPanel editor={editor} loaded={loaded} navigable={!compare} paged={paged} text={text} original={original} hasChanges={versions.some((version) => version.kind !== 'original')} terms={terms} busy={busy !== ''}
-          onUnlock={(term) => void unlock(term)} onNavigate={closeOnNarrow}
-          analytics={
-            <AnalyticsPanel text={text} original={original} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} sourceChars={countCharacters(selection?.text.trim() ? selection.text : text)} quality={quality} stale={!!quality && quality.stamp !== editStamp}
-              loading={qualityState.loading} error={qualityState.error} onAnalyze={() => void analyze()}
-              blockedReason={!loaded ? t('Notebook masih dimuat.', 'The notebook is still loading.') : !text.trim() ? t('Tulisan masih kosong.', 'The text is empty.') : (selection?.text ?? text).length > AI_SCOPE_LIMIT ? t('Terlalu panjang untuk dianalisis sekaligus. Blok sebagian teks terlebih dahulu.', 'Too long to analyse at once. Select part of the text first.') : null} />
-          } />
-      )}
-    </StudioPanel>
+  const tabBody = (tab: StudioTab) => (tab === 'assistant' ? assistant : tab === 'history' ? (
+    <HistoryPanel
+      versions={versions} currentRevision={doc?.revision ?? null} originalId={doc?.originalVersionId ?? null} loading={!loaded} hasMore={!!versionCursor} loadingMore={loadingVersions} error={versionsError}
+      busy={busy !== ''} canSave={loaded && !frozen} onLoadMore={loadMoreVersions} onRetry={loadMoreVersions} onSave={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} loadText={versionText}
+      onCompare={(version) => { closeOnNarrow(); void openCompare(version.id, WORKING); }} onRestore={(version) => setDialog({ kind: 'restore', version })}
+      onRename={(version) => { setField(version.label ?? ''); setDialog({ kind: 'rename', version }); }} onDuplicate={(version) => void duplicateVersion(version)}
+    />
+  ) : (
+    <ReviewPanel text={text} original={original} showOriginal={showOriginal} hasChanges={versions.some((version) => version.kind !== 'original')} spoken={spoken}
+      analytics={
+        <AnalyticsPanel text={text} original={original} showOriginal={showOriginal} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} sourceChars={countCharacters(selection?.text.trim() ? selection.text : text)} quality={quality} stale={!!quality && quality.stamp !== editStamp}
+          loading={qualityState.loading} error={qualityState.error} onAnalyze={() => void analyze()}
+          blockedReason={!loaded ? t('Notebook masih dimuat.', 'The notebook is still loading.') : !text.trim() ? t('Tulisan masih kosong.', 'The text is empty.') : (selection?.text ?? text).length > AI_SCOPE_LIMIT ? t('Terlalu panjang untuk dianalisis sekaligus. Blok sebagian teks terlebih dahulu.', 'Too long to analyse at once. Select part of the text first.') : null} />
+      } />
+  ));
+  const studio = (tab: StudioTab) => (
+    <StudioPanel tab={tab} onTab={(next) => { setRightTab(next); if (sheet) setSheet(next); }} onClose={closeRight} narrow={narrow}>{tabBody(tab)}</StudioPanel>
+  );
+  const documentPanel = (asSheet: boolean) => (
+    <DocPanelContent editor={editor} loaded={loaded} navigable={!compare} text={text} words={words} terms={terms} busy={busy !== ''} docId={id} title={title} meta={meta} mode={settings.mode}
+      onMeta={updateMeta} onUnlock={(term) => void unlock(term)} onOpenAssistant={() => openRight('assistant')} onNavigate={closeOnNarrow}
+      onCopied={(message) => setNotice({ tone: 'success', message })} sheet={asSheet} onClose={() => (asSheet ? setSheet(null) : saveDocPanel({ ...docPanel, collapsed: true }))} />
   );
 
   const writing = (
     <main aria-label={t('Tulisan', 'Writing')} className={`flex h-full w-full min-w-0 flex-col overflow-hidden rounded-2xl ${paged ? 'ww-writing-paged' : 'border border-line bg-white'}`}>
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-white pl-4 pr-3">
-        <h2 className="min-w-0 flex-1 truncate text-[15px] font-medium text-ink-900">{t('Tulisan', 'Writing')}</h2>
-        {/* Advanced mode has undo and redo in the formatting toolbar, so they are not repeated here. */}
-        {editor && !compare && !paged && (
-          <span className="flex shrink-0 items-center">
-            <IconButton size="sm" icon={Undo2} label={t('Urungkan', 'Undo')} disabled={!loaded || frozen || !editor.can().undo()} onClick={() => editor.chain().focus().undo().run()} />
-            <IconButton size="sm" icon={Redo2} label={t('Ulangi', 'Redo')} disabled={!loaded || frozen || !editor.can().redo()} onClick={() => editor.chain().focus().redo().run()} />
-          </span>
-        )}
-        <span className="hidden shrink-0 rounded-md bg-paper-deep px-2 py-0.5 text-xs text-ink-600 tabular-nums sm:inline"><b className="font-semibold text-ink-800">{numberFormat(words, locale)}</b> {t('kata', 'words')}</span>
-        <SaveStatus state={loaded ? save : 'loading'} />
-      </header>
-      {paged && !compare && (
-        <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} zoom={pageZoom.zoom} onZoom={pageZoom.setZoom}
+      {!compare && (paged
+        ? <FormattingToolbar editor={editor} disabled={!loaded || frozen || !!recovery} zoom={pageZoom.zoom} onZoom={pageZoom.setZoom}
           onPageSetup={() => setDialog({ kind: 'page-setup' })} onHeaderFooter={() => setDialog({ kind: 'header-footer' })} />
-      )}
+        : <CompactToolbar editor={loaded ? editor : null} disabled={!loaded || frozen || !!recovery} />)}
       {compare ? (
         <CompareView options={compareOptions} a={compare.a} b={compare.b} before={compare.before} after={compare.after} loading={compare.loading} busy={busy !== ''} applying={busy === 'apply'}
           paged={paged} pageStyle={paged ? canvasStyle : undefined}
@@ -956,8 +1045,15 @@ export default function Workspace() {
           onApplyPreview={preview && !preview.output.alternatives && [compare.a, compare.b].includes(PREVIEW) && !stale ? () => void apply() : undefined} />
       ) : null}
       <div className={`relative min-h-0 flex-1 ${compare ? 'hidden' : ''}`}>
-      <div ref={canvasRef} className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 py-6 sm:px-10 sm:py-8'}`} style={paged ? canvasStyle : undefined}>
+      <div ref={canvasRef} className={`scrollbar-thin h-full overflow-y-auto ${paged ? 'editor-paged' : 'px-5 pb-24 pt-6 sm:px-10 sm:pt-8'}`} style={paged ? canvasStyle : undefined}>
         <article className={paged ? 'ww-page-frame relative' : 'editor-plain relative mx-auto min-h-full max-w-[760px]'} style={paged ? ({ '--page-zoom': pageZoom.scale } as React.CSSProperties) : undefined}>
+          {/* The kind of writing gives one short tip above the text; it never adds words to the notebook. */}
+          {loaded && !paged && docType && text.trim() && !tipHidden && (
+            <p className="mb-5 flex items-start gap-2 rounded-lg bg-paper px-3 py-2 font-sans text-[12.5px] leading-relaxed text-ink-600">
+              <span className="min-w-0 flex-1">{docTypeHint(docType, t)}</span>
+              <button type="button" onClick={() => setTipHidden(true)} aria-label={t('Sembunyikan tips', 'Hide tip')} className="-mr-1 grid h-5 w-5 shrink-0 place-items-center rounded text-ink-400 hover:text-ink-900"><X size={13} aria-hidden="true" /></button>
+            </p>
+          )}
           {/* An empty notebook explains itself on both canvases: a neutral hint plus a paste button. */}
           {loaded && !paged && !text.trim() && emptyHint}
           {paged && editor && loaded && !compare && (
@@ -988,32 +1084,40 @@ export default function Workspace() {
             )}
           </div>
           {editor && loaded && <TableContextMenu editor={editor} disabled={busy !== '' || !!compare || !!recovery} />}
-          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} stylesLocked={!has('saved_styles')} onCommand={selectionCommand} onStyle={styleCommand} onUpgrade={openPlans} />}
+          {editor && loaded && <SelectionMenu editor={editor} locked={lockedSelection} disabled={busy !== ''} hidden={inline !== null} chars={selection?.text.length ?? 0} styles={styleList.styles} stylesLocked={!has('saved_styles')} onCommand={selectionCommand} onStyle={styleCommand} onUpgrade={openPlans} order={orderActions(meta.docType)} />}
           {editor && loaded && inline && (
             <InlineResult
               editor={editor} label={inline.label} status={inline.status} preview={inlinePreview} message={inline.message} stale={stale} busy={busy !== ''} applying={busy === 'apply'}
               onApply={(index) => void apply(index)} onRetry={lastRequest?.surface === 'inline' ? retryInline : undefined} onDiscard={() => void discard()}
+              count={altCount} onCount={lastRequest?.surface === 'inline' ? (value) => { setAltCount(value); altCountRef.current = value; retryInline(); } : undefined}
             />
           )}
         </article>
       </div>
-      {loaded && paged && !recovery && (
+      {/* Perintah AI on both canvases; below Max it stays visible as a labelled lock. */}
+      {loaded && !recovery && (
         <InstructionDock busy={busy !== ''} locked={!has('freeform_prompt')} target={instructionTarget}
           onSubmit={instructionCommand} onUpgrade={openPlans} onOpenChange={dockOpenChange}
           running={busy === 'generate' && !!lastRequest?.instruction} onStop={stopGeneration} />
       )}
       </div>
+      {loaded && !compare && <StatusBar text={text} spoken={spoken} page={paged && pageLayout.columns === 1 ? { current: Math.min(page, pageCount), total: pageCount } : null} onOpen={openReview} />}
     </main>
   );
 
+  const showDocPanel = !narrow && !focus;
+  const showRight = !narrow && !focus && mounted;
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-shell">
       <NotebookHeader
-        title={title} onTitle={(value) => { autoTitle.current = false; setTitle(value); markMetadata(value, settings); }} disabled={!loaded || frozen} comparing={!!compare} canCopy={loaded && !!text.trim()}
-        onCopy={() => void copyAll()} onCompare={() => (compare ? exitCompare() : defaultCompare())} onAnalytics={openAnalytics}
-        onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} onDelete={() => setDialog({ kind: 'delete' })}
-        canExport={has('docx_export')} exporting={busy === 'export'} onExport={() => void exportDocx()}
+        title={title} onTitle={(value) => { autoTitle.current = false; setTitle(value); markMetadata(value, settings); }} disabled={!loaded || frozen} comparing={!!compare} save={loaded ? save : 'loading'}
+        docType={meta.docType} onDocType={(type) => updateMeta({ docType: type ?? undefined })}
         canAdvanced={has('advanced_notebook')} advanced={advanced} onAdvanced={toggleAdvanced}
+        onSaveVersion={() => { setField(''); setDialog({ kind: 'checkpoint' }); }} compareHint={compare ? null : compareHint} onCompare={() => (compare ? exitCompare() : defaultCompare())} onHistory={() => openRight('history')}
+        canExport={has('docx_export')} exporting={busy === 'export'} pageSize={pageLayout.size} onExportDocx={(size) => void exportFile('docx', size)} onExportHtml={() => void exportFile('html')}
+        canCopy={loaded && !!text.trim()} onCopy={() => void copyAll()} onCopyPlain={() => void copyPlain()}
+        onPageSetup={() => setDialog({ kind: 'page-setup' })} onHeaderFooter={() => setDialog({ kind: 'header-footer' })} onFocus={() => setFocusMode(!focus)} onNew={() => requestNewWriting()}
+        onDuplicate={() => void duplicateNotebook()} onAppearance={setAppearanceAnchor} onReview={openReview} onDelete={() => setDialog({ kind: 'delete' })}
         onUpgrade={openPlans}
       />
 
@@ -1024,31 +1128,61 @@ export default function Workspace() {
       )}
       {notice && <Toast tone={notice.tone} onDismiss={() => setNotice(null)} dismissLabel={t('Tutup', 'Dismiss')} actions={notice.retrySave ? <Button size="sm" icon={RefreshCw} onClick={() => { setNotice(null); setSave('dirty'); void flush().catch(() => undefined); }}>{t('Coba simpan lagi', 'Retry saving')}</Button> : undefined}>{notice.message}</Toast>}
 
-      {/* The shared shell's rail stays fixed on the left, so the writing area starts after it on desktop. */}
-      <div className="flex min-h-0 flex-1 px-3 pb-3 md:pl-[84px]">
-        {narrow || !mounted ? writing : (
+      {/* The shared shell's rail stays fixed on the left, so the writing area starts after it on desktop; Mode fokus
+          hides the rail and both side panels. Phones get the action bar instead of side panels. */}
+      <div className={`flex min-h-0 flex-1 px-3 pb-3 ${focus ? '' : 'md:pl-[84px]'} ${narrow ? 'pb-[4.5rem]' : ''}`}>
+        {showDocPanel && (docPanel.collapsed ? (
+          <aside aria-label={t('Dokumen', 'Document')} className="mr-3 hidden h-full w-10 shrink-0 flex-col items-center gap-1 rounded-2xl border border-line bg-white py-2 lg:flex">
+            <IconButton size="sm" icon={ChevronsRight} label={t('Buka panel Dokumen', 'Open the Document panel')} onClick={() => saveDocPanel({ ...docPanel, collapsed: false })} />
+            <span aria-hidden="true" className="my-1 h-px w-5 bg-line" />
+            <IconButton size="sm" icon={FileText} label={t('Kerangka, istilah, dan brief', 'Outline, terms and brief')} onClick={() => saveDocPanel({ ...docPanel, collapsed: false })} />
+          </aside>
+        ) : (
+          <DocPanelFrame width={docPanel.width} onWidth={(width) => saveDocPanel({ width, collapsed: false })}>{documentPanel(false)}</DocPanelFrame>
+        ))}
+        {!showRight ? writing : (
           <Group orientation="horizontal" defaultLayout={layout.defaultLayout} onLayoutChanged={layout.onLayoutChanged} className="min-w-0 flex-1">
-            <Panel id="writing" defaultSize="62%" minSize="45%">{writing}</Panel>
-            <Separator aria-label={t('Ubah lebar panel Studio', 'Resize Studio panel')} className={separatorClass} />
-            <Panel id="studio" panelRef={rightPanel} defaultSize="38%" minSize="28%" maxSize="50%" collapsible collapsedSize="48px" onResize={(size) => setPanelOpen(size.inPixels > 60)}>
-              {panelOpen ? studio : <StudioStrip onOpen={(tab) => openRight(tab ?? rightTab)} />}
+            <Panel id="writing" minSize="45%">{writing}</Panel>
+            <Separator aria-label={t('Ubah lebar panel kanan', 'Resize the side panel')} className={separatorClass} />
+            <Panel id="studio" panelRef={rightPanel} defaultSize="360px" minSize="300px" maxSize="480px" groupResizeBehavior="preserve-pixel-size" collapsible collapsedSize="48px" onResize={(size) => setPanelOpen(size.inPixels > 60)}>
+              {panelOpen ? studio(rightTab) : <StudioStrip onOpen={(tab) => openRight(tab ?? rightTab)} />}
             </Panel>
           </Group>
         )}
       </div>
 
-      {narrow && !panelOpen && (
-        <button type="button" onClick={() => openRight(rightTab)} aria-haspopup="dialog"
-          className="fixed bottom-4 left-1/2 z-30 inline-flex h-11 -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-white px-5 text-sm font-medium text-ink-900 shadow-[0_8px_24px_-8px_rgb(31_32_29/0.3)] transition-colors hover:bg-paper">
-          <PanelRightOpen size={17} className="text-brand-700" aria-hidden="true" />Studio
+      {focus && (
+        <button type="button" onClick={() => setFocusMode(false)} className="fixed bottom-4 right-4 z-30 inline-flex h-9 items-center gap-1.5 rounded-full border border-line bg-white px-3.5 text-[12.5px] font-semibold text-ink-700 shadow-[0_8px_24px_-12px_rgb(31_32_29/0.35)] transition-colors hover:bg-paper">
+          <Minimize2 size={14} aria-hidden="true" />{t('Keluar mode fokus', 'Leave focus mode')} <kbd className="rounded border border-line bg-paper px-1 text-[10.5px] font-medium text-ink-500">Esc</kbd>
         </button>
       )}
-      {narrow && panelOpen && (
+
+      {/* Phones and small tablets: one bar replaces the Studio pill; each button opens its own sheet. */}
+      {narrow && (
+        <nav aria-label={t('Panel notebook', 'Notebook panels')} className="fixed inset-x-0 bottom-0 z-30 flex h-16 items-stretch border-t border-line bg-shell/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm">
+          {([['document', FileText, t('Dokumen', 'Document')] as const, ...studioTabs.map((tab) => [tab.id, tab.icon, tab.label] as const)]).map(([value, Icon, label]) => (
+            <button key={value} type="button" aria-haspopup="dialog" aria-pressed={sheet === value} onClick={() => { if (value === 'document') setSheet('document'); else openRight(value); }}
+              className={`flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 text-[10.5px] font-semibold ${sheet === value ? 'text-ink-900' : 'text-ink-500'}`}>
+              <span className={`grid h-8 w-10 place-items-center rounded-lg ${sheet === value ? 'bg-white text-brand-800 shadow-[0_1px_2px_rgb(31_32_29/0.08)]' : ''}`}><Icon size={18} aria-hidden="true" /></span>
+              <span className="max-w-full truncate">{label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+      {narrow && sheet && (
         <>
-          <div className="fixed inset-0 z-40 bg-ink-900/30" aria-hidden="true" onClick={() => setPanelOpen(false)} />
-          <div role="dialog" aria-modal="true" aria-label="Studio" className="fixed inset-y-0 right-0 z-50 w-full max-w-md bg-shell p-2 shadow-2xl animate-slide-in">{studio}</div>
+          <div className="fixed inset-0 z-40 bg-ink-900/30" aria-hidden="true" onClick={() => setSheet(null)} />
+          <div role="dialog" aria-modal="true" aria-label={sheet === 'document' ? t('Dokumen', 'Document') : studioTabs.find((tab) => tab.id === sheet)?.label}
+            className={`fixed inset-y-0 z-50 w-full max-w-md bg-shell p-2 shadow-2xl animate-slide-in ${sheet === 'document' ? 'left-0' : 'right-0'}`}>
+            {sheet === 'document' ? <div className="h-full overflow-hidden rounded-2xl border border-line bg-white">{documentPanel(true)}</div> : studio(sheet)}
+          </div>
         </>
       )}
+      {appearanceAnchor && (
+        <AppearancePicker anchor={appearanceAnchor} color={appearance.color} icon={appearance.icon} mode={settings.mode} onClose={() => setAppearanceAnchor(null)}
+          onSelect={(next) => { void appearanceSave.save(next); if (next.icon !== appearance.icon && next.icon !== null) setAppearanceAnchor(null); }} />
+      )}
+      {appearanceSave.error && <Toast tone="error" onDismiss={appearanceSave.clearError} dismissLabel={t('Tutup', 'Dismiss')} title={t('Tampilan gagal disimpan', 'Could not save appearance')}>{appearanceSave.error}</Toast>}
 
       {dialog?.kind === 'page-setup' && (
         <PageSetupDialog layout={pageLayout} language={english ? 'en' : 'id'} onClose={() => setDialog(null)} onApply={applyLayout} />

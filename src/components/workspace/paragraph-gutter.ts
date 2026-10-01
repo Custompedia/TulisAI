@@ -85,8 +85,9 @@ function build(doc: PMNode, label: string): DecorationSet {
     button.setAttribute('data-to', String(target.to));
     button.setAttribute('aria-label', label);
     button.title = label;
-    // Inline SVG, so the widget needs no React tree of its own.
-    button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18"/></svg>';
+    // Inline SVG, so the widget needs no React tree of its own. A grip, not a plus: the handle selects the
+    // paragraph, it never inserts anything.
+    button.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" stroke="none" aria-hidden="true"><circle cx="9" cy="5" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="9" cy="19" r="1.6"/><circle cx="15" cy="5" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="15" cy="19" r="1.6"/></svg>';
     return button;
   }, { side: -1, ignoreSelection: true, key: `gutter-${target.from}` }));
   return DecorationSet.create(doc, decorations);
