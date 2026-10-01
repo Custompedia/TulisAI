@@ -82,6 +82,8 @@ export async function createDocument(ownerId: string, input: DocumentCreateInput
 }
 
 export async function getDocument(ownerId: string, documentId: string) { return dto(await rowForOwner(documentId, ownerId)); }
+// The owner and trash check alone, for paths that do not need the body (locked terms).
+export async function requireActiveDocument(ownerId: string, documentId: string): Promise<void> { await rowForOwner(documentId, ownerId); }
 // The library list, filtered and sorted on the server (UX 2). `q` matches the title, `mode` the AI mode last used
 // (legacy "custom" counts as Parafrase), `docType` the kind of writing ("none" = no kind). `trash` lists the
 // trash instead, newest deletion first. `total` counts every match, not just this page; `counts` (on request)
@@ -158,14 +160,18 @@ export async function saveDocument(ownerId: string, documentId: string, expected
   const prior = options ? await runtime().DB.prepare("SELECT id FROM document_versions WHERE document_id=? AND owner_id=? AND revision=? AND kind<>'auto' LIMIT 1").bind(documentId, ownerId, expectedRevision).first<{ id: string }>() : null;
   const priorId = options && !prior ? id() : null; const priorBody = priorId ? snapshot(await readBody(existing)) : null; const priorObject = priorId && priorBody ? await putImmutableSnapshot(documentId, priorId, priorBody) : null;
   const lockGuard = options?.expectedLockIds === undefined ? "" : " AND (SELECT COUNT(*) FROM locked_terms WHERE document_id=? AND owner_id=?)=? AND NOT EXISTS (SELECT 1 FROM locked_terms WHERE document_id=? AND owner_id=? AND id NOT IN (SELECT value FROM json_each(?)))";
-  const update = options ? runtime().DB.prepare(`UPDATE documents SET title=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=?,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND EXISTS (SELECT 1 FROM transformations WHERE id=? AND owner_id=? AND document_id=? AND status='preview' AND applied_at IS NULL AND expires_at>?)${lockGuard}`).bind(title, serialized, revision, changed, documentId, ownerId, expectedRevision, options.previewId, ownerId, documentId, changed, ...(options.expectedLockIds === undefined ? [] : [documentId, ownerId, options.expectedLockIds.length, documentId, ownerId, JSON.stringify(options.expectedLockIds)])) : runtime().DB.prepare("UPDATE documents SET title=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=?,updated_at=? WHERE id=? AND owner_id=? AND revision=?").bind(title, serialized, revision, changed, documentId, ownerId, expectedRevision);
+  const update = options ? runtime().DB.prepare(`UPDATE documents SET title=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=?,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM transformations WHERE id=? AND owner_id=? AND document_id=? AND status='preview' AND applied_at IS NULL AND expires_at>?)${lockGuard}`).bind(title, serialized, revision, changed, documentId, ownerId, expectedRevision, options.previewId, ownerId, documentId, changed, ...(options.expectedLockIds === undefined ? [] : [documentId, ownerId, options.expectedLockIds.length, documentId, ownerId, JSON.stringify(options.expectedLockIds)])) : runtime().DB.prepare("UPDATE documents SET title=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=?,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL").bind(title, serialized, revision, changed, documentId, ownerId, expectedRevision);
   const statements = [update];
   if (priorId && priorObject) statements.push(runtime().DB.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at) SELECT ?,?,?, 'checkpoint',?,'Before AI apply',?,?,? WHERE changes()=1").bind(priorId, documentId, ownerId, expectedRevision, priorObject.key, priorObject.hash, changed));
   statements.push(runtime().DB.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at,prompt_id,scope_type) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE changes()=1").bind(versionId, documentId, ownerId, kind, revision, label, object.key, object.hash, changed, options?.promptId ?? null, options?.scopeType ?? null));
   if (options) statements.push(runtime().DB.prepare("UPDATE transformations SET status='applied',applied_at=? WHERE id=? AND owner_id=? AND status='preview' AND applied_at IS NULL AND changes()=1").bind(changed, options.previewId, ownerId));
   const results = await runtime().DB.batch(statements);
   const outputIndex = priorId ? 2 : 1; const markerIndex = outputIndex + 1;
-  if ((results[0]?.meta.changes ?? 0) !== 1 || (priorId && (results[1]?.meta.changes ?? 0) !== 1) || (results[outputIndex]?.meta.changes ?? 0) !== 1 || (options && (results[markerIndex]?.meta.changes ?? 0) !== 1)) throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409);
+  if ((results[0]?.meta.changes ?? 0) !== 1 || (priorId && (results[1]?.meta.changes ?? 0) !== 1) || (results[outputIndex]?.meta.changes ?? 0) !== 1 || (options && (results[markerIndex]?.meta.changes ?? 0) !== 1)) {
+    // A trash that raced this save wins: the notebook is gone for the editor, so the save reports not-found.
+    await rowForOwner(documentId, ownerId);
+    throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409);
+  }
   return { id: documentId, title, language: existing.language, revision, content, createdAt: new Date(existing.created_at).toISOString(), updatedAt: new Date(changed).toISOString() } satisfies DocumentDTO;
 }
 
@@ -238,10 +244,28 @@ export async function currentText(ownerId: string, documentId: string) { const v
 // "Hapus permanen" in the trash, the trash purge, the auto-discard of an untouched outline, and the admin and
 // account-deletion purges. D1 counts cascaded rows in meta.changes, so any positive count means it was deleted.
 export async function deleteDocument(ownerId: string, documentId: string) { if (!(await purgeDocument({ DB: runtime().DB, DOCUMENTS: runtime().DOCUMENTS }, ownerId, documentId))) throw new RequestError("NOT_FOUND", "Document not found.", 404); }
+// DELETE ?permanent=1 from a client. A stale tab must never wipe a notebook that has content, so it goes through only
+// for a notebook already in the trash (Hapus permanen), or for the auto-discard of an untouched outline or blank
+// notebook: the client's expectedRevision must equal the stored one, that revision must be 0 (never saved since it
+// was created), and the notebook must have been made as a skeleton or blank one. Anything else is refused with 409.
+// The DELETE re-checks the same conditions, so a save or trash racing it wins.
+export const DISCARDABLE_SOURCES = ["skeleton", "blank"] as const;
+export async function permanentlyDeleteDocument(ownerId: string, documentId: string, expectedRevision?: number) {
+  const row = await runtime().DB.prepare("SELECT revision,deleted_at,json_extract(preferences_json,'$.docSource') AS source FROM documents WHERE id=? AND owner_id=?").bind(documentId, ownerId).first<{ revision: number; deleted_at: number | null; source: unknown }>();
+  if (!row) throw new RequestError("NOT_FOUND", "Document not found.", 404);
+  const env = { DB: runtime().DB, DOCUMENTS: runtime().DOCUMENTS };
+  if (row.deleted_at !== null) { if (await purgeDocument(env, ownerId, documentId, undefined, "trashed")) return; throw new RequestError("NOT_FOUND", "Document not found.", 404); }
+  const untouched = expectedRevision === 0 && row.revision === 0 && typeof row.source === "string" && (DISCARDABLE_SOURCES as readonly string[]).includes(row.source);
+  if (!untouched || !(await purgeDocument(env, ownerId, documentId, undefined, "untouched"))) throw new RequestError("DELETE_REFUSED", "Only a notebook in the trash, or an untouched new outline, can be deleted permanently.", 409, { currentRevision: row.revision });
+}
 type Storage = { DB: D1Database; DOCUMENTS: R2Bucket };
-async function purgeDocument(env: Storage, ownerId: string, documentId: string, onlyTrashedBefore?: number): Promise<boolean> {
+const PURGE_GUARDS = {
+  trashed: " AND deleted_at IS NOT NULL",
+  untouched: ` AND deleted_at IS NULL AND revision=0 AND json_extract(preferences_json,'$.docSource') IN (${DISCARDABLE_SOURCES.map((source) => `'${source}'`).join(",")})`,
+} as const;
+async function purgeDocument(env: Storage, ownerId: string, documentId: string, onlyTrashedBefore?: number, only?: keyof typeof PURGE_GUARDS): Promise<boolean> {
   const rows = await env.DB.prepare("SELECT snapshot_r2_key AS key FROM document_versions WHERE document_id=? AND owner_id=? UNION SELECT body_r2_key AS key FROM documents WHERE id=? AND owner_id=? AND body_r2_key IS NOT NULL").bind(documentId, ownerId, documentId, ownerId).all<{ key: string }>();
-  const guard = onlyTrashedBefore === undefined ? "" : " AND deleted_at IS NOT NULL AND deleted_at<?";
+  const guard = (onlyTrashedBefore === undefined ? "" : " AND deleted_at IS NOT NULL AND deleted_at<?") + (only ? PURGE_GUARDS[only] : "");
   const result = await env.DB.prepare(`DELETE FROM documents WHERE id=? AND owner_id=?${guard}`).bind(documentId, ownerId, ...(onlyTrashedBefore === undefined ? [] : [onlyTrashedBefore])).run();
   if ((result.meta.changes ?? 0) < 1) return false;
   // A failed object delete is left to the orphan sweep: the rows that referenced it are gone.

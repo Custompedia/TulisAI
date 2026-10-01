@@ -84,6 +84,8 @@ type Notice = { tone: 'success' | 'error' | 'info' | 'warning'; message: string;
 type CompareState = { a: string; b: string; before: string; after: string; loading: boolean };
 
 const FROZEN = new Set(['apply', 'restore', 'recover', 'delete']);
+// Requests that write a new revision: leaving while one runs is guarded like unsaved text.
+const WRITING = new Set(['apply', 'restore', 'recover', 'checkpoint']);
 const nextStrength = (value: string) => (value === 'light' ? 'balanced' : 'strong');
 const lowerStrength = (value: string) => (value === 'strong' ? 'balanced' : 'light');
 const PANEL_IDS = ['writing', 'studio'];
@@ -228,7 +230,13 @@ export default function Workspace() {
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
   latest.current = { title, settings, layout: pageLayout, advanced: advancedMode, meta };
   arrivingRef.current = arriving;
-  const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null;
+  // What is running right now and whether a recovery copy waits, for the leave guard and the auto-discard on unmount.
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const recoveryRef = useRef(recovery);
+  recoveryRef.current = recovery;
+  // An AI apply or a restore in flight writes a new revision, so leaving mid-request counts as unsaved too.
+  const unsaved = () => dirty.current || metaDirty.current || inFlight.current !== null || WRITING.has(busyRef.current);
   termsRef.current = terms.map((term) => term.term);
   protectedLabel.current = t('Dilindungi: tidak akan diubah AI', 'Protected: AI will not change this');
   englishRef.current = english;
@@ -319,10 +327,19 @@ export default function Workspace() {
     const base = current.current; const content = contentRef.current;
     // An outline or blank notebook that was never touched is deleted for good on the way out (it is not user
     // content, so it skips the trash), and empty notebooks do not pile up. Only in-app leaving: a reload keeps it.
-    if (base && content && !deleted.current && shouldDiscard({ source: latest.current.meta.docSource, revision: base.revision, dirty: dirty.current || metaDirty.current || inFlight.current !== null, text: documentText(content), original: documentText(base.content) })) {
-      void fetch(`/api/documents/${id}?permanent=1`, { method: 'DELETE', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: '{}' }).catch(() => undefined);
-      if (cacheKey.current) void del(cacheKey.current).catch(() => undefined);
-      showShellNotice({ tone: 'info', message: discardNotice.current });
+    const facts = { source: latest.current.meta.docSource, revision: base?.revision ?? null, dirty: unsaved(), busy: busyRef.current !== '', recovery: recoveryRef.current !== null, text: content ? documentText(content) : '', original: base ? documentText(base.content) : null };
+    if (base && content && !deleted.current && shouldDiscard(facts)) {
+      const key = cacheKey.current; const revision = base.revision; const message = discardNotice.current;
+      // A cached draft that differs from the server is a recovery copy: the notebook and the copy both stay.
+      void (async () => {
+        const draft = key ? await get<Draft>(key).catch(() => undefined) : undefined;
+        if (shouldDiscard({ ...facts, cachedDraft: !!draft && JSON.stringify(draft.content) !== JSON.stringify(base.content) })) {
+          const response = await fetch(`/api/documents/${id}?permanent=1&expectedRevision=${revision}`, { method: 'DELETE', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: '{}' }).catch(() => null);
+          if (!response?.ok) return;
+          if (key) await del(key).catch(() => undefined);
+          showShellNotice({ tone: 'info', message });
+        }
+      })();
       return;
     }
     // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
@@ -507,9 +524,9 @@ export default function Workspace() {
   }
 
   async function run(name: string, work: () => Promise<void>) {
-    if (busy) return;
-    setBusy(name); setNotice(null);
-    try { await work(); } catch (caught) { if (!guard(caught) && !showPlanNotice(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); } finally { setBusy(''); }
+    if (busy || busyRef.current) return;
+    busyRef.current = name; setBusy(name); setNotice(null);
+    try { await work(); } catch (caught) { if (!guard(caught) && !showPlanNotice(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); } finally { busyRef.current = ''; setBusy(''); }
   }
 
   function loadContent(value: Doc) {

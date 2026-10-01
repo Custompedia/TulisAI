@@ -23,10 +23,14 @@ export function compareDefault(versions: Version[], originalId: string | null, m
 
 // Leaving a skeleton or blank notebook that was never touched deletes it, so empty notebooks do not pile up
 // while delete is permanent. "Never touched" is strict: still at revision 0 (no autosave, no AI apply, no version)
-// with nothing pending on screen, and the text still what the notebook was created with.
-export function shouldDiscard(input: { source: string | null | undefined; revision: number | null; dirty: boolean; text: string; original: string | null }): boolean {
+// with nothing pending on screen, and the text still what the notebook was created with. Nothing may be in flight
+// either (an AI apply, a restore), and a local recovery copy keeps the notebook: one is waiting to be resolved
+// (`recovery`), or this device holds a cached draft that differs from the server (`cachedDraft`). The server checks
+// the revision and the kind again, so a stale tab cannot wipe a notebook that has content.
+export type DiscardInput = { source: string | null | undefined; revision: number | null; dirty: boolean; text: string; original: string | null; busy?: boolean; recovery?: boolean; cachedDraft?: boolean };
+export function shouldDiscard(input: DiscardInput): boolean {
   if (input.source !== 'skeleton' && input.source !== 'blank') return false;
-  if (input.revision !== 0 || input.dirty) return false;
+  if (input.revision !== 0 || input.dirty || input.busy || input.recovery || input.cachedDraft) return false;
   if (input.source === 'blank') return !input.text.trim();
   return input.original !== null && input.text === input.original;
 }

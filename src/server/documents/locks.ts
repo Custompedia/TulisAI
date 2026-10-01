@@ -1,8 +1,9 @@
 import { runtime } from "../runtime";
 import { RequestError } from "../http";
-import { currentText } from "./service";
+import { currentText, requireActiveDocument } from "./service";
 
-export async function listLocks(ownerId: string, documentId: string) { const rows = await runtime().DB.prepare("SELECT id,term,created_at FROM locked_terms WHERE document_id=? AND owner_id=? ORDER BY created_at ASC,id ASC").bind(documentId, ownerId).all<{ id: string; term: string; created_at: number }>(); return (rows.results ?? []).map((row) => ({ id: row.id, term: row.term, createdAt: new Date(row.created_at).toISOString() })); }
+// Every lock path goes through the owner and trash check first: a notebook in the trash is read-only until restored.
+export async function listLocks(ownerId: string, documentId: string) { await requireActiveDocument(ownerId, documentId); const rows = await runtime().DB.prepare("SELECT id,term,created_at FROM locked_terms WHERE document_id=? AND owner_id=? ORDER BY created_at ASC,id ASC").bind(documentId, ownerId).all<{ id: string; term: string; created_at: number }>(); return (rows.results ?? []).map((row) => ({ id: row.id, term: row.term, createdAt: new Date(row.created_at).toISOString() })); }
 export async function createLock(ownerId: string, documentId: string, term: string) {
   const source = await currentText(ownerId, documentId);
   if (!source.text.includes(term)) throw new RequestError("LOCK_NOT_IN_DOCUMENT", "A locked term must match text in the document.", 422);
@@ -13,4 +14,4 @@ export async function createLock(ownerId: string, documentId: string, term: stri
   } catch (error) { if (error instanceof Error && error.message.includes("UNIQUE")) throw new RequestError("LOCK_EXISTS", "That exact term is already locked.", 409); throw error; }
   throw new RequestError("LOCK_LIMIT_REACHED", "A document can have at most 200 locked terms.", 429);
 }
-export async function deleteLock(ownerId: string, documentId: string, lockId: string) { const result = await runtime().DB.prepare("DELETE FROM locked_terms WHERE id=? AND document_id=? AND owner_id=?").bind(lockId, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Locked term not found.", 404); }
+export async function deleteLock(ownerId: string, documentId: string, lockId: string) { await requireActiveDocument(ownerId, documentId); const result = await runtime().DB.prepare("DELETE FROM locked_terms WHERE id=? AND document_id=? AND owner_id=? AND EXISTS (SELECT 1 FROM documents WHERE id=? AND owner_id=? AND deleted_at IS NULL)").bind(lockId, documentId, ownerId, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Locked term not found.", 404); }
