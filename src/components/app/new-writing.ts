@@ -21,14 +21,15 @@ export function useCreateNotebook() {
   const [busy, setBusy] = useState<NewKind | null>(null);
   const [error, setError] = useState('');
 
-  async function create(kind: NewKind, options: NewOptions = {}): Promise<boolean> {
+  // `brief`: the notebook opens with its Brief unfolded, for "Draf dari brief (AI)" (UX 3).
+  async function create(kind: NewKind, options: NewOptions = {}, open: { brief?: boolean } = {}): Promise<boolean> {
     if (busy) return false;
     setBusy(kind); setError('');
     try {
       const body = newNotebookBody(kind, options, { defaultMode: prefs.defaultMode, writingLanguage: prefs.writingLanguage, humanizerContext: prefs.humanizerContext, locale, advancedNotebook: has('advanced_notebook'), now: new Date(), defaultPaged: opensPaged(prefs.defaultCanvas, has('advanced_notebook')) });
       const doc = await request<{ id: string }>('/api/documents', 'POST', body, newKey());
       // The card keeps its spinner until the editor takes over; an unsaved-changes prompt hands control back.
-      if (!guardedPush(router, `/notebooks/${doc.id}`)) setBusy(null);
+      if (!guardedPush(router, `/notebooks/${doc.id}${open.brief ? '?brief=1' : ''}`)) setBusy(null);
       return true;
     } catch (caught) {
       if (!guard(caught) && !showPlanNotice(caught)) setError(errorText(caught, locale === 'en'));

@@ -9,7 +9,7 @@ import { autosaveDocument, createDocument, getDocument } from '@/server/document
 import { DocumentCreateSchema, EditorDocumentSchema } from '@/lib/contracts';
 import { PREMIUM_PERSISTED_KEYS } from '@/server/usage/premium';
 import { ADVANCED_PREFERENCE, PAGE_LAYOUT_PREFERENCES } from '@/lib/plans';
-import { autosavePreferences, clampPreferenceValues, copyPreferences, META_VALUE_LIMIT, NOTEBOOK_META_KEYS, readMeta } from '@/lib/writing/notebook-meta';
+import { autosavePreferences, BRIEF_VALUE_LIMIT, clampPreferenceValues, copyPreferences, metaLimit, NOTEBOOK_META_KEYS, readMeta } from '@/lib/writing/notebook-meta';
 import { defaults, normalizeSettings, type Settings } from '@/lib/writing/settings';
 import { layoutPreferences, readLayout } from '@/components/workspace/page-layout';
 
@@ -36,7 +36,7 @@ beforeEach(() => {
 afterEach(() => db.close());
 
 const content = EditorDocumentSchema.parse({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'isi notebook' }] }] });
-const longBrief = 'b'.repeat(700);
+const longBrief = 'b'.repeat(2500);
 const settings: Settings = normalizeSettings({ ...defaults, mode: 'creative', styleId: 'style-1', extra: 'catatan', customized: true });
 const layout = layoutPreferences(readLayout(undefined, 'id'));
 
@@ -45,7 +45,7 @@ describe('notebook facts survive saves and copies', () => {
     for (const key of NOTEBOOK_META_KEYS) expect((PREMIUM_PERSISTED_KEYS as readonly string[]).includes(key), key).toBe(false);
     for (const key of NOTEBOOK_META_KEYS) expect(Object.hasOwn(defaults, key), key).toBe(false);
     const meta = readMeta({ docType: 'script', docSource: 'skeleton', wordTarget: 800, briefPlatform: longBrief, notes: 'n', mode: 'humanize', wordTargetx: 1, briefCta: 42 });
-    expect(meta).toEqual({ docType: 'script', docSource: 'skeleton', wordTarget: 800, briefPlatform: 'b'.repeat(META_VALUE_LIMIT), notes: 'n' });
+    expect(meta).toEqual({ docType: 'script', docSource: 'skeleton', wordTarget: 800, briefPlatform: 'b'.repeat(BRIEF_VALUE_LIMIT), notes: 'n' });
     expect(readMeta({ wordTarget: -1 })).toEqual({});
     expect(readMeta({ wordTarget: 1.5 })).toEqual({});
     expect(readMeta(null)).toEqual({});
@@ -60,7 +60,7 @@ describe('notebook facts survive saves and copies', () => {
     await autosaveDocument('free', created.id, loaded.revision, content, { preferences });
     const saved = (await getDocument('free', created.id)).preferences!;
     expect(saved).toMatchObject({ docType: 'script', docSource: 'skeleton', wordTarget: 300, briefCta: 'Ikuti akun' });
-    expect((saved.briefPlatform as string).length).toBe(META_VALUE_LIMIT);
+    expect((saved.briefPlatform as string).length).toBe(BRIEF_VALUE_LIMIT);
     // A second save from the reloaded row keeps them again.
     const again = autosavePreferences({ settings: normalizeSettings(saved), layout, advanced: false, meta: readMeta(saved) });
     await autosaveDocument('free', created.id, loaded.revision + 1, content, { preferences: again });
@@ -86,7 +86,7 @@ describe('notebook facts survive saves and copies', () => {
 
   it('clamps every string a copy or restore sends, so a long brief never turns into a 400', () => {
     const body = copyPreferences({ settings: { ...settings, sample: 's'.repeat(900) }, layout, advanced: false, meta: { notes: longBrief } }, { advancedNotebook: false, savedStyles: true });
-    for (const value of Object.values(body)) if (typeof value === 'string') expect(value.length).toBeLessThanOrEqual(META_VALUE_LIMIT);
+    for (const [key, value] of Object.entries(body)) if (typeof value === 'string') expect(value.length).toBeLessThanOrEqual(metaLimit(key));
     expect(() => DocumentCreateSchema.parse({ title: 'Pemulihan', content, preferences: body })).not.toThrow();
     expect(clampPreferenceValues({ focus: Array.from({ length: 30 }, () => 'x'.repeat(400)), bad: { nested: true }, n: Number.NaN })).toEqual({ focus: Array.from({ length: 20 }, () => 'x'.repeat(300)) });
   });

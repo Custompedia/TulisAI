@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { PluginKey } from '@tiptap/pm/state';
 import { BubbleMenu } from '@tiptap/react/menus';
-import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Minimize2, ScanText, Shuffle, SlidersHorizontal, Smile, type LucideIcon } from 'lucide-react';
+import { BriefcaseBusiness, Ellipsis, Feather, GraduationCap, LockKeyhole, LockKeyholeOpen, Magnet, Megaphone, Minimize2, ScanText, Shuffle, SlidersHorizontal, Smile, Zap, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { INLINE_LIMIT } from '@/lib/writing/settings';
@@ -41,7 +41,8 @@ function MenuAction({ icon: Icon, label, onRun, disabled }: { icon: LucideIcon; 
 type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; styles: WritingStyle[]; stylesLocked: boolean; onCommand: (command: SelectionCommand) => void; onStyle: (style: WritingStyle) => void; onUpgrade: () => void;
   // The kind of writing puts its likeliest action first (Lebih singkat for a caption); every action stays.
   order?: InlineAction[] };
-const INLINE: Array<[InlineAction, LucideIcon]> = [['alternatives', Shuffle], ['shorter', Minimize2], ['clearer', ScanText], ['formal', BriefcaseBusiness], ['natural', Smile]];
+// The last three are the creator actions (UX 3); the kind of writing decides whether they lead or trail.
+const INLINE: Array<[InlineAction, LucideIcon]> = [['alternatives', Shuffle], ['shorter', Minimize2], ['clearer', ScanText], ['formal', BriefcaseBusiness], ['natural', Smile], ['hook', Magnet], ['catchy', Zap], ['cta', Megaphone]];
 
 export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles, stylesLocked, onCommand, onStyle, onUpgrade, order }: Props) {
   const { t, locale } = useLocale();

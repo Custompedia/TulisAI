@@ -4,7 +4,7 @@ import { documentText } from '@/lib/editor/document';
 import { ADVANCED_PREFERENCE, PAGE_LAYOUT_PREFERENCES } from '@/lib/plans';
 import { DEFAULT_ACTIONS, DOC_TYPES, defaultTitle, docTypeSettings, isSpoken, orderActions, orderModes, skeletonDocument, skeletonOrder } from '@/lib/writing/doc-types';
 import { newNotebookBody } from '@/lib/writing/new-notebook';
-import { copyPreferences, storedParts } from '@/lib/writing/notebook-meta';
+import { BRIEF_VALUE_LIMIT, copyPreferences, storedParts } from '@/lib/writing/notebook-meta';
 import { MODES } from '@/components/writing/modes';
 import { documentSchema } from '@/lib/editor/extensions';
 import { formatDuration, readingMinutes, speakingSeconds, SPEAKING_WPM } from '@/lib/editor/metrics';
@@ -59,7 +59,8 @@ describe('skeletons', () => {
     expect(orderModes(MODES, 'essay')[0]).toBe('academic');
     expect([...orderModes(MODES, 'essay')].sort()).toEqual([...MODES].sort());
     expect(orderModes(MODES, null)).toEqual(MODES);
-    expect(orderActions('caption')[0]).toBe('shorter');
+    expect(orderActions('caption')[0]).toBe('hook');
+    expect(orderActions('caption')[3]).toBe('shorter');
     expect(orderActions('nonsense')).toEqual(DEFAULT_ACTIONS);
     for (const type of DOC_TYPES) expect([...orderActions(type)].sort()).toEqual([...DEFAULT_ACTIONS].sort());
     expect(isSpoken('script')).toBe(true); expect(isSpoken('caption')).toBe(true); expect(isSpoken('essay')).toBe(false); expect(isSpoken(undefined)).toBe(false);
@@ -92,13 +93,13 @@ describe('new notebook body', () => {
 });
 
 describe('duplicating from the library', () => {
-  const stored = { mode: 'academic', styleId: 'skill-1', pageSize: 'letter', pageMargins: '1440,1440,1440,1440', advanced: true, docType: 'essay', briefCta: 'Daftar', notes: 'x'.repeat(900), unknown: 'dropped' };
+  const stored = { mode: 'academic', styleId: 'skill-1', pageSize: 'letter', pageMargins: '1440,1440,1440,1440', advanced: true, docType: 'essay', briefCta: 'Daftar', notes: 'x'.repeat(2500), unknown: 'dropped' };
 
   it('keeps settings and notebook facts but leaves out what create would refuse', () => {
     const free = copyPreferences(storedParts(stored), { advancedNotebook: false, savedStyles: false });
     for (const key of [ADVANCED_PREFERENCE, ...PAGE_LAYOUT_PREFERENCES]) expect(Object.hasOwn(free, key), key).toBe(false);
     expect(free).toMatchObject({ mode: 'academic', styleId: null, docType: 'essay', briefCta: 'Daftar', docSource: 'copy' });
-    expect((free.notes as string).length).toBe(500);
+    expect((free.notes as string).length).toBe(BRIEF_VALUE_LIMIT);
     expect(Object.hasOwn(free, 'unknown')).toBe(false);
     expect(() => DocumentCreateSchema.parse({ title: 'Salinan', preferences: free })).not.toThrow();
   });

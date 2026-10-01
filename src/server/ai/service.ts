@@ -5,14 +5,16 @@ import { runtimeForAccess } from '../usage/premium';
 import { RequestError } from '../http';
 import { currentText, getDocument, replaceTextInDocument, saveDocument } from '../documents/service';
 import { listLocks } from '../documents/locks';
-import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejected, rejectionOf, snapsToSource, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, validateLockedTerms, type AIResponse, type PromptId, type RuntimeInput, type ProviderResult } from './core';
+import { createOpenRouterProvider, draftText, exceedsPreservation, isCondensed, OutputRejected, rejectionOf, snapsToSource, mergeWarnings, normalizeRuntime, placeholderTokens, requestOf, softWarnings, structuralErrors, PROMPT_VERSION, REASONING_EFFORT, validateAIResponse, validateGeneration, validateProtectedContent, validateLockedTerms, type AIResponse, type DraftBlock, type PromptId, type RuntimeInput, type ProviderResult } from './core';
+import { isCreatorIntent } from './core/schemas';
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
-import { FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
-import {collapseBlankLines, crossesBlocks} from '@/lib/editor/document';
+import { DRAFT_RESERVE_CHARACTERS, DRAFT_TARGET_CHARACTERS, FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
+import {collapseBlankLines, crossesBlocks, draftTarget, insertBlocksAt, replaceBlocksKeepingStructure, type StructuredBlock} from '@/lib/editor/document';
+import { readMeta } from '@/lib/writing/notebook-meta';
 import {detectedCitations} from '@/lib/editor/protection';
-import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
+import type { AnalyzeQualityInput, DraftInput, GenerateInput } from '@/lib/contracts';
 import { countCodePoints, requestFingerprint, sha256 } from '../usage/measurement';
 import { releaseReservation, reserveCharacters, settleReservation, WalletError } from '../usage/wallet';
 
@@ -84,13 +86,22 @@ function requestedFormat(promptId: PromptId, controls: RuntimeInput): 'paragraph
 // How an applied result goes back into the document. A list or table request keeps its shape. Otherwise a rewrite
 // (P01–P06) or an instruction (P08) over several paragraphs, or one line that came back as several, goes back as
 // paragraphs, not as line breaks inside one paragraph. A passage inside one paragraph with its own line breaks
-// keeps them, and P07 alternatives always replace inline.
+// keeps them, and P07 alternatives replace inline, except a creator intent (UX 3), whose multi-line caption options
+// follow the same paragraph rule as a rewrite.
 export function applyFormat(promptId: PromptId, sourceText: string, output: string, controls: RuntimeInput, spansParagraphs: boolean): 'paragraph'|'bullets'|'numbered_list'|'table'|undefined {
-  if (promptId === 'P07_INLINE_ALTERNATIVES') return undefined;
+  if (promptId === 'P07_INLINE_ALTERNATIVES' && !isCreatorIntent(controls.intent)) return undefined;
   const requested = requestedFormat(promptId, controls);
   if (requested) return requested;
   if (spansParagraphs) return 'paragraph';
   return !sourceText.includes('\n') && output.includes('\n') ? 'paragraph' : undefined;
+}
+// UX 3: P01–P06 over several blocks (or the whole notebook) are applied block by block when their result keeps one
+// line per block. A requested shape (list, table, summary, email, script, thread) decides its own lines, so it keeps
+// the paragraph path, and so do P07 and P08.
+const BLOCKWISE: ReadonlySet<PromptId> = new Set(['P01_STANDARD_REWRITE', 'P02_ACADEMIC', 'P03_HUMANIZER', 'P04_PROFESSIONAL', 'P05_CREATIVE', 'P06_SIMPLIFY']);
+export function keepsStructure(promptId: PromptId, controls: RuntimeInput, spansParagraphs: boolean): boolean {
+  const format = controls.request?.format;
+  return BLOCKWISE.has(promptId) && spansParagraphs && (format === undefined || format === 'paragraf');
 }
 // Paraphrase runs share one per-tier budget whether the scope is a selection or the whole notebook; inline actions keep their own small cap.
 export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLimits) {
@@ -245,6 +256,12 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
     const soft = output.no_change_needed === true || freeform ? [] : softWarnings(input.promptId,input.source.text,outputText(output),{language:controls.language,strength:controls.strength,request:requestOf(input.promptId,controls)});
     if (soft.length) output = {...output,warnings:mergeWarnings(output.warnings,soft)};
     if (input.promptId === 'P03_HUMANIZER') output = {...output,exceeds_preservation:exceedsPreservation(input.source.text,outputText(output),controls.preservation)};
+    // Said before applying, not after: a structured scope whose result lost the one-line-per-block shape will be
+    // applied as plain paragraphs, the way every multi-block apply worked before UX 3.
+    if (output.no_change_needed !== true && keepsStructure(input.promptId,controls,anchor?crossesBlocks(source.document.content,anchor.from,anchor.to):true)) {
+      const check=replaceBlocksKeepingStructure(source.document.content,anchor?.from??0,anchor?.to??source.text.length,collapseBlankLines(outputText(output)));
+      if (!check.content && check.structured) output={...output,warnings:mergeWarnings(output.warnings,[controls.language==='en'?'The result has a different number of lines, so headings, lists and tables would become plain paragraphs.':'Jumlah baris hasil berbeda, jadi judul, daftar, dan tabel akan menjadi paragraf biasa.'])};
+    }
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
   // OD-11/AI Mode: ordinary operations charge exact source code points; AI
@@ -274,6 +291,7 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
   if (preview.applied_at) return getDocument(ownerId,preview.document_id);
   if (preview.status!=='preview'||preview.expires_at<=Date.now()) throw new RequestError('PREVIEW_EXPIRED','This preview has expired.',410);
   if (preview.source_revision!==expectedRevision) throw new RequestError('REVISION_CONFLICT','The document changed before this preview could be applied.',409);
+  if (preview.prompt_id==='P11_SECTION_DRAFT') return applyDraft(ownerId,previewId,expectedRevision,preview);
   const document=await currentText(ownerId,preview.document_id);
   if (document.document.revision!==expectedRevision) throw new RequestError('REVISION_CONFLICT','The document changed before this preview could be applied.',409);
   const anchor=preview.anchor_json?JSON.parse(preview.anchor_json) as {from:number;to:number}:undefined;
@@ -290,7 +308,10 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
   }
   const replacement=collapseBlankLines(outputText(output,selectedAlternative));
   const spansParagraphs=anchor?crossesBlocks(document.document.content,anchor.from,anchor.to):true;
-  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,replacement,applyFormat(preview.prompt_id,preview.source_text,replacement,controls,spansParagraphs));
+  const from=anchor?.from??0;const to=anchor?.to??document.text.length;
+  // UX 3: a rewrite that kept one line per block goes back block by block, so headings, lists and tables survive.
+  const kept=keepsStructure(preview.prompt_id,controls,spansParagraphs)?replaceBlocksKeepingStructure(document.document.content,from,to,replacement).content:null;
+  const content=kept??replaceTextInDocument(document.document.content,from,to,replacement,applyFormat(preview.prompt_id,preview.source_text,replacement,controls,spansParagraphs));
   return saveDocument(ownerId,preview.document_id,expectedRevision,{content},'ai_apply',null,{previewId,expectedLockIds:locks.map(lock=>lock.id),promptId:preview.prompt_id,scopeType:anchor?'selection':'document'});
 }
 export async function discardPreview(ownerId:string,previewId:string) {
@@ -334,4 +355,99 @@ export async function analyzeQuality(ownerId: string, key: string, input: Analyz
   catch (error) { await releaseReservation(usageId, error instanceof Error ? error.message : 'settlement failed'); throw walletRequestError(error); }
   await settleTelemetry(usageId, sourceCharacters);
   return { dimensions, warnings: [], analyzedRevision: input.expectedRevision };
+}
+
+// UX 3, Draf dari brief (P11): one section at a time, written from the brief and outline saved in the notebook.
+// Plus+ (plans.ts). The hold is DRAFT_RESERVE_CHARACTERS and is taken before the provider call, so a short balance
+// fails there; the settled charge is the exact code points of the validated draft, which the validators bound by
+// that hold (a longer draft is refused for zero charge), so settlement never extends the hold or undercharges.
+export const draftCharge = (draftCharacters: number) => Math.max(1, Math.min(draftCharacters, DRAFT_RESERVE_CHARACTERS));
+const DRAFT_REJECTION: Record<string, string> = {
+  fabrication: 'The draft invented too many figures, sources or links. Nothing was charged.',
+  length: 'The draft was longer than one section may be. Nothing was charged.',
+  reference_list: 'The draft tried to write a reference list. Nothing was charged.',
+  empty: 'The draft came back empty. Nothing was charged.',
+};
+export async function generateDraft(ownerId: string, key: string, input: DraftInput) {
+  if (runtime().AI_PUBLIC_ENABLED !== 'true') throw new ConfigurationError('AI is unavailable until provider privacy configuration is verified.');
+  const apiKey = requiredSetting(runtime().OPENROUTER_API_KEY, 'OPENROUTER_API_KEY');
+  await cleanExpired(ownerId);
+  const rights = await entitlement(ownerId);
+  assertFeature(rights, 'draft_from_brief');
+  const source = await currentText(ownerId, input.documentId);
+  if (source.document.revision !== input.expectedRevision) throw new RequestError('REVISION_CONFLICT', 'The document changed before drafting.', 409);
+  const target = draftTarget(source.document.content, input.at);
+  if (!target) throw new RequestError('DRAFT_TARGET_INVALID', 'Put the cursor on a heading whose section is empty, or on an empty line under a heading.', 422);
+  // The brief is read from the saved notebook, never from the request body, so what is drafted is what was saved.
+  const meta = readMeta(source.document.preferences);
+  const brief = { topic: meta.briefTopic ?? '', platform: meta.briefPlatform ?? '', audience: meta.briefAudience ?? '', message: meta.briefMessage ?? '', cta: meta.briefCta ?? '', duration: meta.briefDuration ?? '', notes: meta.notes ?? '' };
+  if (!brief.topic.trim() && !brief.message.trim()) throw new RequestError('BRIEF_REQUIRED', 'Fill in at least the topic or the key message of the brief first.', 422);
+  let controls: RuntimeInput;
+  try {
+    controls = normalizeRuntime('P11_SECTION_DRAFT', { language: input.language, doc_type: meta.docType ?? 'none', max_characters: DRAFT_TARGET_CHARACTERS, brief, outline: target.outline,
+      section_heading: target.heading.text, context_before: target.before, context_after: target.after }) as RuntimeInput;
+  } catch { throw new RequestError('INVALID_REQUEST', 'The draft request is invalid.'); }
+  // The prompt asks for DRAFT_TARGET_CHARACTERS; the validators refuse anything above the hold.
+  const checkedControls: RuntimeInput = { ...controls, max_characters: DRAFT_RESERVE_CHARACTERS };
+  const fingerprint = await requestFingerprint({ ownerId, operation: 'P11_SECTION_DRAFT', documentId: input.documentId, documentRevision: input.expectedRevision, at: input.at,
+    runtimeHash: await requestFingerprint(controls), measurementVersion: 'unicode_code_points_v1' });
+  const existing = await runtime().DB.prepare(`SELECT t.id,t.document_id,t.prompt_id,t.source_revision,t.output_json,t.status,t.expires_at,r.request_fingerprint FROM transformations t
+      LEFT JOIN character_reservations r ON r.owner_id=t.owner_id AND r.idempotency_key=t.idempotency_key WHERE t.owner_id=? AND t.idempotency_key=?`).bind(ownerId, key)
+    .first<{id:string;document_id:string;prompt_id:string;source_revision:number;output_json:string;status:string;expires_at:number;request_fingerprint:string|null}>();
+  if (existing) {
+    if (existing.document_id !== input.documentId || existing.prompt_id !== 'P11_SECTION_DRAFT' || existing.source_revision !== input.expectedRevision || (existing.request_fingerprint !== null && existing.request_fingerprint !== fingerprint)) throw new RequestError('IDEMPOTENCY_CONFLICT', 'This request key belongs to another transformation.', 409);
+    if (existing.status === 'preview' && existing.expires_at > Date.now()) return {id:existing.id, output:JSON.parse(existing.output_json) as AIResponse, expiresAt:new Date(existing.expires_at).toISOString(), reused:true, heading: target.heading.text, academic: controls.academic === true};
+    throw new RequestError('PREVIEW_EXPIRED', 'This request has already finished or expired.', 410);
+  }
+  const hold = DRAFT_RESERVE_CHARACTERS;
+  let wallet;
+  try { wallet = await reserveCharacters({ ownerId, idempotencyKey: key, fingerprint, operation: 'P11_SECTION_DRAFT', sourceCharacters: 1, hold }); }
+  catch (error) { throw walletRequestError(error, { reserve: hold, draft: true }); }
+  if (!wallet.created) throw new RequestError(wallet.reservation.state === 'reserved' ? 'IDEMPOTENCY_PENDING' : 'IDEMPOTENCY_COMPLETE', 'This customer operation was already attempted.', 409);
+  const usageId = wallet.reservation.id;
+  try { await reserveTelemetry(ownerId, key, 'P11_SECTION_DRAFT', 0, rights, true, usageId); }
+  catch (error) { await releaseReservation(usageId, 'telemetry_reservation_failed'); throw error; }
+  let released = false;
+  const release = async (reason: string) => { if (!released) { released = true; await releaseReservation(usageId, reason).catch(() => undefined); await voidUsage(usageId, reason); } };
+  const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
+  const started = Date.now();
+  const result = await provider.generate({ promptId: 'P11_SECTION_DRAFT', runtime: controls, sourceText: '', requestId: usageId });
+  await completeUsage(usageId, result, started);
+  if (!result.ok) { await releaseReservation(usageId, `provider:${result.error}`); throw new RequestError('AI_UNAVAILABLE', 'AI generation could not be completed safely. Your source is unchanged.', 502); }
+  try {
+    let output: AIResponse;
+    try { output = validateGeneration('P11_SECTION_DRAFT', '', result.response, checkedControls); }
+    catch (error) {
+      const reason = error instanceof Error ? error.message : 'draft rejected';
+      const cause = /longer than/.test(reason) ? 'length' : /reference list/.test(reason) ? 'reference_list' : /empty/.test(reason) ? 'empty' : 'fabrication';
+      await release(`rejected:${reason}`);
+      throw new RequestError('AI_DRAFT_REJECTED', DRAFT_REJECTION[cause]!, 422, { reason: cause });
+    }
+    const exactCharge = draftCharge(countCodePoints(draftText(output.blocks as DraftBlock[])));
+    const id = crypto.randomUUID(); const expiry = Date.now() + DAY;
+    const stored = { ...controls, subheading_level: Math.min(3, target.heading.level + 1), prompt_version: PROMPT_VERSION, reasoning_effort: REASONING_EFFORT.P11_SECTION_DRAFT };
+    const previewInsert = runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, input.documentId, ownerId, 'P11_SECTION_DRAFT', PROMPT_VERSION, model(), input.expectedRevision, '', JSON.stringify({ from: input.at, to: input.at }), JSON.stringify(stored), JSON.stringify(output), 'preview', key, expiry, Date.now());
+    try { await settleReservation(usageId, exactCharge, id, result.usage?.providerRequestId ?? null, Date.now(), [previewInsert]); }
+    catch (error) { await release(error instanceof Error ? error.message : 'settlement failed'); throw walletRequestError(error); }
+    await settleTelemetry(usageId, exactCharge);
+    return { id, output, expiresAt: new Date(expiry).toISOString(), reused: false, heading: target.heading.text, academic: controls.academic === true };
+  } catch (error) { await release(error instanceof RequestError ? error.code : 'pipeline failed'); throw error; }
+}
+
+// Applying a draft inserts its blocks as editor nodes at the target it was written for, and saves a new version.
+async function applyDraft(ownerId: string, previewId: string, expectedRevision: number, preview: { document_id: string; anchor_json: string | null; runtime_json: string; output_json: string }) {
+  const document = await currentText(ownerId, preview.document_id);
+  if (document.document.revision !== expectedRevision) throw new RequestError('REVISION_CONFLICT', 'The document changed before this preview could be applied.', 409);
+  const anchor = preview.anchor_json ? JSON.parse(preview.anchor_json) as { from: number; to: number } : null;
+  const controls = JSON.parse(preview.runtime_json) as RuntimeInput; const output = JSON.parse(preview.output_json) as AIResponse;
+  if (!anchor || !draftTarget(document.document.content, anchor.from)) throw new RequestError('SOURCE_MISMATCH', 'The place for this draft changed.', 409);
+  try { validateGeneration('P11_SECTION_DRAFT', '', output, { ...controls, max_characters: DRAFT_RESERVE_CHARACTERS }); }
+  catch { throw new RequestError('AI_OUTPUT_REJECTED', 'This preview no longer meets the draft requirements.', 422); }
+  const level = Number(controls.subheading_level) || 3;
+  const blocks: StructuredBlock[] = (output.blocks as DraftBlock[]).map((block): StructuredBlock => block.type === 'subheading' ? { type: 'heading', text: block.text, level }
+    : block.type === 'bullet_list' ? { type: 'bulletList', items: block.items } : block.type === 'numbered_list' ? { type: 'orderedList', items: block.items } : { type: 'paragraph', text: block.text });
+  const locks = await listLocks(ownerId, preview.document_id);
+  const content = insertBlocksAt(document.document.content, anchor.from, blocks);
+  return saveDocument(ownerId, preview.document_id, expectedRevision, { content }, 'ai_apply', null, { previewId, expectedLockIds: locks.map((lock) => lock.id), promptId: 'P11_SECTION_DRAFT', scopeType: 'section' });
 }

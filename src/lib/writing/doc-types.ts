@@ -104,8 +104,15 @@ export function orderModes(modes: readonly Mode[], type: string | null | undefin
   return [...first, ...modes.filter((mode) => !first.includes(mode))];
 }
 
-export const DEFAULT_ACTIONS: InlineAction[] = ['alternatives', 'shorter', 'clearer', 'formal', 'natural'];
-export const orderActions = (type: string | null | undefined): InlineAction[] => (isDocType(type) ? DEFINITIONS[type].actions : DEFAULT_ACTIONS);
+// The creator actions (UX 3) come first for Script konten and Caption / Post, and last everywhere else; every
+// action is always offered.
+const CREATOR: InlineAction[] = ['hook', 'catchy', 'cta'];
+const CREATOR_FIRST: ReadonlySet<DocType> = new Set(['script', 'caption']);
+export const DEFAULT_ACTIONS: InlineAction[] = ['alternatives', 'shorter', 'clearer', 'formal', 'natural', ...CREATOR];
+export const orderActions = (type: string | null | undefined): InlineAction[] => {
+  if (!isDocType(type)) return DEFAULT_ACTIONS;
+  return CREATOR_FIRST.has(type) ? [...CREATOR, ...DEFINITIONS[type].actions] : [...DEFINITIONS[type].actions, ...CREATOR];
+};
 
 // Beranda's chips follow the onboarding answer: academic writers see Esai first, professional ones Email and
 // Laporan, content creators Script and Caption, article writers Artikel, paraphrasers Esai and Artikel, and

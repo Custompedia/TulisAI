@@ -66,8 +66,8 @@ describe('review: entitlements are resolved from the account, not the client', (
 
   it('keeps unlinked legacy tiers as noncommercial compatibility authority', async () => {
     const expected: Record<string, readonly string[]> = {
-      plus: ['saved_styles'],
-      pro: ['saved_styles', 'advanced_notebook', 'docx_import', 'docx_export'],
+      plus: ['saved_styles', 'draft_from_brief'],
+      pro: ['saved_styles', 'draft_from_brief', 'advanced_notebook', 'docx_import', 'docx_export'],
       max: FEATURES.filter((feature) => feature !== 'purchase_topup'),
     };
     for (const tier of TIERS.filter((value) => value !== 'free')) {

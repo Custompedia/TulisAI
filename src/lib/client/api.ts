@@ -63,6 +63,9 @@ const reserveOf = (error: unknown): number | null => {
   return typeof reserve === 'number' && Number.isSafeInteger(reserve) && reserve > 0 ? reserve : null;
 };
 
+const draftHold = (error: unknown) => { const details = error instanceof ApiError ? error.details : null; return !!details && typeof details === 'object' && (details as { draft?: unknown }).draft === true; };
+const draftReason = (error: unknown) => { const details = error instanceof ApiError ? error.details : null; const reason = details && typeof details === 'object' ? (details as { reason?: unknown }).reason : null; return typeof reason === 'string' ? reason : ''; };
+
 export function errorText(error: unknown, english: boolean): string {
   const code = error instanceof ApiError ? error.code : '';
   const t = (id: string, en: string) => (english ? en : id);
@@ -70,6 +73,10 @@ export function errorText(error: unknown, english: boolean): string {
   const about = (id: string, en: string) => (token ? t(`${id} (“${token}”)`, `${en} (“${token}”)`) : t(id, en));
   const reserve = reserveOf(error);
   switch (true) {
+    case code === 'QUOTA_EXCEEDED' && reserve !== null && draftHold(error): {
+      const amount = new Intl.NumberFormat(english ? 'en' : 'id').format(reserve);
+      return t(`Draf dari brief menyiapkan hingga ${amount} karakter sebelum menulis, dan saldomu tidak cukup. Yang ditagih hanya panjang draf yang jadi.`, `Draft from brief sets aside up to ${amount} characters before writing, and your balance is not enough. Only the finished draft’s length is charged.`);
+    }
     case code === 'QUOTA_EXCEEDED' && reserve !== null: {
       const amount = new Intl.NumberFormat(english ? 'en' : 'id').format(reserve);
       return t(`Perintah AI menyiapkan hingga ${amount} karakter (${FREEFORM_RESERVE_FACTOR}× teks terpilih) sebelum berjalan, dan saldomu tidak cukup. Pilih teks yang lebih pendek.`, `AI instructions set aside up to ${amount} characters (${FREEFORM_RESERVE_FACTOR}× the selected text) before running, and your balance is not enough. Select a shorter passage.`);
@@ -119,6 +126,11 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'AI_CITATION_REJECTED': return about('Hasil ini mengubah atau menambah sitasi, jadi belum diterapkan.', 'The result altered or added a citation, so nothing was applied.');
     case code === 'AI_PLACEHOLDER_REJECTED': return about('Hasil ini menghilangkan bagian yang masih harus kamu isi sendiri, jadi belum diterapkan.', 'The result dropped a placeholder you still need to fill in, so nothing was applied.');
     case code === 'AI_OUTPUT_REJECTED': return t('Hasil ini tidak lolos pemeriksaan keamanan. Teks belum diterapkan.', 'This result did not pass the safety checks. Nothing was applied.');
+    case code === 'BRIEF_REQUIRED': return t('Isi dulu Topik atau Pesan utama di Brief, lalu coba lagi.', 'Fill in the Topic or the Key message in the Brief first, then try again.');
+    case code === 'DRAFT_TARGET_INVALID': return t('Letakkan kursor di judul bagian yang masih kosong, atau di baris kosong di bawah sebuah judul.', 'Put the cursor on a heading whose section is still empty, or on an empty line under a heading.');
+    case code === 'AI_DRAFT_REJECTED': return draftReason(error) === 'length' ? t('Draf terlalu panjang untuk satu bagian, jadi dibatalkan tanpa biaya. Coba lagi.', 'The draft was too long for one section, so it was discarded at no charge. Try again.')
+      : draftReason(error) === 'reference_list' ? t('Draf mencoba menulis daftar pustaka, jadi dibatalkan tanpa biaya. Sumber harus kamu cari dan tulis sendiri.', 'The draft tried to write a reference list, so it was discarded at no charge. Sources are yours to find and write.')
+      : t('Draf memuat terlalu banyak angka, sumber, atau tautan yang tidak ada di brief, jadi dibatalkan tanpa biaya. Lengkapi brief atau coba lagi.', 'The draft carried too many figures, sources or links that are not in your brief, so it was discarded at no charge. Add to the brief or try again.');
     case code === 'PROTECTED_SELECTION': return t('Istilah yang dikunci tidak bisa diganti. Buka kuncinya dulu.', 'A locked term cannot be replaced. Unlock it first.');
     case code === 'AI_UNAVAILABLE': return t('AI gagal memproses. Teksmu tidak berubah — coba lagi.', 'The AI could not finish. Your text is unchanged — try again.');
     case code === 'LOCK_EXISTS': return t('Istilah ini sudah dikunci.', 'This term is already locked.');

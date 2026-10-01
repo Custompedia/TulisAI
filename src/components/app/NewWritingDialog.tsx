@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, BookOpen, ClipboardList, Clapperboard, File, GraduationCap, Mail, MessageSquareText, Newspaper, RotateCcw, ScanText,
+  ArrowLeft, BookOpen, ClipboardList, Clapperboard, File, GraduationCap, Mail, MessageSquareText, Newspaper, PenLine, RotateCcw, ScanText,
   ShoppingBag, SlidersHorizontal, Sparkles, Upload, X, type LucideIcon,
 } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
@@ -29,7 +29,8 @@ export const DOC_TYPE_ICONS: Record<DocType, LucideIcon> = {
 };
 export const KIND_ICONS: Record<NewKind, LucideIcon> = { ...DOC_TYPE_ICONS, blank: File };
 
-export type Step = 'pick' | 'rewrite' | 'skill';
+// 'draft' (UX 3): "Draf dari brief (AI)" asks for the kind of writing, creates its outline, then opens the Brief.
+export type Step = 'pick' | 'rewrite' | 'skill' | 'draft';
 type Props = { initialStep: Step; initialStyleId?: string; onClose: () => void; onImport: () => void };
 
 const CARD = 'group relative flex min-h-[76px] w-full flex-col items-start gap-1.5 rounded-xl border border-line bg-white p-3 text-left transition-colors hover:border-brand-300 hover:bg-brand-50/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400 disabled:cursor-wait disabled:opacity-60';
@@ -49,18 +50,21 @@ export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImpor
   const importTier = useRequiredTierName('docx_import');
   const skillTier = useRequiredTierName('saved_styles');
   const pagedTier = useRequiredTierName('advanced_notebook');
+  const draftTier = useRequiredTierName('draft_from_brief');
   const canImport = has('docx_import');
   const canSkill = has('saved_styles');
+  const canDraft = has('draft_from_brief');
 
   useEffect(() => { const node = ref.current; if (node && !node.open) node.showModal(); return () => node?.close(); }, []);
 
-  const title = step === 'rewrite' ? t('Olah teks yang sudah ada', 'Work on existing text') : step === 'skill' ? t('Pakai skill', 'Use a skill') : options ? t('Opsi notebook', 'Notebook options') : t('Tulis baru', 'New writing');
+  const title = step === 'rewrite' ? t('Olah teks yang sudah ada', 'Work on existing text') : step === 'skill' ? t('Pakai skill', 'Use a skill') : step === 'draft' ? t('Draf dari brief (AI)', 'Draft from brief (AI)') : options ? t('Opsi notebook', 'Notebook options') : t('Tulis baru', 'New writing');
   const back = step !== 'pick' || options ? () => { if (options) setOptions(null); else { setStep('pick'); setStyleId(undefined); } } : null;
   const busyAny = busy !== null;
 
   const pickCard = (kind: NewKind) => { void create(kind); };
   const pickImport = () => { if (canImport) onImport(); else showLockedFeature(requiredTierFor('docx_import')); };
   const pickSkill = () => { if (canSkill) setStep('skill'); else showLockedFeature(requiredTierFor('saved_styles')); };
+  const pickDraft = () => { if (canDraft) setStep('draft'); else showLockedFeature(requiredTierFor('draft_from_brief')); };
 
   return (
     <dialog ref={ref} aria-labelledby="new-writing-title" onCancel={(event) => { event.preventDefault(); if (!busyAny) onClose(); }}
@@ -76,6 +80,23 @@ export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImpor
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {step === 'rewrite' ? (
             <Composer embedded />
+          ) : step === 'draft' ? (
+            <div>
+              <p className="mb-3 text-sm leading-relaxed text-ink-600">{t('Pilih jenis tulisan. Notebook dibuat dengan kerangkanya, lalu isi Brief (topik, pembaca, pesan utama). Setelah itu AI menulis draf per bagian untuk kamu periksa; angka dan sumber tetap kamu yang isi.', 'Pick the kind of writing. The notebook opens with its outline; fill in the Brief (topic, readers, key message). Then the AI drafts one section at a time for you to check; figures and sources stay yours to fill in.')}</p>
+              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {DOC_TYPES.map((type) => {
+                  const Icon = KIND_ICONS[type];
+                  return (
+                    <li key={type}>
+                      <button type="button" onClick={() => void create(type, {}, { brief: true })} disabled={busyAny} aria-busy={busy === type || undefined} className={CARD}>
+                        <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-50 text-brand-700">{busy === type ? <Spinner size={15} /> : <Icon size={17} aria-hidden="true" />}</span>
+                        <span className="text-[13.5px] font-semibold leading-snug text-ink-900">{docTypeLabel(type, t)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           ) : step === 'skill' ? (
             styleId ? <Composer embedded initialStyleId={styleId} /> : (
               <div>
@@ -113,8 +134,9 @@ export function NewWritingDialog({ initialStep, initialStyleId, onClose, onImpor
                 <li><ActionCard icon={ScanText} label={t('Olah teks', 'Work on text')} hint={t('Tempel teks, pilih mode', 'Paste text, pick a mode')} disabled={busyAny} onPick={() => setStep('rewrite')} /></li>
                 <li><ActionCard icon={Upload} label={t('Impor DOCX', 'Import DOCX')} hint={canImport ? t('Dibuka di kanvas Halaman', 'Opens on the Page canvas') : importTier} locked={!canImport} disabled={busyAny} onPick={pickImport} /></li>
                 <li><ActionCard icon={Sparkles} label={t('Pakai skill', 'Use a skill')} hint={canSkill ? t('Gaya tulisan tersimpan', 'A saved writing style') : skillTier} locked={!canSkill} disabled={busyAny} onPick={pickSkill} /></li>
+                <li><ActionCard icon={PenLine} label={t('Draf dari brief (AI)', 'Draft from brief (AI)')} hint={canDraft ? t('Kerangka + brief, draf per bagian', 'Outline + brief, one section at a time') : draftTier} locked={!canDraft} disabled={busyAny} onPick={pickDraft} /></li>
               </ul>
-              <p className="mt-5 text-xs leading-relaxed text-ink-500">{t('Kerangka hanya berisi judul bagian. AI Tulis Lab mengolah teks yang sudah kamu tulis; ia tidak menulis dari nol.', 'An outline holds section headings only. Tulis Lab’s AI works on text you have written; it does not write from scratch.')}</p>
+              <p className="mt-5 text-xs leading-relaxed text-ink-500">{t('Kerangka hanya berisi judul bagian. Draf dari brief menulis draf per bagian dari brief-mu untuk kamu periksa; ia tidak mengarang data, angka, atau sumber.', 'An outline holds section headings only. Draft from brief writes one section at a time from your brief for you to check; it never makes up data, figures or sources.')}</p>
             </>
           )}
         </div>

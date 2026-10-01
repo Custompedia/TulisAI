@@ -90,7 +90,7 @@ function Alternatives({ options, disabled, onPick }: { options: NonNullable<Prev
           <li key={index} className="flex items-start gap-1">
             <button type="button" disabled={disabled} onClick={() => onPick(index)}
               className="flex w-full items-start gap-2.5 rounded-lg border border-line px-3 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50 focus-visible:border-brand-400 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line disabled:hover:bg-transparent">
-              <span className="min-w-0 flex-1 font-serif text-[15px] leading-relaxed text-ink-900">{option.text}</span>
+              <span className="min-w-0 flex-1 whitespace-pre-wrap font-serif text-[15px] leading-relaxed text-ink-900">{option.text}</span>
               {option.variation_level && <span className="mt-1 shrink-0 rounded bg-paper-deep px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-ink-500">{option.variation_level.replace(/_/g, ' ')}</span>}
             </button>
             <CopyOption text={option.text} />

@@ -1,5 +1,5 @@
 import { runtime } from "../runtime";
-import { getSnapshot, putImmutableSnapshot } from "../storage/r2";
+import { getSnapshot, putImmutableSnapshot, sha256 } from "../storage/r2";
 import { documentText, plainTextDocument, replaceTextInDocument } from "./serialize";
 import type { DocumentCreateInput, DocumentDTO, VersionDTO } from "@/lib/contracts";
 import { EditorDocumentSchema } from "@/lib/contracts";
@@ -10,6 +10,7 @@ import { FeatureLockedError } from "../usage/features";
 import { ADVANCED_PREFERENCE, hasFeature, PAGE_LAYOUT_PREFERENCES } from "@/lib/plans";
 import { storedSettingsForAccess } from "../usage/premium";
 import { validDocxImportReceipt } from "./portability";
+import { BRIEF_VALUE_LIMIT, LONG_META_KEYS } from "@/lib/writing/notebook-meta";
 
 type DocumentRow = { id: string; title: string; language: "auto" | "id" | "en"; preferences_json: string; revision: number; body_json: string | null; body_r2_key: string | null; original_version_id?: string | null; color?: string | null; icon?: string | null; pinned_at?: number | null; created_at: number; updated_at: number };
 type VersionRow = { id: string; document_id: string; kind: VersionDTO["kind"]; revision: number; label: string | null; snapshot_r2_key: string; created_at: number; prompt_id: string | null; scope_type: string | null };
@@ -42,6 +43,15 @@ async function checkedPreferences(ownerId: string, preferences: Record<string, u
     if (existing && Object.hasOwn(existing, key)) next[key] = existing[key];
     else delete next[key];
   }
+  return next;
+}
+
+// Autosave never refuses (a failing autosave would trap the writer in a save loop), so an over-long brief value is
+// cut to BRIEF_VALUE_LIMIT instead. Other preference values keep their own rules (a Max writing sample, for one).
+function briefClamped(preferences: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!preferences) return preferences;
+  const next = { ...preferences };
+  for (const key of LONG_META_KEYS) { const value = next[key]; if (typeof value === "string" && value.length > BRIEF_VALUE_LIMIT) next[key] = value.slice(0, BRIEF_VALUE_LIMIT); }
   return next;
 }
 
@@ -141,10 +151,11 @@ export async function listDocuments(ownerId: string, cursor?: string, limit = 20
   };
 }
 
-export async function saveDocument(ownerId: string, documentId: string, expectedRevision: number, changes: { content?: unknown; title?: string }, kind: VersionDTO["kind"] = "checkpoint", label: string | null = null, options?: { previewId: string; expectedLockIds?: string[]; promptId?: string; scopeType?: "selection" | "document" }) {
+export async function saveDocument(ownerId: string, documentId: string, expectedRevision: number, changes: { content?: unknown; title?: string }, kind: VersionDTO["kind"] = "checkpoint", label: string | null = null, options?: { previewId: string; expectedLockIds?: string[]; promptId?: string; scopeType?: "selection" | "section" | "document" }) {
   const existing = await rowForOwner(documentId, ownerId); if (existing.revision !== expectedRevision) throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: existing.revision });
   const content = changes.content ? checkedContent(changes.content) : await readBody(existing); const title = changes.title ?? existing.title; const revision = expectedRevision + 1; const versionId = id(); const serialized = snapshot(content); const object = await putImmutableSnapshot(documentId, versionId, serialized); const changed = now();
-  const prior = options ? await runtime().DB.prepare("SELECT id FROM document_versions WHERE document_id=? AND owner_id=? AND revision=? LIMIT 1").bind(documentId, ownerId, expectedRevision).first<{ id: string }>() : null;
+  // An automatic version may be pruned later, so it never stands in for the "Before AI apply" checkpoint.
+  const prior = options ? await runtime().DB.prepare("SELECT id FROM document_versions WHERE document_id=? AND owner_id=? AND revision=? AND kind<>'auto' LIMIT 1").bind(documentId, ownerId, expectedRevision).first<{ id: string }>() : null;
   const priorId = options && !prior ? id() : null; const priorBody = priorId ? snapshot(await readBody(existing)) : null; const priorObject = priorId && priorBody ? await putImmutableSnapshot(documentId, priorId, priorBody) : null;
   const lockGuard = options?.expectedLockIds === undefined ? "" : " AND (SELECT COUNT(*) FROM locked_terms WHERE document_id=? AND owner_id=?)=? AND NOT EXISTS (SELECT 1 FROM locked_terms WHERE document_id=? AND owner_id=? AND id NOT IN (SELECT value FROM json_each(?)))";
   const update = options ? runtime().DB.prepare(`UPDATE documents SET title=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=?,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND EXISTS (SELECT 1 FROM transformations WHERE id=? AND owner_id=? AND document_id=? AND status='preview' AND applied_at IS NULL AND expires_at>?)${lockGuard}`).bind(title, serialized, revision, changed, documentId, ownerId, expectedRevision, options.previewId, ownerId, documentId, changed, ...(options.expectedLockIds === undefined ? [] : [documentId, ownerId, options.expectedLockIds.length, documentId, ownerId, JSON.stringify(options.expectedLockIds)])) : runtime().DB.prepare("UPDATE documents SET title=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=?,updated_at=? WHERE id=? AND owner_id=? AND revision=?").bind(title, serialized, revision, changed, documentId, ownerId, expectedRevision);
@@ -161,11 +172,50 @@ export async function saveDocument(ownerId: string, documentId: string, expected
 export async function autosaveDocument(ownerId: string, documentId: string, expectedRevision: number, content: unknown, metadata?: { title?: string; language?: "auto" | "id" | "en"; preferences?: Record<string, unknown> }) {
   const parsed = checkedContent(content); const current = await rowForOwner(documentId, ownerId);
   const oldPreferences = JSON.parse(current.preferences_json || "{}") as Record<string, unknown>;
-  const preferences = await checkedPreferences(ownerId, metadata?.preferences, "strip", oldPreferences); const saved = now();
+  const preferences = briefClamped(await checkedPreferences(ownerId, metadata?.preferences, "strip", oldPreferences)); const saved = now();
   const result = await runtime().DB.prepare("UPDATE documents SET title=?,language=?,preferences_json=?,body_json=?,body_r2_key=NULL,storage_mode='d1',revision=revision+1,updated_at=? WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL")
     .bind(metadata?.title ?? current.title, metadata?.language ?? current.language, JSON.stringify(preferences ?? oldPreferences), snapshot(parsed), saved, documentId, ownerId, expectedRevision).run();
   if ((result.meta.changes ?? 0) !== 1) { const latest = await rowForOwner(documentId, ownerId); throw new RequestError("REVISION_CONFLICT", "The document changed elsewhere. Reload or resolve before saving.", 409, { currentRevision: latest.revision }); }
-  return getDocument(ownerId, documentId);
+  // Best effort: the save has committed, so a failed snapshot never fails it (an orphaned object is swept later).
+  const autoVersion = await autoVersionAfterSave(ownerId, documentId, expectedRevision + 1, parsed, saved).catch(() => false);
+  return { ...(await getDocument(ownerId, documentId)), ...(autoVersion ? { autoVersion: true } : {}) };
+}
+
+// UX 3, automatic versions. While the writer keeps editing, an autosave takes a snapshot when no version of any kind
+// was made in the last AUTO_VERSION_INTERVAL_MS and the content differs from the latest version. Each notebook keeps
+// its AUTO_VERSION_KEEP newest automatic versions; older ones are deleted with their R2 objects. Original, manual,
+// AI and restore versions are never pruned.
+export const AUTO_VERSION_INTERVAL_MS = 30 * 60_000;
+export const AUTO_VERSION_KEEP = 20;
+export const AUTO_VERSION_LABEL = "Automatic version";
+async function autoVersionAfterSave(ownerId: string, documentId: string, revision: number, content: unknown, at: number): Promise<boolean> {
+  const db = runtime().DB;
+  const latest = await db.prepare("SELECT created_at,snapshot_hash FROM document_versions WHERE document_id=? AND owner_id=? ORDER BY created_at DESC,id DESC LIMIT 1").bind(documentId, ownerId).first<{ created_at: number; snapshot_hash: string }>();
+  if (latest && at - latest.created_at < AUTO_VERSION_INTERVAL_MS) return false;
+  const body = snapshot(content);
+  if (latest && latest.snapshot_hash === await sha256(body)) return false;
+  const versionId = id(); const object = await putImmutableSnapshot(documentId, versionId, body);
+  // Only while the notebook still holds exactly this revision, so a racing save never gets a stale snapshot.
+  const inserted = await db.prepare("INSERT INTO document_versions (id,document_id,owner_id,kind,revision,label,snapshot_r2_key,snapshot_hash,created_at) SELECT ?,?,?,'auto',?,?,?,?,? WHERE EXISTS (SELECT 1 FROM documents WHERE id=? AND owner_id=? AND revision=? AND deleted_at IS NULL)")
+    .bind(versionId, documentId, ownerId, revision, AUTO_VERSION_LABEL, object.key, object.hash, at, documentId, ownerId, revision).run();
+  if ((inserted.meta.changes ?? 0) !== 1) { await runtime().DOCUMENTS.delete(object.key).catch(() => undefined); return false; }
+  await pruneAutoVersions({ DB: db, DOCUMENTS: runtime().DOCUMENTS }, ownerId, documentId);
+  return true;
+}
+export async function pruneAutoVersions(env: Storage, ownerId: string, documentId: string, keep = AUTO_VERSION_KEEP): Promise<number> {
+  const rows = await env.DB.prepare("SELECT id,snapshot_r2_key AS key FROM document_versions WHERE document_id=? AND owner_id=? AND kind='auto' ORDER BY created_at DESC,id DESC LIMIT -1 OFFSET ?").bind(documentId, ownerId, keep).all<{ id: string; key: string }>();
+  const doomed = rows.results ?? [];
+  if (!doomed.length) return 0;
+  const marks = doomed.map(() => "?").join(",");
+  await env.DB.prepare(`DELETE FROM document_versions WHERE owner_id=? AND document_id=? AND kind='auto' AND id IN (${marks})`).bind(ownerId, documentId, ...doomed.map((row) => row.id)).run();
+  // An object another row still points at stays; everything else goes now instead of waiting for the orphan sweep.
+  const keys = [...new Set(doomed.map((row) => row.key))];
+  const keyMarks = keys.map(() => "?").join(",");
+  const referenced = await env.DB.prepare(`SELECT snapshot_r2_key AS key FROM document_versions WHERE snapshot_r2_key IN (${keyMarks}) UNION SELECT body_r2_key AS key FROM documents WHERE body_r2_key IN (${keyMarks})`).bind(...keys, ...keys).all<{ key: string }>();
+  const kept = new Set((referenced.results ?? []).map((row) => row.key));
+  const gone = keys.filter((key) => !kept.has(key));
+  if (gone.length) await env.DOCUMENTS.delete(gone).catch(() => undefined);
+  return doomed.length;
 }
 // Rename without a checkpoint: only the title changes, guarded by the revision like autosave. The revision still
 // moves, so an editor open elsewhere with the old title gets a conflict instead of silently writing it back.
@@ -179,9 +229,10 @@ export async function renameDocument(ownerId: string, documentId: string, expect
 export async function updateAppearance(ownerId: string, documentId: string, appearance: NotebookAppearance) { const result = await runtime().DB.prepare("UPDATE documents SET color=?,icon=? WHERE id=? AND owner_id=? AND deleted_at IS NULL").bind(appearance.color, appearance.icon, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Document not found.", 404); return { id: documentId, color: appearance.color, icon: appearance.icon }; }
 export async function listVersions(ownerId: string, documentId: string, cursor?: string, limit = 20) { await rowForOwner(documentId, ownerId); const bounded = Math.min(Math.max(limit, 1), 50); let sql = "SELECT id,document_id,kind,revision,label,snapshot_r2_key,created_at,prompt_id,scope_type FROM document_versions WHERE document_id=? AND owner_id=?"; const args: unknown[] = [documentId, ownerId]; if (cursor) { const [created, versionId] = cursor.split(":"); if (!created || !versionId || !/^\d+$/.test(created)) throw new RequestError("INVALID_CURSOR", "Cursor is invalid."); sql += " AND (created_at < ? OR (created_at = ? AND id < ?))"; args.push(Number(created), Number(created), versionId); } sql += " ORDER BY created_at DESC,id DESC LIMIT ?"; args.push(bounded + 1); const rows = await runtime().DB.prepare(sql).bind(...args).all<VersionRow>(); const results = rows.results ?? []; const page = results.slice(0, bounded); const last = page.at(-1); return { items: page.map((row) => ({ id: row.id, documentId: row.document_id, kind: row.kind, revision: row.revision, label: row.label, promptId: row.prompt_id, scopeType: row.scope_type, createdAt: new Date(row.created_at).toISOString() })), nextCursor: results.length > bounded && last ? `${last.created_at}:${last.id}` : null }; }
 export async function getVersion(ownerId: string, documentId: string, versionId: string) { await rowForOwner(documentId, ownerId); const row = await runtime().DB.prepare("SELECT id,document_id,kind,revision,label,snapshot_r2_key,created_at FROM document_versions WHERE id=? AND document_id=? AND owner_id=?").bind(versionId, documentId, ownerId).first<VersionRow>(); if (!row) throw new RequestError("NOT_FOUND", "Version not found.", 404); return { id: row.id, documentId: row.document_id, kind: row.kind, revision: row.revision, label: row.label, content: parseBody(await getSnapshot(row.snapshot_r2_key)), createdAt: new Date(row.created_at).toISOString() }; }
-export async function updateVersionLabel(ownerId: string, documentId: string, versionId: string, label: string) { await rowForOwner(documentId, ownerId); const result = await runtime().DB.prepare("UPDATE document_versions SET label=? WHERE id=? AND document_id=? AND owner_id=?").bind(label, versionId, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Version not found.", 404); return getVersion(ownerId, documentId, versionId); }
+// Naming an automatic version keeps it: it becomes an ordinary checkpoint, so retention never prunes it.
+export async function updateVersionLabel(ownerId: string, documentId: string, versionId: string, label: string) { await rowForOwner(documentId, ownerId); const result = await runtime().DB.prepare("UPDATE document_versions SET label=?,kind=CASE WHEN kind='auto' THEN 'checkpoint' ELSE kind END WHERE id=? AND document_id=? AND owner_id=?").bind(label, versionId, documentId, ownerId).run(); if ((result.meta.changes ?? 0) !== 1) throw new RequestError("NOT_FOUND", "Version not found.", 404); return getVersion(ownerId, documentId, versionId); }
 export async function createCheckpoint(ownerId: string, documentId: string, expectedRevision: number, label: string | null) { const existing = await rowForOwner(documentId, ownerId); return saveDocument(ownerId, documentId, expectedRevision, { content: await readBody(existing) }, "checkpoint", label ?? "Manual checkpoint"); }
-export async function restoreVersion(ownerId: string, documentId: string, versionId: string, expectedRevision: number) { const version = await runtime().DB.prepare("SELECT id,snapshot_r2_key FROM document_versions WHERE id=? AND document_id=? AND owner_id=?").bind(versionId, documentId, ownerId).first<{ id: string; snapshot_r2_key: string }>(); if (!version) throw new RequestError("NOT_FOUND", "Version not found.", 404); const current = await rowForOwner(documentId, ownerId); const latest = await runtime().DB.prepare("SELECT revision FROM document_versions WHERE document_id=? AND owner_id=? ORDER BY revision DESC LIMIT 1").bind(documentId, ownerId).first<{ revision: number }>(); if ((latest?.revision ?? -1) !== expectedRevision) { await saveDocument(ownerId, documentId, expectedRevision, { content: await readBody(current) }, "checkpoint", "Before restore"); expectedRevision += 1; } return saveDocument(ownerId, documentId, expectedRevision, { content: parseBody(await getSnapshot(version.snapshot_r2_key)) }, "restore", "Restored version"); }
+export async function restoreVersion(ownerId: string, documentId: string, versionId: string, expectedRevision: number) { const version = await runtime().DB.prepare("SELECT id,snapshot_r2_key FROM document_versions WHERE id=? AND document_id=? AND owner_id=?").bind(versionId, documentId, ownerId).first<{ id: string; snapshot_r2_key: string }>(); if (!version) throw new RequestError("NOT_FOUND", "Version not found.", 404); const current = await rowForOwner(documentId, ownerId); const latest = await runtime().DB.prepare("SELECT revision FROM document_versions WHERE document_id=? AND owner_id=? AND kind<>'auto' ORDER BY revision DESC LIMIT 1").bind(documentId, ownerId).first<{ revision: number }>(); if ((latest?.revision ?? -1) !== expectedRevision) { await saveDocument(ownerId, documentId, expectedRevision, { content: await readBody(current) }, "checkpoint", "Before restore"); expectedRevision += 1; } return saveDocument(ownerId, documentId, expectedRevision, { content: parseBody(await getSnapshot(version.snapshot_r2_key)) }, "restore", "Restored version"); }
 export async function currentText(ownerId: string, documentId: string) { const value = await getDocument(ownerId, documentId); return { document: value, text: documentText(value.content) }; }
 // Permanent delete: the row (versions, previews, locks and evidence cascade) and every R2 snapshot. Used by
 // "Hapus permanen" in the trash, the trash purge, the auto-discard of an untouched outline, and the admin and

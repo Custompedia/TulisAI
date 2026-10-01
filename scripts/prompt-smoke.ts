@@ -1,6 +1,6 @@
 // Live prompt smoke test: pnpm smoke [filter...] — runs fixtures through the real provider and validators.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { createOpenRouterProvider, isCondensed, PROMPT_VERSION, requestOf, validateProtectedContent, softWarnings, validateGeneration, normalizeRuntime, type PromptId, type RuntimeInput } from "../src/server/ai/core";
+import { createOpenRouterProvider, draftText, isCondensed, PROMPT_VERSION, requestOf, validateProtectedContent, softWarnings, validateGeneration, normalizeRuntime, type DraftBlock, type PromptId, type RuntimeInput } from "../src/server/ai/core";
 
 type Checks = { keep?: string[]; match?: string[]; absent?: string[]; absentExact?: string[]; warns?: boolean; noChange?: boolean; minOptions?: number };
 type Fixture = { id: string; promptId: PromptId; sourceText: string; selectedText?: string; runtime: RuntimeInput; expected: Record<string, string>; checks?: Checks };
@@ -12,11 +12,13 @@ const model = env.OPENROUTER_MODEL || "openai/gpt-5.6-luna";
 // SMOKE_REPEAT=3 runs every fixture three times, because one pass of a sampled model proves little.
 const repeat = Math.max(1, Number(process.env.SMOKE_REPEAT) || 1);
 const filters = process.argv.slice(2);
-const files = ["fixtures/prompt-evaluation.json", "fixtures/prompt-edge-cases.json", "fixtures/prompt-held-out.json"];
+// prompt-ux3.json: P11 Draf dari brief and the P07 creator intents (UX 3), not yet run against the live model.
+const files = ["fixtures/prompt-evaluation.json", "fixtures/prompt-edge-cases.json", "fixtures/prompt-held-out.json", "fixtures/prompt-ux3.json"];
 const fixtures = files.flatMap((file) => JSON.parse(readFileSync(file, "utf8")) as Fixture[]).filter((item) => !filters.length || filters.some((filter) => item.id.includes(filter) || item.promptId.includes(filter)));
 const provider = createOpenRouterProvider({ apiKey, model, privacyMode: "deny", timeoutMs: 90_000 });
 
-const textOf = (output: Record<string, unknown>) => Array.isArray(output.alternatives) ? (output.alternatives as Array<{ text: string }>).map((item) => item.text).join("\n") : String(output.transformed_text ?? output.corrected_text ?? JSON.stringify(output));
+const textOf = (output: Record<string, unknown>) => Array.isArray(output.alternatives) ? (output.alternatives as Array<{ text: string }>).map((item) => item.text).join("\n")
+  : Array.isArray(output.blocks) ? draftText(output.blocks as DraftBlock[]) : String(output.transformed_text ?? output.corrected_text ?? JSON.stringify(output));
 
 async function run(fixture: Fixture): Promise<Result> {
   const started = Date.now(); const failures: string[] = []; let warnings: string[] = []; let output: unknown = null;
@@ -37,9 +39,12 @@ async function run(fixture: Fixture): Promise<Result> {
     if (fixed.ok) try { response = { ...response, transformed_text: validateGeneration("P10_REPAIR", source, fixed.response, repairRuntime, 1).corrected_text }; warnings.push("repaired by P10"); } catch (error) { failures.push(`repair: ${error instanceof Error ? error.message : String(error)}`); }
   }
   try {
-    const checked = validateGeneration(fixture.promptId, source, response, runtime, repair ? 1 : 0); output = checked;
+    // P11 is validated against its normalised runtime (sanitised brief, academic guard), as the service does.
+    const drafting = fixture.promptId === "P11_SECTION_DRAFT";
+    const checked = validateGeneration(fixture.promptId, source, response, drafting ? normalizeRuntime(fixture.promptId, runtime) as RuntimeInput : runtime, repair ? 1 : 0); output = checked;
     const text = textOf(checked);
-    if (!repair && fixture.promptId !== "P07_INLINE_ALTERNATIVES" && fixture.promptId !== "P09_QUALITY_EVALUATION" && checked.no_change_needed !== true) {
+    if (drafting && Number(checked.repaired) > 0) warnings.push(`${checked.repaired} specific(s) replaced by placeholders`);
+    if (!repair && !drafting && fixture.promptId !== "P07_INLINE_ALTERNATIVES" && fixture.promptId !== "P09_QUALITY_EVALUATION" && checked.no_change_needed !== true) {
       const controls = normalizeRuntime(fixture.promptId, { ...runtime, sourceText: source });
       warnings = [...warnings, ...softWarnings(fixture.promptId, source, text, { language: controls.language, strength: controls.strength, request: requestOf(fixture.promptId, controls as RuntimeInput) })];
     }

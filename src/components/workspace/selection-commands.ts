@@ -2,7 +2,7 @@ import { defaults, INLINE_LIMIT, type Settings } from '@/lib/writing/settings';
 import type { PlanLimits } from '@/lib/plans';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { applyStyle, type WritingStyle } from '@/lib/writing/styles';
-import type { InlineAction, SelectionRange } from './types';
+import { isCreatorAction, type InlineAction, type SelectionRange } from './types';
 
 export type SelectionCommand = InlineAction | 'humanize' | 'academic' | 'lock' | 'unlock' | 'customize';
 type T = (id: string, en: string) => string;
@@ -13,13 +13,13 @@ export type SelectionPlan =
   | { kind: 'error'; label: string; message: string }
   | { kind: 'generate'; label: string; inlineAction?: InlineAction; override?: Settings; instruction?: string };
 
-const GENERATE: ReadonlySet<SelectionCommand> = new Set(['alternatives', 'shorter', 'clearer', 'formal', 'natural', 'humanize', 'academic']);
+const GENERATE: ReadonlySet<SelectionCommand> = new Set(['alternatives', 'shorter', 'clearer', 'formal', 'natural', 'catchy', 'hook', 'cta', 'humanize', 'academic']);
 export const isGenerateCommand = (command: SelectionCommand) => GENERATE.has(command);
 
 export function commandLabel(command: SelectionCommand, t: T): string {
   return {
     alternatives: t('Alternatif', 'Alternatives'), shorter: t('Lebih singkat', 'Shorter'), clearer: t('Lebih jelas', 'Clearer'), formal: t('Lebih formal', 'More formal'),
-    natural: t('Lebih natural', 'More natural'), humanize: 'Humanize', academic: t('Akademik', 'Academic'), lock: t('Kunci istilah', 'Lock term'),
+    natural: t('Lebih natural', 'More natural'), catchy: t('Lebih catchy', 'Catchier'), hook: t('Jadikan hook', 'Make it a hook'), cta: t('Tambah CTA', 'Add a CTA'), humanize: 'Humanize', academic: t('Akademik', 'Academic'), lock: t('Kunci istilah', 'Lock term'),
     unlock: t('Buka kunci istilah', 'Unlock term'), customize: t('Sesuaikan di panel…', 'Customize in panel…'),
   }[command];
 }
@@ -78,11 +78,12 @@ export function planSelectionCommand(command: SelectionCommand, selection: Selec
   if (command === 'humanize') return length > limits.runLimit ? over(limits.runLimit) : { kind: 'generate', label, override: plain(base, { mode: 'humanize', context: humanizeContext(base) }) };
   if (command === 'academic') return length > limits.runLimit ? over(limits.runLimit) : { kind: 'generate', label, override: plain(base, { mode: 'academic' }) };
   if (length > INLINE_LIMIT) return over(INLINE_LIMIT);
-  if (!multiline) return { kind: 'generate', label, inlineAction: command };
+  // Creator actions run as P07 on one line or several (caption variations keep one line per line).
+  if (!multiline || isCreatorAction(command)) return { kind: 'generate', label, inlineAction: command as InlineAction };
   if (command === 'alternatives') return { kind: 'error', label, message: t('Alternatif hanya untuk kata, frasa, atau satu kalimat. Pilih bagian yang lebih kecil.', 'Alternatives work on a word, phrase, or single sentence. Select a smaller part.') };
-  const override: Record<Exclude<InlineAction, 'alternatives'>, Settings> = {
+  const override: Record<Exclude<InlineAction, 'alternatives' | 'catchy' | 'hook' | 'cta'>, Settings> = {
     clearer: plain(base, { mode: 'simplify' }), shorter: plain(base, { mode: 'standard', customized: true, length: 'shorter' }),
     formal: plain(base, { mode: 'professional' }), natural: plain(base, { mode: 'humanize', context: humanizeContext(base) }),
   };
-  return { kind: 'generate', label, override: override[command] };
+  return { kind: 'generate', label, override: override[command as keyof typeof override] };
 }

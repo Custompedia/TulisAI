@@ -7,10 +7,10 @@ import { modeFromPrompt } from '@/lib/writing/settings';
 import { Button, pillButton } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { modeIcon, modeLabel } from '@/components/writing/modes';
-import { kindIcon, kindTone, versionLabel } from './versions';
+import { kindIcon, kindTone, matchesFilter, versionLabel, type VersionFilter } from './versions';
 import type { Version } from './types';
 
-type Filter = 'all' | 'ai' | 'manual';
+type Filter = VersionFilter;
 type TextState = { status: 'loading' | 'ready' | 'error'; text: string };
 type Props = {
   versions: Version[]; currentRevision: number | null; originalId: string | null; loading: boolean; hasMore: boolean; loadingMore: boolean; error: string; busy: boolean; canSave: boolean;
@@ -23,8 +23,8 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
   const [filter, setFilter] = useState<Filter>('all');
   const [open, setOpen] = useState<string | null>(null);
   const [texts, setTexts] = useState<Record<string, TextState>>({});
-  const shown = versions.filter((version) => filter === 'all' || (filter === 'ai') === (version.kind === 'ai_apply'));
-  const scopeLabel = (value: string | null | undefined) => (value === 'selection' ? t('Teks terpilih', 'Selection') : value === 'document' ? t('Seluruh dokumen', 'Entire document') : null);
+  const shown = versions.filter((version) => matchesFilter(version, filter));
+  const scopeLabel = (value: string | null | undefined) => (value === 'selection' ? t('Teks terpilih', 'Selection') : value === 'section' ? t('Bagian ini', 'This section') : value === 'document' ? t('Seluruh dokumen', 'Entire document') : null);
 
   function fetchText(versionId: string) {
     setTexts((state) => ({ ...state, [versionId]: { status: 'loading', text: '' } }));
@@ -36,7 +36,7 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
     if (next && (!texts[next] || texts[next].status === 'error')) fetchText(next);
   }
 
-  const chips: Array<[Filter, string]> = [['all', t('Semua', 'All')], ['ai', 'AI'], ['manual', 'Manual']];
+  const chips: Array<[Filter, string]> = [['all', t('Semua', 'All')], ['ai', 'AI'], ['manual', 'Manual'], ['auto', t('Otomatis', 'Auto')]];
 
   return (
     <div className="flex h-full flex-col">
@@ -56,8 +56,10 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
         ) : shown.length === 0 ? (
           <div className="flex flex-col items-center px-4 py-10 text-center">
             <span className="grid h-10 w-10 place-items-center rounded-full bg-paper-deep text-ink-500"><History size={18} aria-hidden="true" /></span>
-            <p className="mt-3 text-[13px] font-semibold text-ink-800">{filter === 'all' ? t('Belum ada riwayat', 'No history yet') : filter === 'ai' ? t('Belum ada hasil AI yang diterapkan', 'No applied AI results yet') : t('Belum ada versi manual', 'No manual versions yet')}</p>
-            <p className="mt-1 text-xs leading-relaxed text-ink-500">{t('Hasil AI yang diterapkan dan versi yang kamu simpan muncul di sini.', 'Applied AI results and versions you save appear here.')}</p>
+            <p className="mt-3 text-[13px] font-semibold text-ink-800">{filter === 'all' ? t('Belum ada riwayat', 'No history yet') : filter === 'ai' ? t('Belum ada hasil AI yang diterapkan', 'No applied AI results yet') : filter === 'auto' ? t('Belum ada versi otomatis', 'No automatic versions yet') : t('Belum ada versi manual', 'No manual versions yet')}</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-500">{filter === 'auto'
+              ? t('Saat kamu menulis, versi otomatis dibuat paling sering tiap 30 menit bila isinya berubah. 20 yang terbaru disimpan.', 'While you write, an automatic version is made at most every 30 minutes when the content changed. The newest 20 are kept.')
+              : t('Hasil AI yang diterapkan dan versi yang kamu simpan muncul di sini.', 'Applied AI results and versions you save appear here.')}</p>
           </div>
         ) : (
           <ol className="relative space-y-1 before:absolute before:bottom-3 before:left-[15px] before:top-3 before:w-px before:bg-line" aria-label={t('Linimasa versi', 'Version timeline')}>
@@ -105,7 +107,7 @@ export function HistoryPanel({ versions, currentRevision, originalId, loading, h
         {/* A writer who never runs AI would otherwise see only the Original and wonder where versions come from. */}
         {!loading && !hasMore && versions.length > 0 && versions.every((version) => version.kind === 'original') && (
           <div className="mt-4 rounded-xl border border-dashed border-line-strong bg-paper/60 px-3.5 py-3">
-            <p className="text-xs leading-relaxed text-ink-600">{t('Versi dibuat saat kamu menerapkan hasil AI atau menekan Simpan versi.', 'Versions are made when you apply an AI result or press Save version.')}</p>
+            <p className="text-xs leading-relaxed text-ink-600">{t('Versi dibuat saat kamu menerapkan hasil AI atau menekan Simpan versi, dan otomatis paling sering tiap 30 menit saat kamu menulis.', 'Versions are made when you apply an AI result or press Save version, and automatically at most every 30 minutes while you write.')}</p>
             <Button size="sm" className="mt-2.5" icon={Save} disabled={!canSave} onClick={onSave}>{t('Simpan versi sekarang', 'Save a version now')}</Button>
           </div>
         )}
