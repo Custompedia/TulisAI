@@ -1,3 +1,4 @@
+import { wordsIn } from '@/lib/editor/metrics';
 import { isReferenceHeading } from '@/lib/editor/document';
 import type { Version } from './types';
 import { WORKING } from './types';
@@ -40,6 +41,15 @@ export function shouldDiscard(input: DiscardInput): boolean {
 // before a run on a structured notebook.
 const STRUCTURE = new Set(['heading', 'table', 'footnote', 'tableOfContents']);
 type Walkable = { descendants: (visit: (node: { type: { name: string } }) => boolean | void) => void };
+// Cached per document version: on a long notebook without headings the walk visits every node.
+const structuredDocs = new WeakMap<object, boolean>();
+export function documentStructured(doc: Walkable): boolean {
+  const known = structuredDocs.get(doc);
+  if (known !== undefined) return known;
+  const found = hasStructure(doc);
+  structuredDocs.set(doc, found);
+  return found;
+}
 export function hasStructure(doc: Walkable | null | undefined): boolean {
   let found = false;
   doc?.descendants((node) => { if (found) return false; if (STRUCTURE.has(node.type.name)) { found = true; return false; } return true; });
@@ -49,19 +59,25 @@ export function hasStructure(doc: Walkable | null | undefined): boolean {
 // One outline entry per heading, with the words that belong to it: everything up to the next heading of the same
 // or a higher level. Positions are ProseMirror offsets of the top-level blocks, so a section can be selected.
 export type OutlineSection = { level: number; text: string; pos: number; end: number; words: number };
-export function outlineSections(blocks: Array<{ type: string; level?: number; text: string; pos: number; size: number }>): OutlineSection[] {
+export function outlineSections(blocks: Array<{ type: string; level?: number; text: string; pos: number; size: number; words?: number }>): OutlineSection[] {
+  // One pass: word counts as prefix sums, and each heading's section end (the next heading of the same or a higher
+  // level) from a stack walked right to left, so a 2,000-page outline is linear in its blocks.
+  const prefix = [0];
+  blocks.forEach((block, index) => { prefix.push(prefix[index]! + (block.type === 'heading' ? 0 : block.words ?? wordsIn(block.text))); });
+  const ends: number[] = []; const stack: Array<{ level: number; index: number }> = [];
+  for (let index = blocks.length - 1; index >= 0; index--) {
+    const block = blocks[index]!;
+    if (block.type !== 'heading') continue;
+    const level = block.level ?? 1;
+    while (stack.length && stack[stack.length - 1]!.level > level) stack.pop();
+    ends[index] = stack.length ? stack[stack.length - 1]!.index : blocks.length;
+    stack.push({ level, index });
+  }
   const sections: OutlineSection[] = [];
-  const words = (text: string) => { const value = text.trim(); return value ? value.split(/\s+/u).length : 0; };
   blocks.forEach((block, index) => {
     if (block.type !== 'heading' || !block.text.trim()) return;
-    const level = block.level ?? 1;
-    let end = block.pos + block.size; let count = 0;
-    for (const next of blocks.slice(index + 1)) {
-      if (next.type === 'heading' && (next.level ?? 1) <= level) break;
-      if (next.type !== 'heading') count += words(next.text);
-      end = next.pos + next.size;
-    }
-    sections.push({ level, text: block.text.trim(), pos: block.pos, end, words: count });
+    const stop = ends[index]!; const last = blocks[stop - 1]!;
+    sections.push({ level: block.level ?? 1, text: block.text.trim(), pos: block.pos, end: last.pos + last.size, words: prefix[stop]! - prefix[index + 1]! });
   });
   return sections;
 }

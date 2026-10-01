@@ -3,6 +3,18 @@ import { diffWords } from "diff";
 const MAX_EXACT_WORDS = 4_000;
 const MAX_EDIT_LENGTH = 10_000;
 
+// The panels and the status bar ask for the same counts of the same (possibly 2,000-page) text on every render;
+// the last few answers are kept, keyed by the arguments themselves.
+function remember<A extends unknown[], R>(compute: (...args: A) => R): (...args: A) => R {
+  const recent: Array<{ args: A; result: R }> = [];
+  return (...args: A) => {
+    const hit = recent.find((entry) => entry.args.length === args.length && entry.args.every((value, index) => value === args[index]));
+    if (hit) return hit.result;
+    const result = compute(...args);
+    recent.unshift({ args, result }); if (recent.length > 4) recent.length = 4;
+    return result;
+  };
+}
 // JavaScript's \s, spelled out so counting does not run a regular expression per character.
 export const isSpaceCode = (code: number) => code === 32 || (code >= 9 && code <= 13) || code === 0xa0 || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
   || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f || code === 0x3000 || code === 0xfeff;
@@ -23,8 +35,8 @@ export function codePoints(text: string): number {
   return count;
 }
 // Counted without splitting or copying the text, so the status bar stays cheap on a 2,000-page notebook.
-export function countWords(text: string): number { return wordsIn(text); }
-export function countCharacters(text: string): number { return codePoints(text); }
+export const countWords = remember((text: string): number => wordsIn(text));
+export const countCharacters = remember((text: string): number => codePoints(text));
 export function readingMinutes(text: string): number { const words = countWords(text); return words ? Math.max(1, Math.ceil(words / 200)) : 0; }
 // Approximate large-input change percentage from word frequency deltas to keep work bounded.
 function fallbackPercentage(before: string[], after: string[]): number {
@@ -35,30 +47,33 @@ function fallbackPercentage(before: string[], after: string[]): number {
   return Math.min(100, Math.round(Math.max(delta,positional) / Math.max(before.length, after.length, 1) * 100));
 }
 
-export function changePercentage(original: string, current: string): number {
+export const changePercentage = remember(function changePercentage(original: string, current: string): number {
   const before = original.trim().split(/\s+/u).filter(Boolean); const after = current.trim().split(/\s+/u).filter(Boolean);
   if (!before.length) return after.length ? 100 : 0;
   if (before.length > MAX_EXACT_WORDS || after.length > MAX_EXACT_WORDS || before.length * after.length > 2_000_000) return fallbackPercentage(before, after);
   const changes = diffWords(original, current, { maxEditLength: MAX_EDIT_LENGTH }) ?? []; if (!changes.length) return fallbackPercentage(before, after);
   let changed = 0; for (const part of changes) if (part.added || part.removed) changed += part.value.trim() ? part.value.trim().split(/\s+/u).length : 0;
   return Math.min(100, Math.round(changed / Math.max(before.length, after.length, 1) * 100));
-}
+});
 
-export function countSentences(text: string): number {
+export const countSentences = remember(function countSentences(text: string): number {
   const value = text.trim(); if (!value) return 0;
+  // The segmenter is exact but slow; past ~70 pages the punctuation count is close enough and stays instant.
+  if (value.length > 200_000) { let count = 0; for (const part of value.split(/[.!?]+(?:\s|$)/u)) if (part.trim()) count++; return count; }
   const Segmenter = (Intl as unknown as { Segmenter?: new (locale: string, options: { granularity: 'sentence' }) => { segment: (input: string) => Iterable<{ segment: string }> } }).Segmenter;
   if (Segmenter) { let count = 0; for (const part of new Segmenter('id', { granularity: 'sentence' }).segment(value)) if (part.segment.trim()) count++; return count; }
   return value.split(/[.!?]+(?:\s|$)/u).filter((part) => part.trim()).length;
-}
+});
 
 const STOPWORDS = new Set(['yang', 'dan', 'di', 'ke', 'dari', 'untuk', 'dengan', 'pada', 'ini', 'itu', 'adalah', 'dalam', 'tidak', 'akan', 'juga', 'atau', 'sebagai', 'karena', 'bahwa', 'oleh', 'the', 'and', 'of', 'to', 'in', 'a', 'an', 'is', 'are', 'for', 'on', 'with', 'that', 'this', 'it', 'as', 'be', 'by']);
 
 // Local frequency heuristic; bounded to the first 20k words.
-export function repeatedWords(text: string, limit = 5): Array<{ word: string; count: number }> {
+export const repeatedWords = remember(function repeatedWords(text: string, limit: number = 5): Array<{ word: string; count: number }> {
   const counts = new Map<string, number>();
-  for (const word of (text.toLowerCase().match(/\p{L}{4,}/gu) ?? []).slice(0, 20_000)) if (!STOPWORDS.has(word)) counts.set(word, (counts.get(word) ?? 0) + 1);
+  // 20,000 words fit well inside the first 400,000 characters, so a long notebook is never lower-cased whole.
+  for (const word of (text.slice(0, 400_000).toLowerCase().match(/\p{L}{4,}/gu) ?? []).slice(0, 20_000)) if (!STOPWORDS.has(word)) counts.set(word, (counts.get(word) ?? 0) + 1);
   return [...counts.entries()].filter(([, count]) => count >= 3).sort((a, b) => b[1] - a[1]).slice(0, limit).map(([word, count]) => ({ word, count }));
-}
+});
 
 export function wordDelta(before: string, after: string): { added: number; removed: number } {
   const words = (value: string) => (value.trim() ? value.trim().split(/\s+/u).length : 0);

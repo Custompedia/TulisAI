@@ -118,18 +118,47 @@ export function selectionOffsetsIn(doc: PMNode, from: number, to: number): { fro
 }
 
 // Top-level blocks with their text, for the outline, sections and draft rules; cached per document and per block.
-export type TopBlock = { type: string; text: string; pos: number; size: number; level?: number };
+export type TopBlock = { type: string; text: string; words: number; pos: number; size: number; level?: number };
 const tops = new WeakMap<PMNode, TopBlock[]>();
-const topText = new WeakMap<PMNode, string>();
+const topText = new WeakMap<PMNode, { text: string; words: number }>();
 export function topBlocks(doc: PMNode): TopBlock[] {
   const cached = tops.get(doc);
   if (cached) return cached;
   const list: TopBlock[] = [];
   doc.forEach((node, offset) => {
-    let text = topText.get(node);
-    if (text === undefined) { text = node.textContent; topText.set(node, text); }
-    list.push({ type: node.type.name, text, pos: offset, size: node.nodeSize, ...(node.type.name === 'heading' ? { level: Number(node.attrs.level) || 1 } : {}) });
+    let known = topText.get(node);
+    if (!known) { const text = node.textContent; known = { text, words: wordsIn(text) }; topText.set(node, known); }
+    list.push({ type: node.type.name, text: known.text, words: known.words, pos: offset, size: node.nodeSize, ...(node.type.name === 'heading' ? { level: Number(node.attrs.level) || 1 } : {}) });
   });
   tops.set(doc, list);
   return list;
+}
+
+// The document position of a plain-text offset: for a range start, inside the span holding that character; for a
+// range end, inside the span holding the character before it (protectedRanges' rule). Null between spans.
+export function positionAt(doc: PMNode, offset: number, edge: 'start' | 'end'): number | null {
+  if (!doc.childCount) return null;
+  const map = docMap(doc);
+  let low = 0; let high = map.starts.length - 1;
+  while (low < high) { const middle = (low + high + 1) >> 1; if (map.starts[middle]! <= offset - (edge === 'end' ? 1 : 0)) low = middle; else high = middle - 1; }
+  const relative = offset - map.starts[low]!;
+  const span = blockMap(doc.child(low)).spans.find((item) => (edge === 'start' ? item.from <= relative && item.to > relative : item.from < relative && item.to >= relative));
+  return span ? map.positions[low]! + span.pmFrom + (relative - span.from) : null;
+}
+
+// protectedRanges() on the live document: every occurrence of each term, as document ranges, at most 2,000.
+export function protectedRangesIn(doc: PMNode, terms: string[]): Array<{ from: number; to: number }> {
+  const text = docText(doc); const ranges: Array<{ from: number; to: number }> = [];
+  for (const term of new Set(terms)) {
+    if (!term) continue;
+    for (let offset = 0; offset < text.length;) {
+      const found = text.indexOf(term, offset);
+      if (found < 0) break;
+      const from = positionAt(doc, found, 'start'); const to = positionAt(doc, found + term.length, 'end');
+      if (from !== null && to !== null) ranges.push({ from, to });
+      offset = found + term.length;
+      if (ranges.length >= 2000) return ranges;
+    }
+  }
+  return ranges;
 }

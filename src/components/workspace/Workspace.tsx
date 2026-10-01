@@ -7,10 +7,11 @@ import { del, get, set } from 'idb-keyval';
 import { ChevronsRight, ClipboardPaste, CopyPlus, FileText, Minimize2, RefreshCw, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef, type LayoutStorage } from 'react-resizable-panels';
 import { useLocale } from '@/lib/client/locale';
-import { ApiError, errorText, newKey, request } from '@/lib/client/api';
+import { ApiError, errorText, jsonBody, newKey, request } from '@/lib/client/api';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { guardedPush, leaveHref, leavesPath, setLeaveGuard } from '@/lib/client/navigation-guard';
-import { documentText, plainTextDocument, selectionOffsets } from '@/lib/editor/document';
+import { documentText, plainTextDocument } from '@/lib/editor/document';
+import { docText, selectionOffsetsIn, topBlocks as cachedTopBlocks } from '@/lib/editor/text-map';
 import { copyRichText, handleClipboardEvent } from '@/lib/editor/clipboard';
 import { normalizePastedHtml, plainTextSlice } from '@/lib/editor/paste-normalize';
 import { documentExtensions } from '@/lib/editor/extensions';
@@ -60,7 +61,7 @@ import { ANALYTICS_SECTION_ID, ReviewPanel } from './ReviewPanel';
 import { DocPanelContent, DocPanelFrame } from './DocPanel';
 import { StatusBar } from './StatusBar';
 import { CompactToolbar } from './CompactToolbar';
-import { compareDefault, draftSpotAt, firstDraftSpot, hasStructure, meaningfulOriginal, sectionBodyAt, shouldDiscard, type SectionBody } from './editor-rules';
+import { compareDefault, documentStructured, draftSpotAt, firstDraftSpot, hasStructure, meaningfulOriginal, sectionBodyAt, shouldDiscard, type SectionBody } from './editor-rules';
 import { DraftCard } from './DraftCard';
 import { InlineResult, type InlineStatus } from './InlineResult';
 import { getInlineTarget, inlineTargetExtension, setInlineTarget, type InlineTarget } from './inline-target';
@@ -251,6 +252,21 @@ export default function Workspace() {
   // The same fallback title flush() saves, for the best-effort save on the way out.
   untitledLabel.current = t('Notebook tanpa judul', 'Untitled notebook');
 
+  // What follows an edit (the plain text for the stats and the Asisten, the JSON for the local recovery copy) waits
+  // until typing pauses, longer for a long notebook: walking 2,000 pages on every keystroke froze the editor.
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const refreshDelay = (size: number) => (size > 3_000_000 ? 2_500 : size > 500_000 ? 1_000 : 150);
+  useEffect(() => () => { if (refreshTimer.current) clearTimeout(refreshTimer.current); }, []);
+  const scheduleRefresh = (instance: NonNullable<ReturnType<typeof useEditor>>) => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    refreshTimer.current = setTimeout(() => {
+      refreshTimer.current = null;
+      if (instance.isDestroyed) return;
+      setText(docText(instance.state.doc));
+      const json = instance.getJSON(); contentRef.current = json; cache(json);
+    }, refreshDelay(instance.state.doc.content.size));
+  };
+
   const cache = useCallback((content: JSONContent) => {
     const base = current.current;
     if (!base || !cacheKey.current || !localDrafts.current) return;
@@ -283,10 +299,8 @@ export default function Workspace() {
     onUpdate: ({ editor: instance }) => {
       if (initializing.current) return;
       dirty.current = true; stamp.current++; setEditStamp(stamp.current);
-      contentRef.current = instance.getJSON();
-      setText(documentText(contentRef.current));
       setSave((state) => (state === 'conflict' ? state : 'dirty'));
-      cache(instance.getJSON());
+      scheduleRefresh(instance);
     },
     onSelectionUpdate: ({ editor: instance }) => {
       const { from, to } = instance.state.selection;
@@ -294,12 +308,15 @@ export default function Workspace() {
       // A collapsed selection returns to the notebook's home scope ("Teks terpilih" stays put on an outline).
       if (from === to) { setCaret(from); setSelection(null); setScope((value) => (value === 'selection' ? homeScope.current : value)); return; }
       try {
-        const json = instance.getJSON(); const offsets = selectionOffsets(json, from, to);
-        setSelection({ ...offsets, text: documentText(json).slice(offsets.from, offsets.to), pmFrom: from, pmTo: to }); setScope('selection');
+        // Measured on the live document with the per-block text map, never by serializing the whole notebook.
+        const doc = instance.state.doc; const offsets = selectionOffsetsIn(doc, from, to);
+        setSelection({ ...offsets, text: docText(doc).slice(offsets.from, offsets.to), pmFrom: from, pmTo: to }); setScope('selection');
       } catch { setSelection(null); }
     },
   });
 
+  const editorRef = useRef(editor);
+  editorRef.current = editor;
   const frozen = FROZEN.has(busy);
   useEffect(() => { if (editor && loaded) editor.setEditable(!compare && !frozen && !recovery, false); }, [editor, loaded, compare, frozen, recovery]);
   useEffect(() => { editor?.view.dispatch(editor.state.tr.setMeta('refreshProtection', true)); }, [editor, terms]);
@@ -335,7 +352,9 @@ export default function Workspace() {
     return () => { window.removeEventListener('online', update); window.removeEventListener('offline', update); };
   }, []);
   useEffect(() => () => {
-    const base = current.current; const content = contentRef.current;
+    // The refreshed copy may be a moment behind the last keystrokes; the editor, while it is still alive, is not.
+    const live = editorRef.current;
+    const base = current.current; const content = live && !live.isDestroyed && dirty.current ? live.getJSON() : contentRef.current;
     // An outline or blank notebook that was never touched is deleted for good on the way out (it is not user
     // content, so it skips the trash), and empty notebooks do not pile up. Only in-app leaving: a reload keeps it.
     const facts = { source: latest.current.meta.docSource, revision: base?.revision ?? null, dirty: unsaved(), busy: busyRef.current !== '', recovery: recoveryRef.current !== null, text: content ? documentText(content) : '', original: base ? documentText(base.content) : null };
@@ -355,7 +374,9 @@ export default function Workspace() {
     }
     // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
     if (!base || !content || inFlight.current || (!dirty.current && !metaDirty.current)) return;
-    void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || untitledLabel.current, language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision }) }).catch(() => undefined);
+    // Compressed like every save, so a long notebook fits the request; the lean answer is not read anyway.
+    const fields = { content, title: latest.current.title.trim() || untitledLabel.current, language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision };
+    void jsonBody(fields).then((payload) => fetch(`/api/documents/${id}/autosave?lean=1`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: payload.body })).catch(() => undefined);
   }, [id]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (unsaved()) { event.preventDefault(); event.returnValue = ''; } };
@@ -447,7 +468,9 @@ export default function Workspace() {
     const savedStamp = stamp.current; const savedMeta = metaStamp.current;
     const payload = { content: editor.getJSON(), title: latest.current.title.trim() || t('Notebook tanpa judul', 'Untitled notebook'), language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision };
     setSave('saving');
-    const promise = request<Doc>(`/api/documents/${id}/autosave`, 'PATCH', payload, newKey());
+    // Lean: the server does not echo a long notebook back; what it stored is exactly what was sent.
+    const promise = request<Doc>(`/api/documents/${id}/autosave?lean=1`, 'PATCH', payload, newKey()).then((saved) => ({ ...saved, content: payload.content as Doc['content'] }));
+    contentRef.current = payload.content;
     inFlight.current = promise;
     try {
       const updated = await promise;
@@ -472,7 +495,9 @@ export default function Workspace() {
     if (!loaded || save === 'conflict' || save === 'error' || save === 'saving' || (save === 'offline' && online)) return;
     if (!dirty.current && !(metaDirty.current && !preview)) return;
     if (!online) { setSave('offline'); return; }
-    const timer = setTimeout(() => autosave(), 1800);
+    // A long notebook waits longer between saves: each one sends (compressed) the whole document.
+    const size = editorRef.current?.state.doc.content.size ?? 0;
+    const timer = setTimeout(() => autosave(), size > 3_000_000 ? 8_000 : size > 500_000 ? 4_000 : 1800);
     return () => clearTimeout(timer);
   }, [editStamp, metaTick, loaded, save, preview, online]);
 
@@ -532,7 +557,7 @@ export default function Workspace() {
     latest.current = { title: nextTitle, settings: nextSettings, layout: nextLayout, advanced: nextAdvanced, meta: nextMeta };
     metaDirty.current = true; metaStamp.current++; setMetaTick(metaStamp.current);
     setSave((state) => (state === 'conflict' ? state : 'dirty'));
-    if (editor) cache(editor.getJSON());
+    if (editor) scheduleRefresh(editor);
   }
 
   async function run(name: string, work: () => Promise<void>) {
@@ -557,7 +582,7 @@ export default function Workspace() {
       // The highlighted target follows edits, so retries always rewrite the text the user picked.
       const target = getInlineTarget(editor.state);
       if (!target) return t('Blok teks di editor terlebih dahulu.', 'Select text in the editor first.');
-      const anchor = selectionOffsets(editor.getJSON(), target.from, target.to);
+      const anchor = selectionOffsetsIn(editor.state.doc, target.from, target.to);
       return { anchor, source: full.slice(anchor.from, anchor.to) };
     }
     if (req.anchor) return { anchor: req.anchor, source: full.slice(req.anchor.from, req.anchor.to) };
@@ -568,7 +593,7 @@ export default function Workspace() {
     if (req.scope === 'section') {
       const section = editor ? currentSection() : null;
       if (!section) return t('Letakkan kursor di bagian yang berisi teks, di bawah sebuah judul.', 'Put the cursor in a section with text under a heading.');
-      const anchor = selectionOffsets(editor!.getJSON(), section.from, section.to);
+      const anchor = selectionOffsetsIn(editor!.state.doc, section.from, section.to);
       return { anchor, source: full.slice(anchor.from, anchor.to) };
     }
     return { source: full };
@@ -577,9 +602,7 @@ export default function Workspace() {
   // "Bagian ini": the text between the headings around the caret (see sectionBodyAt).
   function sectionAt(position: number): SectionBody | null {
     if (!editor) return null;
-    const blocks: Array<{ type: string; text: string; pos: number; size: number }> = [];
-    editor.state.doc.forEach((node, offset) => { blocks.push({ type: node.type.name, text: node.textContent, pos: offset, size: node.nodeSize }); });
-    return sectionBodyAt(blocks, position);
+    return sectionBodyAt(cachedTopBlocks(editor.state.doc), position);
   }
   function currentSection(): SectionBody | null { return editor ? sectionAt(Math.min(caret, editor.state.doc.content.size)) : null; }
   // Moves "Bagian ini" to the next section's text and brings it into view; the scope stays on sections.
@@ -601,10 +624,9 @@ export default function Workspace() {
   }
 
   // The top-level blocks, as the pure outline and draft rules read them.
+  // Cached per document version, so rendering does not read every block's text again.
   function topBlocks() {
-    const blocks: Array<{ type: string; text: string; pos: number; size: number; level?: number }> = [];
-    editor?.state.doc.forEach((node, offset) => { blocks.push({ type: node.type.name, text: node.textContent, pos: offset, size: node.nodeSize, ...(node.type.name === 'heading' ? { level: Number(node.attrs.level) || 1 } : {}) }); });
-    return blocks;
+    return editor ? cachedTopBlocks(editor.state.doc) : [];
   }
   // Unfolds the Brief in the Dokumen panel (or its sheet on a phone) so the writer can fill it in.
   function openBrief() {
@@ -631,9 +653,9 @@ export default function Workspace() {
       const saved = await flush();
       if (ticket !== generation.current) return;
       if (dirty.current) { setAiError(t('Tulisan masih berubah. Coba lagi setelah selesai mengetik.', 'The text is still changing. Try again when you finish typing.')); return; }
-      const at = selectionOffsets(editor.getJSON(), spot.pos, spot.pos).from;
+      const at = selectionOffsetsIn(editor.state.doc, spot.pos, spot.pos).from;
       const chosen = latest.current.settings.language;
-      const language = chosen !== 'auto' ? chosen : detectLanguage([facts.briefTopic, facts.briefMessage, facts.notes, documentText(editor.getJSON())].filter(Boolean).join('\n')) ?? (english ? 'en' : 'id');
+      const language = chosen !== 'auto' ? chosen : detectLanguage([facts.briefTopic, facts.briefMessage, facts.notes, docText(editor.state.doc)].filter(Boolean).join('\n')) ?? (english ? 'en' : 'id');
       if (preview) void request(`/api/ai/previews/${preview.id}/discard`, 'POST', {}, newKey()).catch(() => undefined);
       setPreview(null);
       const captured = stamp.current;
@@ -671,7 +693,7 @@ export default function Workspace() {
       const saved = await flush();
       if (ticket !== generation.current) return;
       if (dirty.current) { fail(t('Tulisan masih berubah. Coba lagi setelah selesai mengetik.', 'The text is still changing. Try again when you finish typing.')); return; }
-      const full = documentText(editor.getJSON());
+      const full = docText(editor.state.doc);
       const resolved = resolveScope(req, full);
       if (typeof resolved === 'string') { fail(resolved); return; }
       if (!resolved.source.trim()) { fail(t('Bagian yang dipilih masih kosong.', 'The chosen part is empty.')); return; }
@@ -804,7 +826,7 @@ export default function Workspace() {
     if (!editor) return null;
     const target = targetAtPosition(editor.state.doc, editor.state.selection.from);
     if (!target) return null;
-    const offsets = selectionOffsets(editor.getJSON(), target.from, target.to);
+    const offsets = selectionOffsetsIn(editor.state.doc, target.from, target.to);
     const text = editor.state.doc.textBetween(target.from, target.to, '\n', ' ');
     return text.trim() ? { from: offsets.from, to: offsets.to, text, pmFrom: target.from, pmTo: target.to } : null;
   }
@@ -832,7 +854,7 @@ export default function Workspace() {
 
   async function openCompare(a: string, b: string) {
     setCompare({ a, b, before: '', after: '', loading: true });
-    const resolve = async (side: string) => side === WORKING ? documentText(editor?.getJSON() ?? plainTextDocument('')) : side === PREVIEW ? (preview ? previewText(preview) : '') : side === SOURCE ? (preview?.source ?? '') : versionText(side);
+    const resolve = async (side: string) => side === WORKING ? (editor ? docText(editor.state.doc) : '') : side === PREVIEW ? (preview ? previewText(preview) : '') : side === SOURCE ? (preview?.source ?? '') : versionText(side);
     try {
       const [before, after] = await Promise.all([resolve(a), resolve(b)]);
       setCompare({ a, b, before, after, loading: false });
@@ -889,7 +911,7 @@ export default function Workspace() {
   async function duplicateVersion(version: Version) {
     await run('duplicate', async () => {
       const content = (await request<{ content: JSONContent }>(`/api/documents/${id}/versions/${version.id}`)).content;
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: copiedPreferences() }, newKey());
+      const copy = await request<{ id: string }>('/api/documents?lean=1', 'POST', { title: `${title} — ${versionLabel(version, t)}`.slice(0, 180), content, language: settings.language, preferences: copiedPreferences() }, newKey());
       guardedPush(router, `/notebooks/${copy.id}`);
     });
   }
@@ -899,7 +921,7 @@ export default function Workspace() {
     setQualityState({ loading: true, error: '' });
     try {
       const saved = await flush();
-      const full = documentText(editor.getJSON());
+      const full = docText(editor.state.doc);
       const anchor = selection && selection.text.trim() ? { from: selection.from, to: selection.to } : undefined;
       const source = anchor ? full.slice(anchor.from, anchor.to) : full;
       const language = resolveLanguage(latest.current.settings, source);
@@ -959,7 +981,7 @@ export default function Workspace() {
     const draft = recovery;
     await run('recover', async () => {
       if (mode === 'copy') {
-        const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: copiedPreferences(normalizeSettings(draft.settings)) }, newKey());
+        const copy = await request<{ id: string }>('/api/documents?lean=1', 'POST', { title: `${draft.title} (${t('pemulihan', 'recovered')})`.slice(0, 180), content: draft.content, language: draft.settings.language, preferences: copiedPreferences(normalizeSettings(draft.settings)) }, newKey());
         await del(cacheKey.current).catch(() => undefined); setRecovery(null); router.push(`/notebooks/${copy.id}`); return;
       }
       if (mode === 'discard') { await del(cacheKey.current).catch(() => undefined); setRecovery(null); return; }
@@ -973,7 +995,7 @@ export default function Workspace() {
   async function copyAsNew() {
     if (!editor) return;
     await run('copy', async () => {
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: copiedPreferences() }, newKey());
+      const copy = await request<{ id: string }>('/api/documents?lean=1', 'POST', { title: `${title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: settings.language, preferences: copiedPreferences() }, newKey());
       dirty.current = false; metaDirty.current = false; await del(cacheKey.current).catch(() => undefined); router.push(`/notebooks/${copy.id}`);
     });
   }
@@ -981,7 +1003,7 @@ export default function Workspace() {
   async function copyAll() {
     const json = editor?.getJSON() ?? plainTextDocument(text);
     try {
-      const result = await copyRichText(json, documentText(json), { mode: paged ? 'paged' : 'plain' });
+      const result = await copyRichText(json, editor ? docText(editor.state.doc) : text, { mode: paged ? 'paged' : 'plain' });
       setNotice(result === 'rich'
         ? { tone: 'success', message: t('Semua teks disalin dengan formatnya', 'All text copied with its formatting') }
         : { tone: 'warning', message: t('Teks disalin tanpa format: browser ini tidak mengizinkan salin berformat.', 'Text copied without formatting: this browser does not allow a rich copy.') });
@@ -990,8 +1012,7 @@ export default function Workspace() {
 
   // Plain text for Instagram or TikTok: no formatting at all, whatever the browser would carry along.
   async function copyPlain() {
-    const json = editor?.getJSON() ?? plainTextDocument(text);
-    try { await navigator.clipboard.writeText(documentText(json)); setNotice({ tone: 'success', message: t('Teks polos disalin, siap ditempel ke media sosial.', 'Plain text copied, ready to paste into social media.') }); }
+    try { await navigator.clipboard.writeText(editor ? docText(editor.state.doc) : text); setNotice({ tone: 'success', message: t('Teks polos disalin, siap ditempel ke media sosial.', 'Plain text copied, ready to paste into social media.') }); }
     catch { setNotice({ tone: 'error', message: t('Teks tidak bisa disalin. Izinkan akses papan klip di browser lalu coba lagi.', 'The text could not be copied. Allow clipboard access in your browser and try again.') }); }
   }
 
@@ -1000,7 +1021,7 @@ export default function Workspace() {
     if (!editor) return;
     await run('duplicate', async () => {
       await flush();
-      const copy = await request<{ id: string }>('/api/documents', 'POST', { title: `${latest.current.title || title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: latest.current.settings.language, preferences: copiedPreferences(), ...(appearance.color ? { color: appearance.color } : {}), ...(appearance.icon ? { icon: appearance.icon } : {}) }, newKey());
+      const copy = await request<{ id: string }>('/api/documents?lean=1', 'POST', { title: `${latest.current.title || title} (${t('salinan', 'copy')})`.slice(0, 180), content: editor.getJSON(), language: latest.current.settings.language, preferences: copiedPreferences(), ...(appearance.color ? { color: appearance.color } : {}), ...(appearance.icon ? { icon: appearance.icon } : {}) }, newKey());
       guardedPush(router, `/notebooks/${copy.id}`);
     });
   }
@@ -1086,11 +1107,16 @@ export default function Workspace() {
   const detected = detectLanguage(scopeText || text);
   // Suggestion only: it never changes settings and never starts a generation.
   const suggestion = useMemo(() => (suggestionOff || !loaded || settings.styleId ? null : suggestStyle(styleList.styles, { title, text })), [suggestionOff, loaded, settings.styleId, styleList.styles, title, text]);
+  // Counted once per text refresh, not on every render.
+  const textWords = useMemo(() => countWords(text), [text]);
+  const textCharacters = useMemo(() => countCharacters(text), [text]);
   const compareOptions = useMemo(() => [
     { value: WORKING, label: t('Tulisan saat ini', 'Current draft') },
     ...(preview ? [{ value: SOURCE, label: t('Teks sumber pratinjau', 'Preview source') }, { value: PREVIEW, label: t('Pratinjau AI', 'AI preview') }] : []),
     ...versions.map((version) => ({ value: version.id, label: `${versionLabel(version, t)} · ${dateTime(version.createdAt, locale)}` })),
   ], [preview, versions, t, locale]);
+  // The recovery dialog previews the start of the unsaved copy; a 2,000-page draft is not laid out in a modal.
+  const recoveryPreview = useMemo(() => { if (!recovery) return ''; try { const value = documentText(recovery.content); return value.length > 20_000 ? `${value.slice(0, 20_000)}…` : value; } catch { return ''; } }, [recovery]);
 
   if (loadError) {
     const kind = loadError.code === 'NOT_FOUND' ? 'not-found' : loadError.code === 'NETWORK_ERROR' ? 'offline' : 'error';
@@ -1112,12 +1138,12 @@ export default function Workspace() {
   const instructionTarget = dockRange
     ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text), chars: Array.from(dockRange.text).length }
     : null;
-  const words = countWords(text);
+  const words = textWords;
   const spoken = isSpoken(meta.docType);
   const docType: DocType | null = isDocType(meta.docType) ? meta.docType : null;
   // An outline nobody filled in is not text to work on yet, even though its headings count as words.
   const emptyDocument = words < MIN_WORDS || untouchedOutline;
-  const structured = !!editor && loaded && (scope === 'document' ? hasStructure(editor.state.doc) : scope === 'section' && !!section && hasStructure(editor.state.doc.slice(section.from, section.to).content));
+  const structured = !!editor && loaded && (scope === 'document' ? documentStructured(editor.state.doc) : scope === 'section' && !!section && hasStructure(editor.state.doc.slice(section.from, section.to).content));
   const compareHint = comparePair ? null : t('Belum ada versi untuk dibandingkan', 'No version to compare yet');
   // On the Halaman canvas the hint sits inside the page margins, so it lines up with the first line of text.
   const emptyHint = (
@@ -1136,7 +1162,7 @@ export default function Workspace() {
       suggestion={suggestion} onDismissSuggestion={dismissSuggestion}
       styles={styleList.styles} stylesLoading={styleList.loading} stylesError={styleList.error ? errorText(styleList.error, english) : ''} onRetryStyles={styleList.reload}
       onApplyStyle={chooseStyle} onCreateStyle={() => openStyleDialog(null, defaults, false)} onEditStyle={(style) => openStyleDialog(style, settings, false)} onSaveAsStyle={() => openStyleDialog(null, settings, true)}
-      settings={settings} onSettings={updateSettings} scope={scope} onScope={chooseScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
+      settings={settings} onSettings={updateSettings} scope={scope} onScope={chooseScope} hasSelection={!!selection} scopeWords={scopeText === text ? textWords : countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
       busy={busy !== '' || !loaded} generating={(busy === 'generate' && lastRequest?.surface === 'panel') || (arriving && !aiError)} arrival={arriving} previewId={panelPreview?.id ?? null}
       manualBase={manualBase} modeTabRequest={modeTabRequest}
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => (lastRequest?.draft !== undefined ? void draftSection(lastRequest.draft) : void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' }))}
@@ -1173,7 +1199,7 @@ export default function Workspace() {
   ) : (
     <ReviewPanel text={text} original={original} showOriginal={showOriginal} hasChanges={versions.some((version) => version.kind !== 'original')} spoken={spoken}
       analytics={
-        <AnalyticsPanel text={text} original={original} showOriginal={showOriginal} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} sourceChars={countCharacters(selection?.text.trim() ? selection.text : text)} quality={quality} stale={!!quality && quality.stamp !== editStamp}
+        <AnalyticsPanel text={text} original={original} showOriginal={showOriginal} scopeLabel={selection ? t('teks terpilih', 'selected text') : t('seluruh dokumen', 'entire document')} sourceChars={selection?.text.trim() ? countCharacters(selection.text) : textCharacters} quality={quality} stale={!!quality && quality.stamp !== editStamp}
           loading={qualityState.loading} error={qualityState.error} onAnalyze={() => void analyze()}
           blockedReason={!loaded ? t('Notebook masih dimuat.', 'The notebook is still loading.') : !text.trim() ? t('Tulisan masih kosong.', 'The text is empty.') : (selection?.text ?? text).length > AI_SCOPE_LIMIT ? t('Terlalu panjang untuk dianalisis sekaligus. Blok sebagian teks terlebih dahulu.', 'Too long to analyse at once. Select part of the text first.') : null} />
       } />
@@ -1396,7 +1422,7 @@ export default function Workspace() {
             {recovery.revision === doc?.revision && <Button variant="primary" loading={busy === 'recover'} onClick={() => void recover('continue')}>{t('Lanjutkan tulisan ini', 'Continue this draft')}</Button>}
           </>}>
           <p className="mb-3">{t('Periksa isinya sebelum memilih. "Pakai salinan server" akan membuang salinan lokal ini.', 'Review it before choosing. "Use server copy" discards this local copy.')}</p>
-          <div className="scrollbar-thin max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-paper px-4 py-3 font-serif text-[15px] leading-relaxed text-ink-900">{documentText(recovery.content)}</div>
+          <div className="scrollbar-thin max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border border-line bg-paper px-4 py-3 font-serif text-[15px] leading-relaxed text-ink-900">{recoveryPreview}</div>
         </Modal>
       )}
     </div>

@@ -1,6 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { MAX_DOCX_BYTES } from '@/lib/limits';
 import { FileText, TriangleAlert, Upload } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
@@ -21,7 +22,7 @@ import { Toast } from '@/components/ui/Toast';
 import { Alert } from '@/components/ui/Alert';
 import { useSessionGuard, useShell } from './AppShell';
 
-const MAX_DOCX_BYTES = 5_000_000;
+// A long thesis with its figures: pictures are never read, so the upload cap is about the file, not the text.
 type Format = 'docx' | 'pdf';
 // The extension decides what the file is meant to be; the server checks the bytes themselves.
 const formatOf = (name: string): Format | null => (/\.docx$/iu.test(name) ? 'docx' : /\.pdf$/iu.test(name) ? 'pdf' : null);
@@ -76,7 +77,7 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
     setFile(chosen); setExtraction(null); setError('');
     const kind = formatOf(chosen.name);
     if (!kind) { setError(t('Pilih berkas .docx atau .pdf. Format lain belum didukung.', 'Choose a .docx or .pdf file. Other formats are not supported yet.')); return; }
-    if (kind === 'docx' && chosen.size > MAX_DOCX_BYTES) { setError(t('Berkas DOCX lebih dari 5 MB. Pisahkan dokumennya lebih dulu.', 'The DOCX file is over 5 MB. Split the document first.')); return; }
+    if (kind === 'docx' && chosen.size > MAX_DOCX_BYTES) { setError(t('Berkas DOCX lebih dari 50 MB. Pisahkan dokumennya lebih dulu.', 'The DOCX file is over 50 MB. Split the document first.')); return; }
     if (kind === 'pdf' && chosen.size > MAX_PDF_BYTES) { setError(t('Berkas PDF lebih dari 10 MB. Pisahkan PDF-nya lebih dulu.', 'The PDF is over 10 MB. Split the PDF first.')); return; }
     setBusy('reading');
     try {
@@ -101,7 +102,7 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
       };
       // A PDF has no title of its own more often than not; the file name stands in.
       const title = extraction.title.trim() || file?.name.replace(/\.(?:docx|pdf)$/iu, '').trim().slice(0, 180) || t('Dokumen impor', 'Imported document');
-      const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: prefs.writingLanguage, content: extraction.content, preferences, ...(extraction.docxImportReceipt ? { docxImportReceipt: extraction.docxImportReceipt } : {}) }, newKey());
+      const doc = await request<{ id: string }>('/api/documents?lean=1', 'POST', { title, language: prefs.writingLanguage, content: extraction.content, preferences, ...(extraction.docxImportReceipt ? { docxImportReceipt: extraction.docxImportReceipt } : {}) }, newKey());
       if (!guardedPush(router, `/notebooks/${doc.id}`)) onClose();
     } catch (caught) {
       if (!guard(caught)) setError(errorText(caught, locale === 'en'));
@@ -110,7 +111,8 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
   }
 
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
-  const plain = extraction ? documentText(extraction.content) : '';
+  // Once per extraction: a 2,000-page import is not flattened again on every render of the dialog.
+  const plain = useMemo(() => (extraction ? documentText(extraction.content) : ''), [extraction]);
   const characters = plain.length;
   const locked = error && extraction === null && busy === '';
 
@@ -134,7 +136,7 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
             className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line-strong bg-paper px-6 py-10 text-center transition-colors hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60">
             <Upload size={22} aria-hidden="true" className="text-ink-500" />
             <span className="text-[14px] font-semibold text-ink-900">{busy === 'reading' ? (format === 'pdf' ? t('Membaca PDF…', 'Reading the PDF…') : t('Membaca berkas…', 'Reading the file…')) : t('Pilih berkas .docx atau .pdf', 'Choose a .docx or .pdf file')}</span>
-            <span className="text-[12.5px] text-ink-500">{t('DOCX maksimal 5 MB, PDF maksimal 10 MB. PDF hasil scan belum bisa dibaca.', 'DOCX up to 5 MB, PDF up to 10 MB. Scanned PDFs cannot be read yet.')}</span>
+            <span className="text-[12.5px] text-ink-500">{t('DOCX maksimal 50 MB, PDF maksimal 10 MB. PDF hasil scan belum bisa dibaca.', 'DOCX up to 50 MB, PDF up to 10 MB. Scanned PDFs cannot be read yet.')}</span>
           </button>
         )}
 
