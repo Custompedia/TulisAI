@@ -36,7 +36,9 @@ type Extraction = {
 
 // What each warning means to the writer; the file is still imported, these parts simply do not come with it.
 const WARNING_TEXT: Record<ImportWarning | 'pdfLayout', [string, string]> = {
-  images: ['Gambar tidak ikut diimpor — notebook ini khusus teks.', 'Images are not imported — this notebook is text only.'],
+  images: ['Gambar tidak diimpor; tempatnya dibiarkan kosong seukuran aslinya, jadi letak dan gaya teks tetap sama.', 'Images are not imported; their place is kept as an empty space of the same size, so the text keeps its position and style.'],
+  imageWrap: ['Sebagian gambar berada di tengah teks; ruangnya dibuat selebar baris, jadi letak teks di sekitarnya bisa sedikit bergeser.', 'Some images sat in the middle of the text; their space takes the full line, so the text around them may shift slightly.'],
+  sectionsDiffer: ['Bagian dokumen memakai ukuran atau margin halaman yang berbeda; notebook memakai pengaturan halaman bagian pertama.', 'The document’s sections use different page sizes or margins; the notebook uses the first section’s page setup.'],
   textboxes: ['Isi kotak teks dipindahkan menjadi paragraf biasa.', 'Text box contents were moved into ordinary paragraphs.'],
   revisions: ['Perubahan terlacak yang dihapus tidak dibawa; teks final yang dipakai.', 'Tracked deletions were dropped; the final text is used.'],
   comments: ['Komentar tidak ikut diimpor.', 'Comments are not imported.'],

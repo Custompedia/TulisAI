@@ -9,3 +9,6 @@ export const MAX_PDF_PAGES = 300;
 export const PDF_WARNINGS = ['pdfLayout', 'pdfPagesCapped', 'pdfTruncated', 'pdfEmptyPages'] as const;
 export type PdfWarning = (typeof PDF_WARNINGS)[number];
 export type PdfPages = { total: number; read: number; empty: number };
+// A PDF keeps the old text cap: its reader holds every page's text items at once, which is what bounds it, not the
+// notebook. Long documents come in as .docx.
+export const MAX_PDF_CHARACTERS = 200_000;

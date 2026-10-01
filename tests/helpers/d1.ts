@@ -27,7 +27,8 @@ export function testEnv(extra: Record<string, unknown> = {}) {
     },
     DOCUMENTS: {
       head: async (key: string) => (objects.has(key) ? { key, size: objects.get(key)!.length } : null),
-      put: async (key: string, value: string) => { objects.set(key, value); return { key }; },
+      // Large bodies are written as UTF-8 bytes (src/server/storage/r2.ts); the double keeps text either way.
+      put: async (key: string, value: string | Uint8Array) => { objects.set(key, typeof value === 'string' ? value : new TextDecoder().decode(value)); return { key }; },
       get: async (key: string) => { const value = objects.get(key); return value === undefined ? null : { size: value.length, text: async () => value, arrayBuffer: async () => new TextEncoder().encode(value).buffer }; },
       delete: async (keys: string | string[]) => { for (const key of Array.isArray(keys) ? keys : [keys]) objects.delete(key); },
       list: async () => ({ objects: [], truncated: false }),
