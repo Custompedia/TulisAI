@@ -161,6 +161,12 @@ export default function Workspace() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [scope, setScope] = useState<Scope>('document');
+  // Where the scope goes back to when a selection collapses: "Teks terpilih" for an outline notebook (UX plan §9),
+  // otherwise "Seluruh dokumen"; picking "Bagian ini" or "Seluruh dokumen" by hand makes that the home scope.
+  const homeScope = useRef<Scope>('document');
+  const chooseScope = (value: Scope) => { if (value !== 'selection') homeScope.current = value; setScope(value); };
+  // Whether the writer has placed the caret in this notebook yet (the editor starts with it at the end).
+  const caretPlaced = useRef(false);
   // The caret, so "Bagian ini" follows it; a collapsed selection does not change `selection` and would not re-render.
   const [caret, setCaret] = useState(0);
   const [compare, setCompare] = useState<CompareState | null>(null);
@@ -227,6 +233,7 @@ export default function Workspace() {
   const layout = useDefaultLayout({ id: LAYOUT_ID, storage: layoutStorage, panelIds: PANEL_IDS, onlySaveAfterUserInteractions: true });
   const deleted = useRef(false);
   const discardNotice = useRef('');
+  const untitledLabel = useRef('');
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
   latest.current = { title, settings, layout: pageLayout, advanced: advancedMode, meta };
   arrivingRef.current = arriving;
@@ -241,6 +248,8 @@ export default function Workspace() {
   protectedLabel.current = t('Dilindungi: tidak akan diubah AI', 'Protected: AI will not change this');
   englishRef.current = english;
   discardNotice.current = t('Notebook kosong tidak disimpan.', 'The empty notebook was not kept.');
+  // The same fallback title flush() saves, for the best-effort save on the way out.
+  untitledLabel.current = t('Notebook tanpa judul', 'Untitled notebook');
 
   const cache = useCallback((content: JSONContent) => {
     const base = current.current;
@@ -281,7 +290,9 @@ export default function Workspace() {
     },
     onSelectionUpdate: ({ editor: instance }) => {
       const { from, to } = instance.state.selection;
-      if (from === to) { setCaret(from); setSelection(null); setScope((value) => (value === 'selection' ? 'document' : value)); return; }
+      if (instance.isFocused) caretPlaced.current = true;
+      // A collapsed selection returns to the notebook's home scope ("Teks terpilih" stays put on an outline).
+      if (from === to) { setCaret(from); setSelection(null); setScope((value) => (value === 'selection' ? homeScope.current : value)); return; }
       try {
         const json = instance.getJSON(); const offsets = selectionOffsets(json, from, to);
         setSelection({ ...offsets, text: documentText(json).slice(offsets.from, offsets.to), pmFrom: from, pmTo: to }); setScope('selection');
@@ -344,7 +355,7 @@ export default function Workspace() {
     }
     // Best-effort save when leaving the document inside the app; the local recovery copy covers failures.
     if (!base || !content || inFlight.current || (!dirty.current && !metaDirty.current)) return;
-    void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || 'Untitled document', language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision }) }).catch(() => undefined);
+    void fetch(`/api/documents/${id}/autosave`, { method: 'PATCH', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: JSON.stringify({ content, title: latest.current.title.trim() || untitledLabel.current, language: latest.current.settings.language, preferences: savedPreferences(), expectedRevision: base.revision }) }).catch(() => undefined);
   }, [id]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (unsaved()) { event.preventDefault(); event.returnValue = ''; } };
@@ -406,6 +417,7 @@ export default function Workspace() {
       const loadedAdvanced = (value.preferences as Record<string, unknown> | undefined)?.[ADVANCED_PREFERENCE] === true;
       const loadedMeta = readMeta(value.preferences);
       setSettings(base); setPageLayout(loadedLayout); setAdvancedMode(loadedAdvanced); setMeta(loadedMeta);
+      homeScope.current = loadedMeta.docSource === 'skeleton' ? 'selection' : 'document'; setScope(homeScope.current); caretPlaced.current = false;
       latest.current = { title: value.title, settings: base, layout: loadedLayout, advanced: loadedAdvanced, meta: loadedMeta };
       editor.commands.setContent(value.content, { emitUpdate: false }); contentRef.current = value.content;
       setText(documentText(value.content)); setSave('saved');
@@ -590,8 +602,8 @@ export default function Workspace() {
 
   // The top-level blocks, as the pure outline and draft rules read them.
   function topBlocks() {
-    const blocks: Array<{ type: string; text: string; pos: number; size: number }> = [];
-    editor?.state.doc.forEach((node, offset) => { blocks.push({ type: node.type.name, text: node.textContent, pos: offset, size: node.nodeSize }); });
+    const blocks: Array<{ type: string; text: string; pos: number; size: number; level?: number }> = [];
+    editor?.state.doc.forEach((node, offset) => { blocks.push({ type: node.type.name, text: node.textContent, pos: offset, size: node.nodeSize, ...(node.type.name === 'heading' ? { level: Number(node.attrs.level) || 1 } : {}) }); });
     return blocks;
   }
   // Unfolds the Brief in the Dokumen panel (or its sheet on a phone) so the writer can fill it in.
@@ -1063,8 +1075,11 @@ export default function Workspace() {
   const panelPreview = preview?.surface === 'panel' ? preview : null;
   const inlinePreview = preview?.surface === 'inline' ? preview : null;
   const section = loaded && scope === 'section' ? currentSection() : null;
-  // "Tulis bagian ini" in the Asisten follows the caret onto a section nobody has written yet.
-  const draftSpot = loaded && editor && !compare && !recovery && !selection ? draftSpotAt(topBlocks(), Math.min(caret, editor.state.doc.content.size)) : null;
+  // "Tulis bagian ini" in the Asisten follows the caret onto a section nobody has written yet. Until the writer
+  // places the caret (it starts at the end of the document), an outline offers its first empty section instead.
+  const untouchedOutline = meta.docSource === 'skeleton' && original !== null && text === original;
+  const firstSpot = loaded && editor && !compare && !recovery && !selection && untouchedOutline && !caretPlaced.current;
+  const draftSpot = loaded && editor && !compare && !recovery && !selection ? (firstSpot ? firstDraftSpot(topBlocks()) : draftSpotAt(topBlocks(), Math.min(caret, editor.state.doc.content.size))) : null;
   const briefReady = !!(meta.briefTopic?.trim() || meta.briefMessage?.trim());
   const sectionText = section && editor ? editor.state.doc.textBetween(section.from, section.to, '\n', ' ') : '';
   const scopeText = scope === 'selection' ? selection?.text ?? '' : scope === 'section' ? sectionText : text;
@@ -1101,7 +1116,7 @@ export default function Workspace() {
   const spoken = isSpoken(meta.docType);
   const docType: DocType | null = isDocType(meta.docType) ? meta.docType : null;
   // An outline nobody filled in is not text to work on yet, even though its headings count as words.
-  const emptyDocument = words < MIN_WORDS || (meta.docSource === 'skeleton' && original !== null && text === original);
+  const emptyDocument = words < MIN_WORDS || untouchedOutline;
   const structured = !!editor && loaded && (scope === 'document' ? hasStructure(editor.state.doc) : scope === 'section' && !!section && hasStructure(editor.state.doc.slice(section.from, section.to).content));
   const compareHint = comparePair ? null : t('Belum ada versi untuk dibandingkan', 'No version to compare yet');
   // On the Halaman canvas the hint sits inside the page margins, so it lines up with the first line of text.
@@ -1121,7 +1136,7 @@ export default function Workspace() {
       suggestion={suggestion} onDismissSuggestion={dismissSuggestion}
       styles={styleList.styles} stylesLoading={styleList.loading} stylesError={styleList.error ? errorText(styleList.error, english) : ''} onRetryStyles={styleList.reload}
       onApplyStyle={chooseStyle} onCreateStyle={() => openStyleDialog(null, defaults, false)} onEditStyle={(style) => openStyleDialog(style, settings, false)} onSaveAsStyle={() => openStyleDialog(null, settings, true)}
-      settings={settings} onSettings={updateSettings} scope={scope} onScope={setScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
+      settings={settings} onSettings={updateSettings} scope={scope} onScope={chooseScope} hasSelection={!!selection} scopeWords={countWords(scopeText)} scopeChars={scopeText.length} detected={detected}
       busy={busy !== '' || !loaded} generating={(busy === 'generate' && lastRequest?.surface === 'panel') || (arriving && !aiError)} arrival={arriving} previewId={panelPreview?.id ?? null}
       manualBase={manualBase} modeTabRequest={modeTabRequest}
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => (lastRequest?.draft !== undefined ? void draftSection(lastRequest.draft) : void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' }))}
@@ -1129,7 +1144,7 @@ export default function Workspace() {
       canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection) && (scope !== 'section' || !!sectionText.trim())}
       section={scope === 'section' ? { heading: section?.heading ?? null, hasNext: section?.next !== null && section?.next !== undefined } : null} onNextSection={nextSection}
       onUpgrade={openPlans} docType={meta.docType} onQuickAction={runQuick} structured={structured} emptyDocument={loaded && emptyDocument}
-      draft={draftSpot ? { heading: draftSpot.heading, ready: briefReady, locked: !has('draft_from_brief') } : null} onDraft={() => void draftSection()} onOpenBrief={openBrief}
+      draft={draftSpot ? { heading: draftSpot.heading, ready: briefReady, locked: !has('draft_from_brief') } : null} onDraft={() => void draftSection(firstSpot ? draftSpot?.pos : undefined)} onOpenBrief={openBrief}
       drafting={busy === 'generate' && lastRequest?.draft !== undefined}
     >
       {panelPreview?.draft && (

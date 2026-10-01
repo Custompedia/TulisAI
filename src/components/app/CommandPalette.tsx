@@ -3,6 +3,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { FileText, Gauge, Keyboard, NotebookPen, Plus, Search, ShieldCheck, Sparkles, Upload, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
+import { shownTitle } from '@/lib/writing/title';
 import { request } from '@/lib/client/api';
 import { relativeTime } from '@/lib/client/format';
 import { guardedPush } from '@/lib/client/navigation-guard';
@@ -88,7 +89,7 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
     ];
     // Server matches carry the query as a keyword: the server already decided they match every typed word.
     const source = searched ? serverHits ?? [] : docs ?? [];
-    const notebooks: Entry[] = source.map((doc) => ({ id: `doc:${doc.id}`, group: 'notebooks', icon: NotebookPen, label: doc.title || t('Notebook tanpa judul', 'Untitled notebook'), description: relativeTime(doc.updatedAt, locale), keywords: searched ? `notebook ${searched}` : 'notebook', run: () => go(`/notebooks/${doc.id}`) }));
+    const notebooks: Entry[] = source.map((doc) => ({ id: `doc:${doc.id}`, group: 'notebooks', icon: NotebookPen, label: shownTitle(doc.title, t), description: relativeTime(doc.updatedAt, locale), keywords: searched ? `notebook ${searched}` : 'notebook', run: () => go(`/notebooks/${doc.id}`) }));
     const skills: Entry[] = styles.map((style) => ({ id: `skill:${style.id}`, group: 'skills', icon: FileText, label: style.name, description: style.description ?? undefined, keywords: 'skill', run: () => go(`/skills?skill=${encodeURIComponent(style.id)}`) }));
     return [...actions, ...notebooks, ...skills];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `go` and the callbacks only close over stable values

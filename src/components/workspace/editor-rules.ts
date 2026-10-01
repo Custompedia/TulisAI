@@ -86,9 +86,16 @@ export function draftSpotAt(blocks: Block[], position: number): DraftSpot | null
   }
   return null;
 }
-// The first outline section nobody has written yet, for "Tulis bagian pertama".
+// The first outline section nobody has written yet, for "Tulis bagian pertama" and the Asisten's draft card. A
+// heading whose next block is a deeper heading (an article's H1 title above its H2 sections) heads the sections
+// under it, not a section of its own, so it is skipped.
 export function firstDraftSpot(blocks: Block[]): DraftSpot | null {
-  for (const block of blocks) if (block.type === 'heading') { const spot = draftSpotAt(blocks, block.pos + 1); if (spot) return spot; }
+  for (const [index, block] of blocks.entries()) {
+    if (block.type !== 'heading') continue;
+    const next = blocks.slice(index + 1).find((item) => item.type === 'heading' || item.text.trim());
+    if (next?.type === 'heading' && (next.level ?? 1) > (block.level ?? 1)) continue;
+    const spot = draftSpotAt(blocks, block.pos + 1); if (spot) return spot;
+  }
   return null;
 }
 
@@ -99,7 +106,7 @@ export function firstDraftSpot(blocks: Block[]): DraftSpot | null {
 // "Pilih bagian berikutnya" (an outline's still-empty sections are skipped). Null when the caret's heading has no
 // block under it.
 export type SectionBody = { from: number; to: number; heading: string | null; next: number | null };
-type Block = { type: string; text: string; pos: number; size: number };
+type Block = { type: string; text: string; pos: number; size: number; level?: number };
 export function sectionBodyAt(blocks: Block[], position: number): SectionBody | null {
   if (!blocks.length) return null;
   let index = blocks.findIndex((block) => position >= block.pos && position <= block.pos + block.size);

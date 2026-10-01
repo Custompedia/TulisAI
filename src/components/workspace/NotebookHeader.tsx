@@ -187,7 +187,7 @@ export function NotebookHeader(props: Props) {
           <Dropdown label={t('Menu lainnya', 'More')} width="w-64" sections={moreSections}
             triggerClassName="grid h-9 w-9 place-items-center rounded-lg text-ink-600 transition-colors hover:bg-white/70 hover:text-ink-900" trigger={<EllipsisVertical size={18} aria-hidden="true" />} />
         </div>
-        <span className="ml-0.5"><QuotaPill /></span>
+        <span className="ml-0.5"><QuotaPill compact /></span>
         <AccountMenu />
       </div>
     </header>

@@ -1,4 +1,5 @@
 import type { NotebookColor } from '@/lib/notebook/appearance';
+import type { Tier } from '@/lib/plans';
 import { defaults, EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT, type Settings } from '@/lib/writing/settings';
 import { STYLE_DESCRIPTION_LIMIT, STYLE_NAME_LIMIT, type StyleInput, type WritingStyle } from '@/lib/writing/styles';
 
@@ -53,11 +54,31 @@ export function copyName(name: string, styles: WritingStyle[]): string {
   return base.slice(0, STYLE_NAME_LIMIT);
 }
 
-// Ready-made starting points; each opens the form prefilled so the user reviews before saving.
-export const styleTemplates = (t: T): StyleDraft[] => [
+// Ready-made starting points; each opens the form prefilled so the user reviews before saving. Indexes are links
+// (/skills?template=0), so new templates go at the end. `tier` marks a template that only works in full on that plan:
+// Email profesional leans on its instructions and the email format, which only Max keeps. The others use a mode and
+// its options only, so they work the same on every plan with saved skills (UX plan §10).
+export type StyleTemplate = StyleDraft & { tier?: Tier };
+export const styleTemplates = (t: T): StyleTemplate[] => [
   {
-    name: t('Email profesional', 'Professional email'), description: t('Ubah draf kasar jadi email lengkap dengan salam dan penutup', 'Turn a rough draft into a full email with greeting and sign-off'), color: 'blue', icon: 'icon:Mail',
+    name: t('Email profesional', 'Professional email'), description: t('Ubah draf kasar jadi email lengkap dengan salam dan penutup', 'Turn a rough draft into a full email with greeting and sign-off'), color: 'blue', icon: 'icon:Mail', tier: 'max',
     settings: { ...defaults, mode: 'professional', recipient: 'umum', format: 'email', customized: true, extra: [t('Pakai sapaan "Anda"', 'Address the reader as "you"'), t('Pakai kalimat pendek', 'Use short sentences'), t('Kalau nama penerima tidak ada di teks, pakai sapaan netral', 'Use a neutral greeting when the text names no recipient')].join('\n') },
+  },
+  {
+    name: t('Caption santai', 'Casual caption'), description: t('Caption media sosial yang lebih hidup, tetap dekat dengan teks aslinya', 'A livelier social caption that stays close to your text'), color: 'orange', icon: 'icon:MessageSquare',
+    settings: { ...defaults, mode: 'creative', strength: 'light' },
+  },
+  {
+    name: t('Parafrase skripsi', 'Thesis paraphrase'), description: t('Bahasa akademik skripsi: formal, jelas, tidak berbunga-bunga', 'Thesis-style academic language: formal, explicit, never ornate'), color: 'blue', icon: 'icon:GraduationCap',
+    settings: { ...defaults, mode: 'academic', academic: 'thesis' },
+  },
+  {
+    name: t('Pesan ke klien', 'Message to a client'), description: t('Pesan kerja yang sopan dan jelas untuk klien', 'A polite, clear work message for a client'), color: 'slate', icon: 'icon:Briefcase',
+    settings: { ...defaults, mode: 'professional', recipient: 'klien' },
+  },
+  {
+    name: t('Humanize profesional', 'Professional humanize'), description: t('Tulisan terasa manusiawi di register kerja, maksimal 30% kata berubah', 'Reads as human in a workplace register, with at most 30% of words changed'), color: 'pink', icon: 'icon:Feather',
+    settings: { ...defaults, mode: 'humanize', context: 'professional', preservation: 'balanced' },
   },
 ];
 

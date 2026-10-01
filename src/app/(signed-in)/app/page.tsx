@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { ArrowRight, ChevronDown, LayoutTemplate, ScanText, Upload } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
+import { shownTitle } from '@/lib/writing/title';
 import { errorText, request } from '@/lib/client/api';
 import { numberFormat, relativeTime } from '@/lib/client/format';
 import { shortDate, tierName } from '@/lib/client/quota';
@@ -147,7 +148,7 @@ function Recent({ docs }: { docs: DocumentSummary[] }) {
               <Link href={`/notebooks/${doc.id}`} className="flex h-[68px] items-center gap-3 rounded-xl border border-line bg-white px-3 transition-colors hover:border-line-strong hover:bg-paper/60">
                 <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${tone.fill} ${tone.ink}`}><NotebookIcon icon={doc.icon} mode={doc.mode} size={19} /></span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13.5px] font-semibold text-ink-900">{doc.title}</span>
+                  <span className="block truncate text-[13.5px] font-semibold text-ink-900">{shownTitle(doc.title, t)}</span>
                   <span className="block truncate text-xs text-ink-500">{t('Diedit', 'Edited')} {relativeTime(doc.updatedAt, locale)}{mode ? ` · ${modeLabel(mode, t)}` : ''}</span>
                 </span>
               </Link>
