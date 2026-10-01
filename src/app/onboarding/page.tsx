@@ -1,17 +1,17 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { ArrowRight, Briefcase, Check, GraduationCap, PenLine, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Briefcase, Check, Clapperboard, GraduationCap, Newspaper, PenLine, Repeat2, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, isUnauthenticated, newKey, request } from '@/lib/client/api';
 import { Logo } from '@/components/ui/Logo';
 import { Button } from '@/components/ui/Button';
 import { Toast } from '@/components/ui/Toast';
 import { LoadingBlock } from '@/components/ui/Spinner';
+import { defaultModeFor, humanizerContextFor, primaryUseHint, primaryUseLabel, type UseCase } from '@/lib/writing/use-cases';
 
-type UseCase = 'academic' | 'professional' | 'general';
 type Language = 'id' | 'en' | 'auto';
-const modeFor: Record<UseCase, string> = { academic: 'P02_ACADEMIC', professional: 'P04_PROFESSIONAL', general: 'P03_HUMANIZER' };
+const CHOICES: Array<[UseCase, LucideIcon]> = [['academic', GraduationCap], ['professional', Briefcase], ['content', Clapperboard], ['article', Newspaper], ['paraphrase', Repeat2], ['general', PenLine]];
 
 function Choice({ active, onClick, icon: Icon, title, hint }: { active: boolean; onClick: () => void; icon?: LucideIcon; title: string; hint?: string }) {
   return (
@@ -43,7 +43,7 @@ export default function OnboardingPage() {
     setBusy(skip ? 'skip' : 'continue'); setError('');
     const choice: UseCase = skip ? 'general' : useCase;
     try {
-      await request('/api/settings', 'PATCH', { interfaceLanguage: locale, writingLanguage: skip ? 'auto' : language, defaultMode: modeFor[choice], primaryUseCase: choice, humanizerContext: choice, localDrafts: true }, newKey());
+      await request('/api/settings', 'PATCH', { interfaceLanguage: locale, writingLanguage: skip ? 'auto' : language, defaultMode: defaultModeFor(choice), primaryUseCase: choice, humanizerContext: humanizerContextFor(choice), localDrafts: true }, newKey());
       router.replace('/app');
     } catch (caught) { if (isUnauthenticated(caught)) router.replace('/login'); else { setError(errorText(caught, locale === 'en')); setBusy(null); } }
   }
@@ -70,10 +70,8 @@ export default function OnboardingPage() {
 
             <fieldset className="mt-7">
               <legend className="mb-3 text-sm font-semibold text-ink-800">{t('Paling sering untuk', 'Mostly for')}</legend>
-              <div role="radiogroup" className="space-y-2">
-                <Choice active={useCase === 'academic'} onClick={() => setUseCase('academic')} icon={GraduationCap} title={t('Akademik', 'Academic')} hint={t('Skripsi, tesis, jurnal, tugas kuliah', 'Theses, journals, coursework')} />
-                <Choice active={useCase === 'professional'} onClick={() => setUseCase('professional')} icon={Briefcase} title={t('Profesional', 'Professional')} hint={t('Email, laporan, proposal', 'Emails, reports, proposals')} />
-                <Choice active={useCase === 'general'} onClick={() => setUseCase('general')} icon={PenLine} title={t('Umum', 'General')} hint={t('Artikel, konten, caption', 'Articles, content, captions')} />
+              <div role="radiogroup" className="grid gap-2 sm:grid-cols-2">
+                {CHOICES.map(([value, icon]) => <Choice key={value} active={useCase === value} onClick={() => setUseCase(value)} icon={icon} title={primaryUseLabel(value, t)} hint={primaryUseHint(value, t)} />)}
               </div>
             </fieldset>
 

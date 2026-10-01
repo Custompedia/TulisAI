@@ -1,3 +1,5 @@
+import { FREEFORM_RESERVE_FACTOR } from '@/lib/plans';
+
 export class ApiError extends Error {
   constructor(public code: string, public status: number, public details?: unknown) { super(code); this.name = 'ApiError'; }
 }
@@ -54,12 +56,24 @@ const offending = (error: unknown): string | null => {
   return typeof token === 'string' && token.trim() ? token.trim().slice(0, 60) : null;
 };
 
+// A Perintah AI hold the balance could not cover names what it needed (see freeformHold on the server).
+const reserveOf = (error: unknown): number | null => {
+  const details = error instanceof ApiError ? error.details : null;
+  const reserve = details && typeof details === 'object' && 'reserve' in details ? (details as { reserve?: unknown }).reserve : null;
+  return typeof reserve === 'number' && Number.isSafeInteger(reserve) && reserve > 0 ? reserve : null;
+};
+
 export function errorText(error: unknown, english: boolean): string {
   const code = error instanceof ApiError ? error.code : '';
   const t = (id: string, en: string) => (english ? en : id);
   const token = offending(error);
   const about = (id: string, en: string) => (token ? t(`${id} (“${token}”)`, `${en} (“${token}”)`) : t(id, en));
+  const reserve = reserveOf(error);
   switch (true) {
+    case code === 'QUOTA_EXCEEDED' && reserve !== null: {
+      const amount = new Intl.NumberFormat(english ? 'en' : 'id').format(reserve);
+      return t(`Perintah AI menyiapkan hingga ${amount} karakter (${FREEFORM_RESERVE_FACTOR}× teks terpilih) sebelum berjalan, dan saldomu tidak cukup. Pilih teks yang lebih pendek.`, `AI instructions set aside up to ${amount} characters (${FREEFORM_RESERVE_FACTOR}× the selected text) before running, and your balance is not enough. Select a shorter passage.`);
+    }
     case code === 'UNAUTHENTICATED': return t('Sesi berakhir. Masuk kembali untuk melanjutkan.', 'Your session expired. Sign in again to continue.');
     case code === 'NETWORK_ERROR': return t('Koneksi terputus. Periksa internet lalu coba lagi.', 'Connection lost. Check your internet and try again.');
     case code === 'INVALID_PASSWORD': return t('Password saat ini salah.', 'Your current password is incorrect.');

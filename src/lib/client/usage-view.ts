@@ -45,7 +45,7 @@ export function featureLabel(feature: Feature, t: T): string {
     case 'docx_import': return t('Impor DOCX', 'DOCX import');
     case 'docx_export': return t('Ekspor DOCX', 'DOCX export');
     case 'freeform_prompt': return t('Perintah AI', 'AI instructions');
-    case 'persistent_personalization': return t('Sesuaikan hasil tersimpan', 'Customize result saved');
+    case 'persistent_personalization': return t('Catatan untuk AI tersimpan', 'Note for the AI kept');
     case 'style_reference': return t('Contoh tulisan di skill', 'Writing samples in skills');
   }
 }

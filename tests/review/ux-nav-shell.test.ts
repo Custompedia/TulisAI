@@ -5,7 +5,7 @@ import { ApiError } from '@/lib/client/api';
 import { compactCharacters, daysLeft, planLine, planNoticeCopy, planNoticeFor, quotaLevel } from '@/lib/client/quota';
 import { balanceRows, orderStatus } from '@/lib/client/usage-view';
 import { filterCommands, moveActive, normalizeQuery, type Command } from '@/lib/navigation/commands';
-import { filterByMode, modeCounts } from '@/lib/navigation/library';
+import { libraryFilter, libraryQuery, modeCount } from '@/lib/navigation/library';
 import { adminTabFromHash, hasContextSidebar, railActive, sectionFor, settingsRoute, type RailId } from '@/lib/navigation/sections';
 import { clampSidebarWidth, parseSidebarCookie, sidebarCookie, sidebarKeyStep, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '@/lib/navigation/sidebar';
 import { skillSelection } from '@/components/skills/skill-events';
@@ -240,20 +240,22 @@ describe('quota display', () => {
   });
 });
 
-describe('notebook mode filters', () => {
-  const entries = [{ id: '1', mode: 'humanize' }, { id: '2', mode: 'academic' }, { id: '3', mode: 'custom' }, { id: '4', mode: null }, { id: '5', mode: 'humanize' }];
-
-  it('shows no counts until every page is loaded', () => {
-    expect(modeCounts(entries, false)).toBeNull();
-    expect(modeCounts(null, true)).toBeNull();
-    // The legacy custom mode is shown as Parafrase, like everywhere else.
-    expect(modeCounts(entries, true)).toEqual({ humanize: 2, standard: 1, academic: 1, professional: 0, creative: 0, simplify: 0 });
+describe('notebook library filters (server-side since UX 2)', () => {
+  const params = (value: string) => new URLSearchParams(value);
+  it('reads the page URL and ignores anything unknown', () => {
+    expect(libraryFilter(params('mode=custom&type=essay&sort=title&pinned=1'))).toEqual({ mode: 'standard', docType: 'essay', pinned: true, sort: 'title' });
+    expect(libraryFilter(params('mode=nope&type=poem&sort=random'))).toEqual({ mode: null, docType: null, pinned: false, sort: 'updated' });
+    expect(libraryFilter(params('view=trash&mode=academic'))).toEqual({ trash: true });
   });
-
-  it('filters the loaded pages by last-used mode', () => {
-    expect(filterByMode(entries, 'humanize').map((entry) => entry.id)).toEqual(['1', '5']);
-    expect(filterByMode(entries, 'standard').map((entry) => entry.id)).toEqual(['3']);
-    expect(filterByMode(entries, null)).toHaveLength(5);
+  it('turns a filter into the API query', () => {
+    expect(libraryQuery({ mode: 'academic', docType: 'none', sort: 'created', q: '  bab 1 ' }, { limit: 20, counts: true })).toBe('limit=20&mode=academic&docType=none&sort=created&q=bab+1&counts=1');
+    expect(libraryQuery({ trash: true, mode: 'academic' }, { cursor: '5:x' })).toBe('cursor=5%3Ax&trash=1');
+    expect(libraryQuery({ sort: 'updated', pinned: false })).toBe('');
+  });
+  it('shows a mode count only once the server counts are in', () => {
+    expect(modeCount(null, 'humanize')).toBeNull();
+    expect(modeCount({ all: 3, pinned: 0, trash: 0, docTypes: {}, modes: { humanize: 2 } }, 'humanize')).toBe(2);
+    expect(modeCount({ all: 3, pinned: 0, trash: 0, docTypes: {}, modes: { humanize: 2 } }, 'academic')).toBe(0);
   });
 });
 

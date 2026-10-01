@@ -3,13 +3,14 @@ import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import type { Editor } from '@tiptap/react';
 import { useEditorState } from '@tiptap/react';
-import { ArrowLeft, ChevronDown, ChevronsLeft, Copy, Heading, LockKeyhole, MoreHorizontal, NotebookPen, Plus, Search, Target, TextSelect, X } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ChevronsLeft, Copy, Heading, LockKeyhole, MoreHorizontal, NotebookPen, Plus, Search, Sparkles, Target, TextSelect, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { request } from '@/lib/client/api';
 import { numberFormat, relativeTime } from '@/lib/client/format';
 import { clampDocPanelWidth, DOC_PANEL_MAX_WIDTH, DOC_PANEL_MIN_WIDTH } from '@/lib/navigation/doc-panel';
 import { BRIEF_KEYS, META_VALUE_LIMIT, WORD_TARGET_MAX, type BriefKey, type NotebookMeta } from '@/lib/writing/notebook-meta';
 import { docTypeShort, isDocType } from '@/lib/writing/doc-types';
+import { PICKER_SEARCH_DELAY_MS, searchQuery } from '@/lib/navigation/library';
 import type { Mode } from '@/lib/writing/settings';
 import type { DocumentSummary } from '@/components/app/AppShell';
 import { requestNewWriting } from '@/components/app/shell-events';
@@ -24,6 +25,8 @@ type Props = {
   docId: string; title: string; meta: NotebookMeta; mode: Mode;
   onMeta: (patch: NotebookMeta) => void; onUnlock: (term: Term) => void; onOpenAssistant: () => void; onNavigate?: () => void;
   onCopied: (message: string) => void;
+  // "Olah bagian ini dengan AI": puts the Asisten on the section under the heading at this position.
+  onProcessSection?: (headingPos: number) => void;
   // « on desktop, X in the phone sheet.
   onClose: () => void; sheet?: boolean;
 };
@@ -32,7 +35,7 @@ const LABEL = 'mb-2 flex items-center justify-between gap-2 text-[11px] font-sem
 
 // The editor's left column: back to the library, switch notebook, what this notebook is, its outline (with the
 // words in each section), locked terms, and the writer's own brief. Nothing here calls AI.
-export function DocPanelContent({ editor, loaded, navigable, text, words, terms, busy, docId, title, meta, mode, onMeta, onUnlock, onOpenAssistant, onNavigate, onCopied, onClose, sheet = false }: Props) {
+export function DocPanelContent({ editor, loaded, navigable, text, words, terms, busy, docId, title, meta, mode, onMeta, onUnlock, onOpenAssistant, onNavigate, onCopied, onProcessSection, onClose, sheet = false }: Props) {
   const { t } = useLocale();
   const tone = modeToneClass(mode);
   return (
@@ -56,7 +59,7 @@ export function DocPanelContent({ editor, loaded, navigable, text, words, terms,
         <section aria-label={t('Kerangka', 'Outline')}>
           <h3 className={LABEL}><span className="inline-flex items-center gap-1.5"><Heading size={13} aria-hidden="true" />{t('Kerangka', 'Outline')}</span></h3>
           {!loaded || !editor ? <div className="space-y-2" role="status"><div className="h-3 w-3/4 animate-pulse rounded bg-paper-deep" /><div className="h-3 w-1/2 animate-pulse rounded bg-paper-deep" /></div>
-            : <Outline editor={editor} navigable={navigable} onNavigate={onNavigate} onCopied={onCopied} />}
+            : <Outline editor={editor} navigable={navigable} busy={busy} onNavigate={onNavigate} onCopied={onCopied} onProcess={onProcessSection} />}
         </section>
 
         <section aria-label={t('Istilah dikunci', 'Locked terms')}>
@@ -81,24 +84,31 @@ export function DocPanelContent({ editor, loaded, navigable, text, words, terms,
   );
 }
 
-// Ganti notebook ▾: search the 20 most recent, with "Tulis baru" at the bottom (the same dialog as everywhere).
+// Ganti notebook ▾: the 20 most recent, or a title search over every notebook on the server, with "Tulis baru"
+// at the bottom (the same dialog as everywhere).
 function Switcher({ docId, title }: { docId: string; title: string }) {
   const { t, locale } = useLocale();
   const [open, setOpen] = useState(false);
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
   const [query, setQuery] = useState('');
   const root = useRef<HTMLDivElement>(null);
+  const trimmed = query.trim();
   useEffect(() => {
     if (!open) return;
     let live = true;
-    request<{ items: DocumentSummary[] }>('/api/documents?limit=20').then((page) => { if (live) setDocs(page.items); }, () => { if (live) setDocs([]); });
+    const timer = setTimeout(() => {
+      request<{ items: DocumentSummary[] }>(`/api/documents?${searchQuery(trimmed, 20)}`).then((page) => { if (live) setDocs(page.items); }, () => { if (live) setDocs([]); });
+    }, trimmed ? PICKER_SEARCH_DELAY_MS : 0);
+    return () => { live = false; clearTimeout(timer); };
+  }, [open, trimmed]);
+  useEffect(() => {
+    if (!open) return;
     const onDown = (event: MouseEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDown); document.addEventListener('keydown', onKey);
-    return () => { live = false; document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
   }, [open]);
-  const term = query.trim().toLowerCase();
-  const shown = (docs ?? []).filter((doc) => doc.id !== docId && (!term || doc.title.toLowerCase().includes(term)));
+  const shown = (docs ?? []).filter((doc) => doc.id !== docId);
   return (
     <div ref={root} className="relative">
       <button type="button" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}
@@ -109,11 +119,11 @@ function Switcher({ docId, title }: { docId: string; title: string }) {
         <div role="dialog" aria-label={t('Ganti notebook', 'Switch notebook')} className="absolute inset-x-0 top-full z-40 mt-1 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)] animate-fade-up">
           <div className="relative mb-1">
             <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-ink-400" />
-            <input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t('Cari notebook', 'Search notebooks')} placeholder={t('Cari 20 terbaru…', 'Search the 20 latest…')} className={`${inputClass} h-8 pl-8 text-[13px]`} />
+            <input autoFocus type="search" value={query} onChange={(event) => setQuery(event.target.value)} aria-label={t('Cari notebook', 'Search notebooks')} placeholder={t('Cari semua notebook…', 'Search all notebooks…')} className={`${inputClass} h-8 pl-8 text-[13px]`} />
           </div>
           <ul className="scrollbar-thin max-h-64 overflow-y-auto">
             {docs === null ? <li role="status" className="px-2.5 py-2 text-xs text-ink-500">{t('Memuat…', 'Loading…')}</li>
-              : shown.length === 0 ? <li className="px-2.5 py-2 text-xs text-ink-500">{t('Tidak ada notebook lain.', 'No other notebooks.')}</li>
+              : shown.length === 0 ? <li className="px-2.5 py-2 text-xs text-ink-500">{trimmed ? t(`Tidak ada notebook yang cocok dengan “${trimmed}”.`, `No notebooks match “${trimmed}”.`) : t('Tidak ada notebook lain.', 'No other notebooks.')}</li>
               : shown.map((doc) => (
                 <li key={doc.id}><Link href={`/notebooks/${doc.id}`} onClick={() => setOpen(false)} className="block rounded-lg px-2.5 py-1.5 transition-colors hover:bg-paper-deep">
                   <span className="block truncate text-[13px] font-medium text-ink-900">{doc.title}</span>
@@ -160,7 +170,7 @@ function WordTarget({ words, target, onChange }: { words: number; target?: numbe
   );
 }
 
-function Outline({ editor, navigable, onNavigate, onCopied }: { editor: Editor; navigable: boolean; onNavigate?: () => void; onCopied: (message: string) => void }) {
+function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess }: { editor: Editor; navigable: boolean; busy: boolean; onNavigate?: () => void; onCopied: (message: string) => void; onProcess?: (headingPos: number) => void }) {
   const { t, locale } = useLocale();
   const [menu, setMenu] = useState<number | null>(null);
   const items = useEditorState({
@@ -213,6 +223,7 @@ function Outline({ editor, navigable, onNavigate, onCopied }: { editor: Editor; 
             <div role="menu" className="absolute right-0 top-full z-30 mt-1 w-48 rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_-8px_rgb(31_32_29/0.18)]">
               <button type="button" role="menuitem" onClick={() => select(item)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-ink-700 hover:bg-paper-deep"><TextSelect size={14} aria-hidden="true" />{t('Pilih bagian ini', 'Select this section')}</button>
               <button type="button" role="menuitem" onClick={() => copy(item)} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-ink-700 hover:bg-paper-deep"><Copy size={14} aria-hidden="true" />{t('Salin bagian', 'Copy section')}</button>
+              {onProcess && <button type="button" role="menuitem" disabled={busy} onClick={() => { setMenu(null); onProcess(item.pos); }} className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-[13px] font-medium text-brand-800 hover:bg-brand-50 disabled:opacity-50"><Sparkles size={14} aria-hidden="true" />{t('Olah bagian ini dengan AI', 'Work on this section with AI')}</button>}
             </div>
           )}
         </li>

@@ -8,6 +8,7 @@ import { relativeTime } from '@/lib/client/format';
 import { guardedPush } from '@/lib/client/navigation-guard';
 import { useWritingStyles } from '@/lib/client/styles-store';
 import { filterCommands, moveActive, PALETTE_NOTEBOOK_LIMIT, type Command, type CommandGroup } from '@/lib/navigation/commands';
+import { PICKER_SEARCH_DELAY_MS, searchQuery } from '@/lib/navigation/library';
 import { requiredTierFor } from '@/lib/plans';
 import { Spinner } from '@/components/ui/Spinner';
 import { useEntitlements, useShell, type DocumentSummary } from './AppShell';
@@ -18,8 +19,8 @@ type Entry = Command & { icon: LucideIcon; run: () => void };
 
 export const isPaletteShortcut = (event: KeyboardEvent) => (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'k';
 
-// Ctrl K (⌘K): quick actions, the 50 most recent notebooks, and saved skills. Arrow keys move, Enter opens,
-// Esc closes. Notebook search covers the recent list only; server search arrives in a later phase.
+// Ctrl K (⌘K): quick actions, notebooks and saved skills. With nothing typed it lists the 50 most recent
+// notebooks; a typed query searches every notebook title on the server. Arrow keys move, Enter opens, Esc closes.
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -50,6 +51,9 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
   const [active, setActive] = useState(0);
   const [docs, setDocs] = useState<DocumentSummary[] | null>(null);
   const [failed, setFailed] = useState(false);
+  // Server matches for the typed query, and the query they belong to, so stale answers are never shown.
+  const [found, setFound] = useState<{ query: string; items: DocumentSummary[] } | null>(null);
+  const searched = query.trim();
 
   // React's autoFocus runs before showModal(), so the search box is focused once the dialog is open.
   useEffect(() => { const node = ref.current; if (node && !node.open) node.showModal(); input.current?.focus(); return () => node?.close(); }, []);
@@ -61,6 +65,17 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
     return () => { live = false; };
   }, []);
 
+  useEffect(() => {
+    if (!searched) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      request<{ items: DocumentSummary[] }>(`/api/documents?${searchQuery(searched, 20)}`)
+        .then((page) => { if (live) setFound({ query: searched, items: page.items }); }, () => { if (live) setFound({ query: searched, items: [] }); });
+    }, PICKER_SEARCH_DELAY_MS);
+    return () => { live = false; clearTimeout(timer); };
+  }, [searched]);
+  const serverHits = searched && found?.query === searched ? found.items : null;
+
   const go = (href: string) => { onClose(); guardedPush(router, href); };
   const entries = useMemo<Entry[]>(() => {
     const actions: Entry[] = [
@@ -71,15 +86,18 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
       { id: 'shortcuts', group: 'actions', icon: Keyboard, label: t('Pintasan keyboard', 'Keyboard shortcuts'), keywords: 'shortcut pintasan keyboard tombol', run: () => { onClose(); openShortcuts(); } },
       ...(user.role === 'admin' ? [{ id: 'admin', group: 'actions' as const, icon: ShieldCheck, label: t('Panel admin', 'Admin panel'), keywords: 'admin pengguna users pembayaran monitoring log', run: () => go('/admin') }] : []),
     ];
-    const notebooks: Entry[] = (docs ?? []).map((doc) => ({ id: `doc:${doc.id}`, group: 'notebooks', icon: NotebookPen, label: doc.title || t('Notebook tanpa judul', 'Untitled notebook'), description: relativeTime(doc.updatedAt, locale), keywords: 'notebook', run: () => go(`/notebooks/${doc.id}`) }));
+    // Server matches carry the query as a keyword: the server already decided they match every typed word.
+    const source = searched ? serverHits ?? [] : docs ?? [];
+    const notebooks: Entry[] = source.map((doc) => ({ id: `doc:${doc.id}`, group: 'notebooks', icon: NotebookPen, label: doc.title || t('Notebook tanpa judul', 'Untitled notebook'), description: relativeTime(doc.updatedAt, locale), keywords: searched ? `notebook ${searched}` : 'notebook', run: () => go(`/notebooks/${doc.id}`) }));
     const skills: Entry[] = styles.map((style) => ({ id: `skill:${style.id}`, group: 'skills', icon: FileText, label: style.name, description: style.description ?? undefined, keywords: 'skill', run: () => go(`/skills?skill=${encodeURIComponent(style.id)}`) }));
     return [...actions, ...notebooks, ...skills];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `go` and the callbacks only close over stable values
-  }, [docs, has, locale, styles, t, user.role]);
+  }, [docs, has, locale, styles, t, user.role, searched, serverHits]);
   const results = useMemo(() => filterCommands(entries, query), [entries, query]);
   const current = Math.min(active, Math.max(0, results.length - 1));
 
-  const headings: Record<CommandGroup, string> = { actions: t('Aksi cepat', 'Quick actions'), notebooks: t('Notebook · Terbaru', 'Notebooks · Recent'), skills: 'Skill' };
+  // "Terbaru" only while the list really is the recent ones; a typed query searches every notebook.
+  const headings: Record<CommandGroup, string> = { actions: t('Aksi cepat', 'Quick actions'), notebooks: searched ? 'Notebook' : t('Notebook · Terbaru', 'Notebooks · Recent'), skills: 'Skill' };
   const optionId = (index: number) => `${listId}-${index}`;
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -103,7 +121,7 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
       </div>
       <div id={listId} role="listbox" aria-label={t('Hasil', 'Results')} className="scrollbar-thin max-h-[min(60vh,28rem)] overflow-y-auto p-2">
         {results.length === 0 ? (
-          <p className="px-3 py-6 text-center text-sm text-ink-500">{docs === null ? t('Memuat…', 'Loading…') : t('Tidak ada yang cocok.', 'Nothing matches.')}</p>
+          <p className="px-3 py-6 text-center text-sm text-ink-500">{docs === null || (searched && !serverHits) ? t('Memuat…', 'Loading…') : t('Tidak ada yang cocok.', 'Nothing matches.')}</p>
         ) : (['actions', 'notebooks', 'skills'] as const).map((group) => {
           const items = results.filter((item) => item.group === group);
           if (!items.length) return null;
@@ -126,7 +144,7 @@ function PaletteDialog({ onClose, onImport }: { onClose: () => void; onImport: (
         {docs === null && results.length > 0 && <p className="flex items-center gap-2 px-3 py-2 text-[12px] text-ink-500"><Spinner size={12} />{t('Memuat notebook terbaru…', 'Loading recent notebooks…')}</p>}
         {failed && <p className="px-3 py-2 text-[12px] text-ink-500">{t('Notebook terbaru belum bisa dimuat.', 'Recent notebooks could not be loaded.')}</p>}
       </div>
-      <p className="border-t border-line bg-paper/60 px-4 py-2 text-[11.5px] text-ink-500">{t(`Mencari di ${PALETTE_NOTEBOOK_LIMIT} notebook terbaru. ↑↓ pilih · Enter buka`, `Searching the ${PALETTE_NOTEBOOK_LIMIT} most recent notebooks. ↑↓ select · Enter open`)}</p>
+      <p className="border-t border-line bg-paper/60 px-4 py-2 text-[11.5px] text-ink-500">{searched ? t('Mencari judul di semua notebook. ↑↓ pilih · Enter buka', 'Searching every notebook title. ↑↓ select · Enter open') : t(`${PALETTE_NOTEBOOK_LIMIT} notebook terbaru. Ketik untuk mencari semuanya. ↑↓ pilih · Enter buka`, `The ${PALETTE_NOTEBOOK_LIMIT} most recent notebooks. Type to search them all. ↑↓ select · Enter open`)}</p>
     </dialog>
   );
 }

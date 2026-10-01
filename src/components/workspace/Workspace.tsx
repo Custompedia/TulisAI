@@ -26,6 +26,7 @@ import { useWritingStyles } from '@/lib/client/styles-store';
 import { StyleDialog } from '@/components/writing/StyleDialog';
 import { useEntitlements, useSessionGuard, useShell } from '@/components/app/AppShell';
 import { openPlans, requestNewWriting, showPlanNotice, showShellNotice } from '@/components/app/shell-events';
+import { notifyLibraryChanged } from '@/lib/navigation/library';
 import { setFocusMode, useFocusMode, useInitialDocPanel } from '@/components/app/editor-frame';
 import { AppearancePicker, useAppearanceSave } from '@/components/app/AppearancePicker';
 import { ADVANCED_PREFERENCE } from '@/lib/plans';
@@ -59,7 +60,7 @@ import { ANALYTICS_SECTION_ID, ReviewPanel } from './ReviewPanel';
 import { DocPanelContent, DocPanelFrame } from './DocPanel';
 import { StatusBar } from './StatusBar';
 import { CompactToolbar } from './CompactToolbar';
-import { compareDefault, hasStructure, meaningfulOriginal, shouldDiscard } from './editor-rules';
+import { compareDefault, hasStructure, meaningfulOriginal, sectionBodyAt, shouldDiscard, type SectionBody } from './editor-rules';
 import { InlineResult, type InlineStatus } from './InlineResult';
 import { getInlineTarget, inlineTargetExtension, setInlineTarget, type InlineTarget } from './inline-target';
 import { NotebookHeader } from './NotebookHeader';
@@ -108,6 +109,7 @@ export default function Workspace() {
   const [loadError, setLoadError] = useState<LoadError | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [doc, setDoc] = useState<Doc | null>(null);
+  const [pinned, setPinnedState] = useState(false);
   const [title, setTitle] = useState('');
   const [settings, setSettings] = useState<Settings>(defaults);
   // Page layout lives beside the writing settings: same preferences row, different owner.
@@ -155,6 +157,8 @@ export default function Workspace() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [scope, setScope] = useState<Scope>('document');
+  // The caret, so "Bagian ini" follows it; a collapsed selection does not change `selection` and would not re-render.
+  const [caret, setCaret] = useState(0);
   const [compare, setCompare] = useState<CompareState | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [field, setField] = useState('');
@@ -265,7 +269,7 @@ export default function Workspace() {
     },
     onSelectionUpdate: ({ editor: instance }) => {
       const { from, to } = instance.state.selection;
-      if (from === to) { setSelection(null); setScope((value) => (value === 'selection' ? 'document' : value)); return; }
+      if (from === to) { setCaret(from); setSelection(null); setScope((value) => (value === 'selection' ? 'document' : value)); return; }
       try {
         const json = instance.getJSON(); const offsets = selectionOffsets(json, from, to);
         setSelection({ ...offsets, text: documentText(json).slice(offsets.from, offsets.to), pmFrom: from, pmTo: to }); setScope('selection');
@@ -309,10 +313,10 @@ export default function Workspace() {
   }, []);
   useEffect(() => () => {
     const base = current.current; const content = contentRef.current;
-    // An outline or blank notebook that was never touched is deleted on the way out (delete is permanent and
-    // there is no trash yet), so empty notebooks do not pile up. Only in-app leaving: a reload keeps it.
+    // An outline or blank notebook that was never touched is deleted for good on the way out (it is not user
+    // content, so it skips the trash), and empty notebooks do not pile up. Only in-app leaving: a reload keeps it.
     if (base && content && !deleted.current && shouldDiscard({ source: latest.current.meta.docSource, revision: base.revision, dirty: dirty.current || metaDirty.current || inFlight.current !== null, text: documentText(content), original: documentText(base.content) })) {
-      void fetch(`/api/documents/${id}`, { method: 'DELETE', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: '{}' }).catch(() => undefined);
+      void fetch(`/api/documents/${id}?permanent=1`, { method: 'DELETE', keepalive: true, credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': newKey() }, body: '{}' }).catch(() => undefined);
       if (cacheKey.current) void del(cacheKey.current).catch(() => undefined);
       showShellNotice({ tone: 'info', message: discardNotice.current });
       return;
@@ -372,7 +376,7 @@ export default function Workspace() {
       const value = await request<Doc>(`/api/documents/${id}`);
       if (!isLive()) return;
       localDrafts.current = prefs.localDrafts !== false; owner.current = user.id; cacheKey.current = `writing-draft:${user.id}:${id}`;
-      current.current = value; setDoc(value); setTitle(value.title); setAppearance({ color: value.color ?? null, icon: value.icon ?? null });
+      current.current = value; setDoc(value); setTitle(value.title); setAppearance({ color: value.color ?? null, icon: value.icon ?? null }); setPinnedState(value.pinned === true);
       const base = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, ...(value.preferences ?? {}), language: value.language });
       const modeParam = asMode(search.get('mode')); if (modeParam) base.mode = modeParam;
       const account = normalizeSettings({ ...defaults, mode: modeFromPrompt(prefs.defaultMode) ?? 'humanize', context: prefs.humanizerContext, language: value.language });
@@ -526,7 +530,39 @@ export default function Workspace() {
       if (!selection?.text.trim()) return t('Blok teks di editor terlebih dahulu.', 'Select text in the editor first.');
       return { anchor: { from: selection.from, to: selection.to }, source: selection.text };
     }
+    if (req.scope === 'section') {
+      const section = editor ? currentSection() : null;
+      if (!section) return t('Letakkan kursor di bagian yang berisi teks, di bawah sebuah judul.', 'Put the cursor in a section with text under a heading.');
+      const anchor = selectionOffsets(editor!.getJSON(), section.from, section.to);
+      return { anchor, source: full.slice(anchor.from, anchor.to) };
+    }
     return { source: full };
+  }
+
+  // "Bagian ini": the text between the headings around the caret (see sectionBodyAt).
+  function sectionAt(position: number): SectionBody | null {
+    if (!editor) return null;
+    const blocks: Array<{ type: string; text: string; pos: number; size: number }> = [];
+    editor.state.doc.forEach((node, offset) => { blocks.push({ type: node.type.name, text: node.textContent, pos: offset, size: node.nodeSize }); });
+    return sectionBodyAt(blocks, position);
+  }
+  function currentSection(): SectionBody | null { return editor ? sectionAt(Math.min(caret, editor.state.doc.content.size)) : null; }
+  // Moves "Bagian ini" to the next section's text and brings it into view; the scope stays on sections.
+  function nextSection() {
+    const section = currentSection();
+    if (!editor || section?.next === null || section?.next === undefined) return;
+    const position = section.next;
+    editor.chain().setTextSelection(position).run(); setCaret(position); setScope('section');
+    const dom = editor.view.domAtPos(position).node;
+    (dom instanceof HTMLElement ? dom : dom.parentElement)?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  // The Dokumen panel's "Olah bagian ini dengan AI": the caret goes into the heading's section, then the Asisten opens on it.
+  function processSection(headingPos: number) {
+    if (!editor) return;
+    const section = sectionAt(headingPos + 1);
+    if (!section) { setNotice({ tone: 'error', message: t('Bagian ini belum berisi teks.', 'This section has no text yet.') }); return; }
+    editor.chain().setTextSelection(section.from).run(); setCaret(section.from); setSelection(null); setScope('section');
+    openRight('assistant');
   }
 
   async function generate(req: GenerateRequest) {
@@ -555,7 +591,7 @@ export default function Workspace() {
       const plainList = effective.customized && (effective.format === 'bullets' || effective.format === 'numbered_list') && effective.length === 'same' && !effective.focus.length && !effective.extra.trim();
       if (plainList && !req.inlineAction && resolved.source.split('\n').filter((line) => line.trim()).length >= 2) {
         const listType = effective.format === 'bullets' ? 'bulletList' : 'orderedList';
-        if (!editor.isActive(listType)) { const chain = editor.chain().focus(); if (req.scope === 'document') chain.selectAll(); (listType === 'bulletList' ? chain.toggleBulletList() : chain.toggleOrderedList()).run(); void flush().catch(() => undefined); }
+        if (!editor.isActive(listType)) { const chain = editor.chain().focus(); if (req.scope === 'document') chain.selectAll(); else if (req.scope === 'section' && resolved.anchor) { const range = currentSection(); if (range) chain.setTextSelection({ from: range.from, to: range.to }); } (listType === 'bulletList' ? chain.toggleBulletList() : chain.toggleOrderedList()).run(); void flush().catch(() => undefined); }
         setNotice({ tone: 'success', message: t('Baris sudah terpisah, jadi langsung diformat tanpa AI.', 'The lines were already separate, so they were formatted without AI.') });
         setInline(null); return;
       }
@@ -782,13 +818,22 @@ export default function Workspace() {
     }
   }
 
+  // Sematkan: cosmetic, so it never touches the revision or the save state.
+  async function togglePin(next: boolean) {
+    try { await request(`/api/documents/${id}/pin`, 'PATCH', { pinned: next }, newKey()); setPinnedState(next); notifyLibraryChanged(); setNotice({ tone: 'success', message: next ? t('Notebook disematkan.', 'Notebook pinned.') : t('Sematan dilepas.', 'Notebook unpinned.') }); }
+    catch (caught) { if (!guard(caught)) setNotice({ tone: 'error', message: errorText(caught, english) }); }
+  }
+
   async function confirmDialog() {
     if (!dialog || !editor) return;
     const active = dialog;
     await run(active.kind, async () => {
       if (active.kind === 'delete') {
-        await request(`/api/documents/${id}`, 'DELETE', {}, newKey()); deleted.current = true; await del(cacheKey.current).catch(() => undefined);
-        dirty.current = false; metaDirty.current = false; router.push('/notebooks'); return;
+        // Into the trash: the local copy stays until the purge, so a restore finds nothing missing.
+        await request(`/api/documents/${id}`, 'DELETE', {}, newKey()); deleted.current = true;
+        dirty.current = false; metaDirty.current = false; notifyLibraryChanged();
+        showShellNotice({ tone: 'info', message: t('Notebook dipindahkan ke Sampah. Pulihkan dari Sampah dalam 30 hari.', 'The notebook was moved to the trash. Restore it from the trash within 30 days.') });
+        router.push('/notebooks'); return;
       } else if (active.kind === 'reload') {
         window.location.reload(); return;
       } else if (active.kind === 'rename' && active.version) {
@@ -933,7 +978,9 @@ export default function Workspace() {
   const stale = !!preview && (preview.stamp !== editStamp || (doc !== null && preview.revision !== doc.revision && busy !== 'apply'));
   const panelPreview = preview?.surface === 'panel' ? preview : null;
   const inlinePreview = preview?.surface === 'inline' ? preview : null;
-  const scopeText = scope === 'selection' ? selection?.text ?? '' : text;
+  const section = loaded && scope === 'section' ? currentSection() : null;
+  const sectionText = section && editor ? editor.state.doc.textBetween(section.from, section.to, '\n', ' ') : '';
+  const scopeText = scope === 'selection' ? selection?.text ?? '' : scope === 'section' ? sectionText : text;
   const detected = detectLanguage(scopeText || text);
   // Suggestion only: it never changes settings and never starts a generation.
   const suggestion = useMemo(() => (suggestionOff || !loaded || settings.styleId ? null : suggestStyle(styleList.styles, { title, text })), [suggestionOff, loaded, settings.styleId, styleList.styles, title, text]);
@@ -961,14 +1008,14 @@ export default function Workspace() {
   // Recomputed per render so the dock always names the current target; cheap next to the editor itself.
   const dockRange = loaded ? instructionRange() : null;
   const instructionTarget = dockRange
-    ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text) }
+    ? { label: selection?.text.trim() ? t('teks terpilih', 'the selection') : t('paragraf ini', 'this paragraph'), words: countWords(dockRange.text), chars: Array.from(dockRange.text).length }
     : null;
   const words = countWords(text);
   const spoken = isSpoken(meta.docType);
   const docType: DocType | null = isDocType(meta.docType) ? meta.docType : null;
   // An outline nobody filled in is not text to work on yet, even though its headings count as words.
   const emptyDocument = words < MIN_WORDS || (meta.docSource === 'skeleton' && original !== null && text === original);
-  const structured = !!editor && loaded && scope === 'document' && hasStructure(editor.state.doc);
+  const structured = !!editor && loaded && (scope === 'document' ? hasStructure(editor.state.doc) : scope === 'section' && !!section && hasStructure(editor.state.doc.slice(section.from, section.to).content));
   const compareHint = comparePair ? null : t('Belum ada versi untuk dibandingkan', 'No version to compare yet');
   // On the Halaman canvas the hint sits inside the page margins, so it lines up with the first line of text.
   const emptyHint = (
@@ -992,7 +1039,8 @@ export default function Workspace() {
       manualBase={manualBase} modeTabRequest={modeTabRequest}
       error={aiError} onDismissError={() => setAiError('')} onRetry={() => void generate(lastRequest?.surface === 'panel' ? lastRequest : { scope, surface: 'panel' })}
       onGenerate={() => void generate({ scope, surface: 'panel' })} customizeRequest={customizeRequest}
-      canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection)}
+      canGenerate={loaded && !!text.trim() && !recovery && !compare && (scope !== 'selection' || !!selection) && (scope !== 'section' || !!sectionText.trim())}
+      section={scope === 'section' ? { heading: section?.heading ?? null, hasNext: section?.next !== null && section?.next !== undefined } : null} onNextSection={nextSection}
       onUpgrade={openPlans} docType={meta.docType} onQuickAction={runQuick} structured={structured} emptyDocument={loaded && emptyDocument}
     >
       {panelPreview && (
@@ -1028,6 +1076,7 @@ export default function Workspace() {
   const documentPanel = (asSheet: boolean) => (
     <DocPanelContent editor={editor} loaded={loaded} navigable={!compare} text={text} words={words} terms={terms} busy={busy !== ''} docId={id} title={title} meta={meta} mode={settings.mode}
       onMeta={updateMeta} onUnlock={(term) => void unlock(term)} onOpenAssistant={() => openRight('assistant')} onNavigate={closeOnNarrow}
+      onProcessSection={(position) => { processSection(position); closeOnNarrow(); }}
       onCopied={(message) => setNotice({ tone: 'success', message })} sheet={asSheet} onClose={() => (asSheet ? setSheet(null) : saveDocPanel({ ...docPanel, collapsed: true }))} />
   );
 
@@ -1118,6 +1167,7 @@ export default function Workspace() {
         canCopy={loaded && !!text.trim()} onCopy={() => void copyAll()} onCopyPlain={() => void copyPlain()}
         onPageSetup={() => setDialog({ kind: 'page-setup' })} onHeaderFooter={() => setDialog({ kind: 'header-footer' })} onFocus={() => setFocusMode(!focus)} onNew={() => requestNewWriting()}
         onDuplicate={() => void duplicateNotebook()} onAppearance={setAppearanceAnchor} onReview={openReview} onDelete={() => setDialog({ kind: 'delete' })}
+        pinned={pinned} onPin={(next) => void togglePin(next)}
         onUpgrade={openPlans}
       />
 
@@ -1206,8 +1256,8 @@ export default function Workspace() {
         </ConfirmDialog>
       )}
       {dialog?.kind === 'delete' && (
-        <ConfirmDialog title={t('Hapus notebook ini?', 'Delete this notebook?')} tone="danger" confirmLabel={t('Hapus permanen', 'Delete permanently')} busy={busy === 'delete'} onClose={() => setDialog(null)} onConfirm={() => void confirmDialog()}>
-          <p>{t('Notebook, semua versi, dan pratinjaunya akan dihapus. Tindakan ini tidak bisa dibatalkan.', 'The notebook, all versions, and previews will be deleted. This cannot be undone.')}</p>
+        <ConfirmDialog title={t('Pindahkan ke Sampah?', 'Move to the trash?')} tone="danger" confirmLabel={t('Pindahkan ke Sampah', 'Move to trash')} busy={busy === 'delete'} onClose={() => setDialog(null)} onConfirm={() => void confirmDialog()}>
+          <p>{t('Notebook ini beserta semua versinya pindah ke Sampah dan bisa dipulihkan selama 30 hari. Setelah itu dihapus permanen.', 'This notebook and all its versions move to the trash and can be restored for 30 days. After that it is deleted for good.')}</p>
         </ConfirmDialog>
       )}
       {dialog?.kind === 'reload' && (

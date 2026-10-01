@@ -8,7 +8,10 @@ import { useLocale } from '@/lib/client/locale';
 import { ApiError, errorText, newKey, request } from '@/lib/client/api';
 import { setHash, useHash } from '@/lib/client/hash';
 import { settingsRoute, type SettingsTab } from '@/lib/navigation/sections';
-import { useSessionGuard, useShell, type UserSettings } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard, useShell, type UserSettings } from '@/components/app/AppShell';
+import { useRequiredTierName } from '@/components/app/PaidLock';
+import { showLockedFeature } from '@/components/app/shell-events';
+import { requiredTierFor } from '@/lib/plans';
 import { useAccountNav } from '@/components/app/ContextSidebar';
 import { Button } from '@/components/ui/Button';
 import { Toast } from '@/components/ui/Toast';
@@ -20,6 +23,7 @@ import { UsagePanel } from '@/components/settings/UsagePanel';
 import { contextOptions, languageOptions, modeHint, modeLabel } from '@/components/writing/modes';
 import { modeFromPrompt } from '@/lib/writing/settings';
 import { accountDefaultMode, DEFAULT_MODE_PROMPTS, DISPLAY_PREFERENCE_KEYS, groupChanged, resetGroup, WRITING_PREFERENCE_KEYS } from '@/lib/writing/preferences';
+import { asUseCase, USE_CASES, primaryUseHint, primaryUseLabel } from '@/lib/writing/use-cases';
 
 // Akun & Paket. The sub-pages live in the hash and are listed in the context sidebar (a chip strip on phones).
 // Old links keep working: #bahasa opens Tampilan & perangkat, and #skills moved to /skills.
@@ -42,6 +46,8 @@ function SettingsView() {
   const router = useRouter();
   const guard = useSessionGuard();
   const { user, settings, setSettings, refresh } = useShell();
+  const { has } = useEntitlements();
+  const pagedTier = useRequiredTierName('advanced_notebook');
   const hash = useHash();
   const route = settingsRoute(hash);
   const tab: SettingsTab = 'tab' in route ? route.tab : 'profil';
@@ -174,9 +180,16 @@ function SettingsView() {
                 <div className="mt-2.5 max-w-sm"><Segmented label={t('Konteks Humanize', 'Humanize context')} value={form.humanizerContext} onChange={(value) => setForm({ ...form, humanizerContext: value })} options={contextOptions(t).map(({ value, label }) => ({ value: value as UserSettings['humanizerContext'], label }))} /></div>
               </div>
               <div>
+                <p className="text-sm font-semibold text-ink-900">{t('Kanvas bawaan', 'Default canvas')}</p>
+                <p className="mt-0.5 text-[13px] text-ink-500">{t('Kanvas yang dipakai notebook baru. Teks untuk menulis bebas, Halaman untuk tata letak dokumen.', 'The canvas new notebooks open on. Text for free writing, Page for document layout.')}</p>
+                <div className="mt-2.5 max-w-sm"><Segmented label={t('Kanvas bawaan', 'Default canvas')} value={form.defaultCanvas ?? 'text'} onChange={(value) => setForm({ ...form, defaultCanvas: value })} onLocked={() => showLockedFeature(requiredTierFor('advanced_notebook'))}
+                  options={[{ value: 'text', label: t('Teks', 'Text') }, { value: 'page', label: t('Halaman', 'Page'), locked: !has('advanced_notebook') && form.defaultCanvas !== 'page', lockedHint: t(`Halaman — buka dengan ${pagedTier}`, `Page — unlock with ${pagedTier}`) }]} /></div>
+                {form.defaultCanvas === 'page' && !has('advanced_notebook') && <p className="mt-1.5 text-[13px] text-amber-800">{t(`Halaman butuh paket ${pagedTier}. Notebook baru dibuka di Teks sampai paketmu aktif lagi.`, `Page needs ${pagedTier}. New notebooks open on Text until your plan is active again.`)}</p>}
+              </div>
+              <div>
                 <p className="text-sm font-semibold text-ink-900">{t('Penggunaan utama', 'Main use')}</p>
                 <p className="mt-0.5 text-[13px] text-ink-500">{t('Jenis tulisan yang paling sering kamu olah.', 'The kind of writing you work on most.')}</p>
-                <div className="mt-2.5 max-w-sm"><Segmented label={t('Penggunaan utama', 'Main use')} value={form.primaryUseCase} onChange={(value) => setForm({ ...form, primaryUseCase: value })} options={[{ value: 'academic', label: t('Akademik', 'Academic') }, { value: 'professional', label: t('Profesional', 'Professional') }, { value: 'general', label: t('Umum', 'General') }]} /></div>
+                <div className="mt-2.5 max-w-sm"><HintSelect label={t('Penggunaan utama', 'Main use')} value={asUseCase(form.primaryUseCase)} onChange={(value) => setForm({ ...form, primaryUseCase: value })} options={USE_CASES.map((value) => ({ value, label: primaryUseLabel(value, t), hint: primaryUseHint(value, t) }))} /></div>
               </div>
             </div>
           </Card>

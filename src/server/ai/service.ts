@@ -9,8 +9,8 @@ import { createOpenRouterProvider, exceedsPreservation, isCondensed, OutputRejec
 import { sanitizeSuggestedTitle } from '@/lib/writing/title';
 import { sanitizeInstruction } from '@/lib/writing/instruction';
 import { AI_SCOPE_LIMIT, INLINE_LIMIT } from '@/lib/writing/settings';
-import { type PlanLimits } from '@/lib/plans';
-import {collapseBlankLines} from '@/lib/editor/document';
+import { FREEFORM_RESERVE_FACTOR, type PlanLimits } from '@/lib/plans';
+import {collapseBlankLines, crossesBlocks} from '@/lib/editor/document';
 import {detectedCitations} from '@/lib/editor/protection';
 import type { AnalyzeQualityInput, GenerateInput } from '@/lib/contracts';
 import { countCodePoints, requestFingerprint, sha256 } from '../usage/measurement';
@@ -76,9 +76,21 @@ async function settleTelemetry(id: string, charge: number) {
 async function cleanExpired(ownerId: string) {
   await runtime().DB.prepare("UPDATE transformations SET source_text='',output_json='{}',runtime_json='{}',anchor_json=NULL,status='expired' WHERE id IN (SELECT id FROM transformations WHERE owner_id=? AND status IN ('preview','applied','discarded') AND expires_at<=? ORDER BY expires_at LIMIT 100)").bind(ownerId, Date.now()).run();
 }
-function requestedFormat(promptId: PromptId, controls: RuntimeInput): 'bullets'|'numbered_list'|'table'|undefined {
+// A script or a thread is one line per spoken idea or post, so each line goes back as its own paragraph.
+function requestedFormat(promptId: PromptId, controls: RuntimeInput): 'paragraph'|'bullets'|'numbered_list'|'table'|undefined {
   if (promptId === 'P07_INLINE_ALTERNATIVES') return undefined;
-  return ({poin:'bullets',bernomor:'numbered_list',tabel:'table'} as const)[String(controls.request?.format) as 'poin'|'bernomor'|'tabel'];
+  return ({poin:'bullets',bernomor:'numbered_list',tabel:'table',script:'paragraph',thread:'paragraph'} as const)[String(controls.request?.format) as 'poin'|'bernomor'|'tabel'|'script'|'thread'];
+}
+// How an applied result goes back into the document. A list or table request keeps its shape. Otherwise a rewrite
+// (P01–P06) or an instruction (P08) over several paragraphs, or one line that came back as several, goes back as
+// paragraphs, not as line breaks inside one paragraph. A passage inside one paragraph with its own line breaks
+// keeps them, and P07 alternatives always replace inline.
+export function applyFormat(promptId: PromptId, sourceText: string, output: string, controls: RuntimeInput, spansParagraphs: boolean): 'paragraph'|'bullets'|'numbered_list'|'table'|undefined {
+  if (promptId === 'P07_INLINE_ALTERNATIVES') return undefined;
+  const requested = requestedFormat(promptId, controls);
+  if (requested) return requested;
+  if (spansParagraphs) return 'paragraph';
+  return !sourceText.includes('\n') && output.includes('\n') ? 'paragraph' : undefined;
 }
 // Paraphrase runs share one per-tier budget whether the scope is a selection or the whole notebook; inline actions keep their own small cap.
 export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLimits) {
@@ -86,9 +98,18 @@ export function scopeLimit(promptId: PromptId, anchored: boolean, limits: PlanLi
   return Math.min(limits.runLimit, anchored ? limits.runLimit : AI_SCOPE_LIMIT);
 }
 
-const walletRequestError = (error: unknown): RequestError => error instanceof WalletError
-  ? new RequestError(error.code, error.message, error.status)
+// A refused Perintah AI hold says how much it needed, so the writer is told why a balance above the selection
+// length still was not enough.
+const walletRequestError = (error: unknown, quotaDetails?: Record<string, unknown>): RequestError => error instanceof WalletError
+  ? new RequestError(error.code, error.message, error.status, error.code === 'QUOTA_EXCEEDED' ? quotaDetails : undefined)
   : new RequestError('WALLET_UNAVAILABLE', 'The character wallet is temporarily unavailable.', 503);
+
+// Perintah AI may return more text than it was given (Kembangkan, Lanjutkan, 3 versi hook), and it is charged
+// MAX(source, output). The hold covers the most it can ever charge, FREEFORM_RESERVE_FACTOR x source, and is taken
+// before the provider is called: a short balance fails there, never after the provider was paid. The settled charge
+// is capped at that hold; anything longer is delivered but never charged beyond it.
+export const freeformHold = (sourceCharacters: number) => sourceCharacters * FREEFORM_RESERVE_FACTOR;
+export const freeformCharge = (sourceCharacters: number, outputCharacters: number, hold: number) => Math.min(Math.max(sourceCharacters, outputCharacters), hold);
 
 async function generationFingerprint(ownerId: string, input: GenerateInput, controls: Record<string, unknown>, instruction: string | null, sourceCharacters: number) {
   return requestFingerprint({
@@ -146,13 +167,14 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   const provider = createOpenRouterProvider({apiKey,model:model(),privacyMode:'deny'});
   let mainUsageId = '';
   let mainProviderRequestId: string | null = null;
+  const mainHold = freeform ? freeformHold(sourceCharacters) : sourceCharacters;
   const call = async (promptId: PromptId, callKey: string, runtimeControls: RuntimeInput, repair=false, requiredTerms=trusted.protectedTerms) => {
     let usageId: string;
     if (repair) usageId = await reserveTelemetry(ownerId, callKey, promptId, sourceCharacters, rights, false);
     else {
       let wallet;
-      try { wallet = await reserveCharacters({ ownerId, idempotencyKey: callKey, fingerprint, operation: promptId, sourceCharacters }); }
-      catch (error) { throw walletRequestError(error); }
+      try { wallet = await reserveCharacters({ ownerId, idempotencyKey: callKey, fingerprint, operation: promptId, sourceCharacters, hold: mainHold }); }
+      catch (error) { throw walletRequestError(error, freeform ? { reserve: mainHold, factor: FREEFORM_RESERVE_FACTOR } : undefined); }
       if (!wallet.created) throw new RequestError(wallet.reservation.state === 'reserved' ? 'IDEMPOTENCY_PENDING' : 'IDEMPOTENCY_COMPLETE', 'This customer operation was already attempted.', 409);
       usageId = wallet.reservation.id; mainUsageId = usageId;
       try { await reserveTelemetry(ownerId, callKey, promptId, sourceCharacters, rights, true, usageId); }
@@ -226,9 +248,10 @@ export async function generatePreview(ownerId: string, key: string, input: Gener
   }
   if (suggestedTitle) output = {...output, suggested_title: suggestedTitle};
   // OD-11/AI Mode: ordinary operations charge exact source code points; AI
-  // Mode charges MAX(source, validated final output), extending the hold before
-  // the preview and settlement commit atomically.
-  const exactCharge = freeform ? Math.max(sourceCharacters, countCodePoints(outputText(output))) : sourceCharacters;
+  // Mode charges MAX(source, validated final output), capped by the hold taken
+  // before the provider call, so settlement never has to extend it. The preview
+  // and the settlement commit atomically, and the unused hold is released.
+  const exactCharge = freeform ? freeformCharge(sourceCharacters, countCodePoints(outputText(output)), mainHold) : sourceCharacters;
   const id=crypto.randomUUID();const expiry=Date.now()+DAY;
   const previewInsert = runtime().DB.prepare('INSERT INTO transformations (id,document_id,owner_id,prompt_id,prompt_version,model,source_revision,source_text,anchor_json,runtime_json,output_json,status,idempotency_key,expires_at,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .bind(id,input.documentId,ownerId,input.promptId,PROMPT_VERSION,model(),input.expectedRevision,input.source.text,anchor?JSON.stringify(anchor):null,JSON.stringify({...controls,style_reference:undefined,style_reference_used:typeof controls.style_reference==='string'&&controls.style_reference.length>0,prompt_version:PROMPT_VERSION,reasoning_effort:REASONING_EFFORT[input.promptId]}),JSON.stringify(output),'preview',key,expiry,Date.now());
@@ -265,8 +288,9 @@ export async function applyPreview(ownerId: string, previewId: string, expectedR
     const code = typed?.cause === 'term' ? 'AI_LOCKED_TERM_REJECTED' : typed?.cause === 'number' ? 'AI_NUMBER_REJECTED' : typed?.cause === 'citation' ? 'AI_CITATION_REJECTED' : 'AI_OUTPUT_REJECTED';
     throw new RequestError(code,'This preview no longer meets protected-content requirements.',422, typed?.token ? {token:typed.token} : undefined);
   }
-  // A dock instruction over several paragraphs gets its lines back as paragraphs, not as line breaks inside one.
-  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,collapseBlankLines(outputText(output,selectedAlternative)),preview.prompt_id==='P08_CUSTOM_TRANSFORM'&&preview.source_text.includes('\n')?'paragraph':requestedFormat(preview.prompt_id,controls));
+  const replacement=collapseBlankLines(outputText(output,selectedAlternative));
+  const spansParagraphs=anchor?crossesBlocks(document.document.content,anchor.from,anchor.to):true;
+  const content=replaceTextInDocument(document.document.content,anchor?.from??0,anchor?.to??document.text.length,replacement,applyFormat(preview.prompt_id,preview.source_text,replacement,controls,spansParagraphs));
   return saveDocument(ownerId,preview.document_id,expectedRevision,{content},'ai_apply',null,{previewId,expectedLockIds:locks.map(lock=>lock.id),promptId:preview.prompt_id,scopeType:anchor?'selection':'document'});
 }
 export async function discardPreview(ownerId:string,previewId:string) {

@@ -80,6 +80,15 @@ export function replaceTextInDocument(document:unknown,from:number,to:number,rep
   const emit=(node:PMNode):EditorNode=>originals.get(node)??{...node.toJSON(),...(node.childCount?{content:Array.from({length:node.childCount},(_,index)=>emit(node.child(index)))}:{})};
   return EditorDocumentSchema.parse({type:'doc',content:Array.from({length:result.childCount},(_,index)=>emit(result.child(index)))});
 }
+// True when a plain-text range runs across a block boundary. Block separators are the only newlines no inline
+// span covers (a hard break is its own span), so a range with one is several paragraphs, not one with line breaks.
+export function crossesBlocks(document:unknown,from:number,to:number):boolean {
+  const {text,spans}=mapping(parsed(document));
+  for(let index=Math.max(0,from);index<Math.min(to,text.length);index++){
+    if(text[index]==='\n'&&!spans.some(span=>span.from<=index&&span.to>index))return true;
+  }
+  return false;
+}
 export function protectedRanges(document:unknown,terms:string[]):Array<{from:number;to:number}> {
  const {text,spans}=mapping(parsed(document));const ranges:Array<{from:number;to:number}>=[];
  for(const term of new Set(terms)){if(!term)continue;let offset=0;while(offset<text.length){const found=text.indexOf(term,offset);if(found<0)break;const first=spans.find(span=>span.from<=found&&span.to>found);const last=spans.find(span=>span.from<found+term.length&&span.to>=found+term.length);if(first&&last)ranges.push({from:first.pmFrom+found-first.from,to:last.pmFrom+found+term.length-last.from});offset=found+term.length;if(ranges.length>=2000)return ranges;}}

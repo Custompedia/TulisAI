@@ -61,3 +61,22 @@ and shown in the account's action history.
 The legacy `user.tier` column is no longer editable (`TIER_READ_ONLY`), and new
 accounts are always created on Free. The admin list, tier filter and tier counts
 show the effective plan (running period, else the legacy column).
+
+## Admin: "Hibah karakter" (UX 2)
+
+The Paket tab of a user also grants AI characters for support or a trial:
+an amount (1–500,000), a validity (30, 90 or 365 days) and a required note.
+
+- The grant is a `character_purchased_lots` row with `catalog_item_id =
+  'admin_grant'`, no identity link, and `fulfillment_id = 'admin_grant:<request
+  key>'`. It therefore follows the wallet's lot model exactly: the allocation
+  triggers guard every spend, it is spent after the period's included grant in
+  expiry order, and it expires. No table or trigger changed.
+- Like a top-up it is frozen while no paid plan is running (it never grants a
+  feature or a tier). For a Free trial, activate a plan first.
+- Idempotent: the form makes one request key, and the unique fulfillment id
+  turns a doubled or retried submit into the first grant; the same key with
+  other facts is refused (`IDEMPOTENCY_CONFLICT`).
+- The lot, a `character_wallet_events` row (`admin_grant_issued`) and the audit
+  entry (`wallet.admin.grant`, shown as "Menghibahkan karakter") are written in
+  one batch.

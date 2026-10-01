@@ -1,12 +1,13 @@
 import type { JSONContent } from '@tiptap/core';
 import type { Settings } from '@/lib/writing/settings';
 
-export type Doc = { id: string; title: string; revision: number; language: 'auto' | 'id' | 'en'; content: JSONContent; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null };
+export type Doc = { id: string; title: string; revision: number; language: 'auto' | 'id' | 'en'; content: JSONContent; preferences?: Record<string, unknown>; originalVersionId?: string | null; color?: string | null; icon?: string | null; pinned?: boolean };
 export type VersionKind = 'original' | 'checkpoint' | 'ai_apply' | 'restore';
 export type Version = { id: string; kind: VersionKind; label: string | null; revision: number; createdAt: string; promptId?: string | null; scopeType?: string | null };
 export type Term = { id: string; term: string };
 export type Draft = { owner: string; revision: number; content: JSONContent; title: string; settings: Settings; updatedAt: number };
-export type Scope = 'selection' | 'document';
+// 'section' is the text between the headings around the caret ("Bagian ini").
+export type Scope = 'selection' | 'section' | 'document';
 export type SelectionRange = { from: number; to: number; text: string; pmFrom: number; pmTo: number };
 export type SaveState = 'loading' | 'saved' | 'saving' | 'dirty' | 'error' | 'offline' | 'conflict' | 'local-unavailable';
 export type InlineAction = 'alternatives' | 'clearer' | 'shorter' | 'formal' | 'natural';

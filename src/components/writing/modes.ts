@@ -99,7 +99,19 @@ export const simplifyForOptions = (t: T): Array<Option<Settings['simplifyFor']>>
   { value: 'klien', label: t('Klien', 'Client'), hint: t('Paham bisnisnya, bukan detail teknisnya', 'Knows the business, not the technical detail') },
   { value: 'pemula', label: t('Pemula', 'Beginner'), hint: t('Baru mengenal bidang ini', 'New to this field') },
 ];
-export const formatOptions = (t: T): Option[] => [
+// Spoken and social formats, offered only where they fit: a Script konten or Caption/Post notebook. A value already
+// set elsewhere (a skill, say) stays visible so the select never shows a blank.
+export const SOCIAL_FORMAT_TYPES = ['script', 'caption'];
+export const socialFormatOptions = (t: T): Option[] => [
+  { value: 'script', label: t('Script', 'Script'), hint: t('Kalimat pendek untuk diucapkan, satu ide per baris', 'Short spoken sentences, one idea per line') },
+  { value: 'thread', label: t('Thread', 'Thread'), hint: t('Satu post per baris, bernomor 1/, 2/, …', 'One post per line, numbered 1/, 2/, …') },
+];
+export const formatOptions = (t: T, docType?: string | null, current?: string): Option[] => {
+  const social = socialFormatOptions(t);
+  const extra = SOCIAL_FORMAT_TYPES.includes(docType ?? '') ? social : social.filter((option) => option.value === current);
+  return [...baseFormatOptions(t), ...extra];
+};
+const baseFormatOptions = (t: T): Option[] => [
   { value: 'paragraph', label: t('Paragraf', 'Paragraph'), hint: t('Bawaan, bentuk paragraf tetap', 'Default, paragraphs stay as they are') },
   { value: 'bullets', label: t('Poin-poin', 'Bullet points'), hint: t('Poin jika isinya memang daftar, argumen tetap prosa', 'Bullets where content is a list; argument stays prose') },
   { value: 'numbered_list', label: t('Daftar bernomor', 'Numbered list'), hint: t('Bernomor hanya jika ada urutan nyata', 'Numbered only where there is a real sequence') },
@@ -143,7 +155,7 @@ export function requestSummary(settings: Settings, t: T): string {
   if (settings.mode === 'creative') parts.push(`${t('kreativitas', 'creativity')} ${lower(creativityOptions(t), settings.strength)}`);
   if (settings.mode === 'simplify') parts.push(`${t('untuk', 'for')} ${lower(simplifyForOptions(t), settings.simplifyFor)}`);
   if (settings.customized) {
-    if (settings.format !== 'paragraph') parts.push(lower(formatOptions(t), settings.format));
+    if (settings.format !== 'paragraph') parts.push(lower(formatOptions(t, 'script'), settings.format));
     parts.push(settings.length === 'same' ? t('panjang sama', 'same length') : lower(lengthOptions(t), settings.length));
     if (usesAudience(settings.mode)) parts.push(`${t('pembaca', 'reader')} ${lower(audienceOptions(t), settings.audience)}`);
     if (settings.focus.length) parts.push(`${t('penekanan', 'emphasis')} ${settings.focus.map((value) => lower(focusOptions(t), value)).join(', ')}`);

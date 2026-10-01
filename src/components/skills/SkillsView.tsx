@@ -142,8 +142,8 @@ export function SkillsView() {
               <div className="min-w-0 flex-1"><h2 id="template-title" className="truncate text-lg font-semibold text-ink-950">{template.name}</h2><p className="text-[13px] text-ink-500">{t('Template skill', 'Skill template')}</p></div>
             </div>
             <SkillSummary style={{ settings: template.settings, description: template.description }} t={t} />
-            {/* Below Max the server drops Sesuaikan and the instructions, so the template would save as its mode only. */}
-            {template.settings.customized && !has('persistent_personalization') && <p className="mt-4 rounded-lg bg-paper px-3 py-2 text-[12.5px] text-ink-600">{t('Format dan instruksi template ini hanya tersimpan di paket Max. Di paket lain yang tersimpan adalah mode dan opsinya.', 'This template’s format and instructions are only kept on Max. On other plans the mode and its options are saved.')}</p>}
+            {/* Below Max the server drops the instructions and the sample; Plus and Pro keep the format and length. */}
+            {(template.settings.extra.trim() !== '' || template.settings.sample.trim() !== '') && !has('persistent_personalization') && <p className="mt-4 rounded-lg bg-paper px-3 py-2 text-[12.5px] text-ink-600">{t('Instruksi dan contoh tulisan template ini hanya tersimpan di paket Max. Mode, opsi, format, dan panjangnya tetap tersimpan.', 'This template’s instructions and writing sample are only kept on Max. Its mode, options, format and length are still saved.')}</p>}
             {!locked && (
               <div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
                 <Button variant="primary" icon={Plus} disabled={full || busy !== ''} onClick={() => startFromTemplate(template)}>{t('Pakai template ini', 'Use this template')}</Button>

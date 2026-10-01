@@ -19,6 +19,8 @@ import { useEntitlements, useSessionGuard, useShell } from '@/components/app/App
 import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
 import { COMPOSER_DRAFT_EVENT, COMPOSER_FOCUS_EVENT, COMPOSER_STYLE_EVENT, openPlans, showPlanNotice } from '@/components/app/shell-events';
 import { clampPreferenceValues, type DocSource } from '@/lib/writing/notebook-meta';
+import { opensPaged } from '@/lib/writing/preferences';
+import { ADVANCED_PREFERENCE } from '@/lib/plans';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Menu } from '@/components/ui/Menu';
 import { ConfirmDialog } from '@/components/ui/Modal';
@@ -73,8 +75,10 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
   // One skill rule everywhere: without saved_styles a skill is shown locked, never offered and then refused.
   const stylesLocked = !has('saved_styles');
   const skillTier = useRequiredTierName('saved_styles');
-  // Below Max the stored notebook drops Sesuaikan, so it reaches the first run only.
-  const sessionOnly = !has('persistent_personalization');
+  // Free's stored notebook drops Sesuaikan, so it reaches the first run only; Plus and Pro keep format, length,
+  // reader and emphasis. The note for the AI stays Max-only on every plan.
+  const sessionOnly = !has('saved_styles');
+  const noteLocked = !has('persistent_personalization');
   // The composer's own baseline: the account defaults, never anything a skill brought in.
   const manualBase = useRef<Settings>(normalizeSettings({ ...defaults, mode: prefs.defaultMode === LEGACY_CUSTOM_PROMPT ? 'custom' : baseMode, language: prefs.writingLanguage, context: prefs.humanizerContext }));
   // Remembers the manual configuration so removing a skill restores it instead of resetting.
@@ -163,7 +167,8 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
       // A skill id without saved_styles is refused on create, so a locked account never sends one.
       // Every string is capped at create's 500 characters, so a long writing sample never turns into a 400.
       const source: DocSource = settings.styleId && !stylesLocked ? 'skill' : 'compose';
-      const preferences = clampPreferenceValues({ ...settings, ...(stylesLocked ? { styleId: null } : {}), docSource: source });
+      // Kanvas bawaan: Halaman only with the canvas, since create refuses the flag otherwise.
+      const preferences = clampPreferenceValues({ ...settings, ...(stylesLocked ? { styleId: null } : {}), docSource: source, ...(opensPaged(prefs.defaultCanvas, has('advanced_notebook')) ? { [ADVANCED_PREFERENCE]: true } : {}) });
       const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: settings.language, content: plainTextDocument(text), preferences }, newKey());
       try {
         if (autorun) {
@@ -295,7 +300,7 @@ export function Composer({ embedded = false, initialStyleId }: { embedded?: bool
                 : t('Atur bentuk hasil tanpa mengubah mode.', 'Shape the output without changing the mode.')}</p></div>
               <button type="button" onClick={() => setCustomizing(false)} aria-label={t('Tutup Sesuaikan', 'Close customize')} className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-ink-500 hover:bg-paper-deep hover:text-ink-900"><X size={16} aria-hidden="true" /></button>
             </div>
-            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={sessionOnly} onUpgrade={openPlans} />
+            <CustomizePanel embedded settings={settings} disabled={busy} onChange={update} onClose={() => setCustomizing(false)} noteLocked={noteLocked} onUpgrade={openPlans} />
           </div>
         )}
       </section>

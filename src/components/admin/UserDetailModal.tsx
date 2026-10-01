@@ -1,6 +1,6 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { Ban, CalendarPlus, CircleCheck, CircleSlash, KeyRound, LogOut, RotateCw, Save, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
+import { Ban, CalendarPlus, CircleCheck, CircleSlash, Gift, KeyRound, LogOut, RotateCw, Save, ShieldCheck, Trash2, TriangleAlert } from 'lucide-react';
 import { PLAN_LIMITS } from '@/lib/plans';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
@@ -13,12 +13,16 @@ import { FieldLabel, inputClass } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import { ConfirmDialog, Modal } from '@/components/ui/Modal';
 import { Spinner } from '@/components/ui/Spinner';
-import { actionLabel, detailSummary, operationLabel, shortId, statusLabel, tierLabel, type AdminSummary, type AdminUser, type PaidPlan, type Role, type SessionEntry, type Tier, type UsageEntry, type UserDetail } from './admin-shared';
+import { actionLabel, detailSummary, grantStateLabel, operationLabel, shortId, statusLabel, tierLabel, type AdminGrant, type AdminSummary, type AdminUser, type PaidPlan, type Role, type SessionEntry, type Tier, type UsageEntry, type UserDetail } from './admin-shared';
 
 type Tab = 'overview' | 'plan' | 'settings' | 'log' | 'sessions' | 'account';
 type Props = { userId: string; summary: AdminSummary | null; onClose: () => void; onChange: (user: AdminUser) => void; onDeleted: (id: string) => void; notify: (notice: { tone: 'success' | 'error'; message: string }) => void };
 type Form = { name: string; emailVerified: boolean; role: Role; aiLimitOverride: string; aiCharacterLimitOverride: string; adminNote: string };
-type Confirm = { kind: 'role'; role: Role } | { kind: 'ban' } | { kind: 'unban' } | { kind: 'password' } | { kind: 'revoke-all' } | { kind: 'delete' } | { kind: 'end-plan' };
+type Grant = { amount: number; validityDays: number; note: string; requestKey: string };
+type Confirm = { kind: 'role'; role: Role } | { kind: 'ban' } | { kind: 'unban' } | { kind: 'password' } | { kind: 'revoke-all' } | { kind: 'delete' } | { kind: 'end-plan' } | { kind: 'grant'; grant: Grant };
+// Mirrors ADMIN_GRANT_MAX on the server; the route refuses anything above it.
+const GRANT_MAX = 500_000;
+const GRANT_DAYS = ['30', '90', '365'] as const;
 const PAID_PLANS: readonly PaidPlan[] = ['plus', 'pro', 'max'];
 const END_WORD = 'AKHIRI';
 
@@ -52,11 +56,45 @@ function Section({ title, description, children, tone = 'default' }: { title: st
   );
 }
 
-type PlanPanelProps = { user: AdminUser; busy: boolean; onActivate: (plan: PaidPlan, note: string) => void; onEnd: (reason: string) => void };
+type PlanPanelProps = { user: AdminUser; busy: boolean; onActivate: (plan: PaidPlan, note: string) => void; onEnd: (reason: string) => void; grants: AdminGrant[]; onGrant: (grant: Grant) => void; grantKey: string };
+
+// Hibah karakter: characters for support or a trial, as a lot with an expiry. Like a top-up it is frozen while no
+// paid plan runs. The request key is made once per form, so a doubled submit credits once.
+function GrantSection({ user, busy, grants, onGrant, grantKey }: { user: AdminUser; busy: boolean; grants: AdminGrant[]; onGrant: (grant: Grant) => void; grantKey: string }) {
+  const { t, locale } = useLocale();
+  const [amount, setAmount] = useState('');
+  const [days, setDays] = useState<(typeof GRANT_DAYS)[number]>('30');
+  const [note, setNote] = useState('');
+  const value = Number(amount);
+  const valid = Number.isInteger(value) && value >= 1 && value <= GRANT_MAX && note.trim().length >= 3;
+  return (
+    <Section title={t('Hibah karakter', 'Grant characters')} description={t('Untuk dukungan pelanggan atau uji coba. Karakter hibah dipakai setelah jatah paket, lalu kedaluwarsa. Tercatat di riwayat tindakan admin.', 'For customer support or a trial. Granted characters are spent after the plan allowance, then expire. Recorded in the admin action history.')}>
+      {!user.plan.code && <div className="mb-3"><Alert tone="warning">{t('Akun ini belum punya paket berbayar. Seperti top-up, karakter hibah beku sampai paket berbayar aktif. Untuk uji coba akun Gratis, aktifkan paket dulu.', 'This account has no paid plan. Like a top-up, granted characters stay frozen until a paid plan runs. For a Free trial, activate a plan first.')}</Alert></div>}
+      <div className="grid gap-3 sm:grid-cols-[160px_160px_minmax(0,1fr)]">
+        <div><FieldLabel htmlFor="grant-amount" hint={`1–${numberFormat(GRANT_MAX, locale)}`}>{t('Jumlah karakter', 'Characters')}</FieldLabel><input id="grant-amount" type="number" min={1} max={GRANT_MAX} step={1} inputMode="numeric" className={inputClass} value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
+        <div><FieldLabel htmlFor="grant-days">{t('Berlaku', 'Valid for')}</FieldLabel><HintSelect id="grant-days" label={t('Berlaku', 'Valid for')} value={days} onChange={setDays} options={GRANT_DAYS.map((value) => ({ value, label: t(`${value} hari`, `${value} days`) }))} /></div>
+        <div><FieldLabel htmlFor="grant-note">{t('Catatan (wajib)', 'Note (required)')}</FieldLabel><input id="grant-note" className={inputClass} maxLength={200} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t('Mis. kompensasi gangguan 1 Okt', 'E.g. outage credit for 1 Oct')} /></div>
+      </div>
+      <Button className="mt-3" variant="primary" icon={Gift} disabled={busy || !valid} onClick={() => onGrant({ amount: value, validityDays: Number(days), note: note.trim(), requestKey: grantKey })}>{t('Hibahkan karakter', 'Grant characters')}</Button>
+      {grants.length > 0 && (
+        <ul className="mt-4 divide-y divide-line rounded-lg border border-line bg-white">
+          {grants.map((grant) => (
+            <li key={grant.id} className="flex flex-wrap items-baseline gap-x-3 px-3 py-2 text-[13px]">
+              <span className="font-medium tabular-nums text-ink-900">{numberFormat(grant.amount, locale)}</span>
+              <span className="text-ink-500">{t('sisa', 'left')} {numberFormat(grant.remaining, locale)}</span>
+              <span className="text-ink-500">{grantStateLabel(grant.state, t)}</span>
+              <span className="ml-auto text-[12px] text-ink-400">{dateTime(grant.grantedAt, locale)} → {dateTime(grant.expiresAt, locale)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Section>
+  );
+}
 
 // "Atur paket", after Mari Rekap: one month at a time. The same plan extends after the last covered day;
 // another plan replaces the running period now. Admin accounts can receive plans too.
-function PlanPanel({ user, busy, onActivate, onEnd }: PlanPanelProps) {
+function PlanPanel({ user, busy, onActivate, onEnd, grants, onGrant, grantKey }: PlanPanelProps) {
   const { t, locale } = useLocale();
   const current = user.plan.code;
   const [plan, setPlan] = useState<PaidPlan>(current ?? 'plus');
@@ -92,6 +130,7 @@ function PlanPanel({ user, busy, onActivate, onEnd }: PlanPanelProps) {
         {current && plan !== current && user.plan.source === 'payment' && <div className="mt-3"><Alert tone="warning">{t('Paket ini dibayar pengguna. Sisa periodenya hangus jika diganti.', 'The user paid for this plan. Its remaining time is lost if you replace it.')}</Alert></div>}
         <Button className="mt-3" variant="primary" icon={CalendarPlus} disabled={busy} onClick={() => onActivate(plan, note.trim())}>{actionText}</Button>
       </Section>
+      <GrantSection key={grantKey} user={user} busy={busy} grants={grants} onGrant={onGrant} grantKey={grantKey} />
       {current && (
         <Section tone="danger" title={t('Akhiri paket', 'End plan')} description={t('Paket berjalan dan semua perpanjangannya berakhir sekarang. Karakter top-up yang sudah dibeli tidak dihapus.', 'The running plan and all renewals end now. Purchased top-up characters are not removed.')}>
           <div className="flex flex-wrap items-end gap-3">
@@ -124,6 +163,8 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
   const [log, setLog] = useState<{ items: UsageEntry[]; nextCursor: string | null } | null>(null);
   const [logBusy, setLogBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  // One key per grant form; a successful grant starts a new form (and key).
+  const [grantKey, setGrantKey] = useState(() => newKey());
   const self = userId === me.id;
   const user = detail?.user ?? null;
 
@@ -177,6 +218,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
     if (confirm.kind === 'password') { const ok = await act({ action: 'set-password', newPassword: password }, t('Password diganti dan semua sesi dicabut.', 'Password set and all sessions revoked.')); if (ok) setPassword(''); return; }
     if (confirm.kind === 'revoke-all') { await act({ action: 'revoke-sessions' }, t('Semua sesi dicabut.', 'All sessions revoked.')); return; }
     if (confirm.kind === 'end-plan') { const ok = await act({ action: 'end-plan', reason: endReason }, t('Paket diakhiri.', 'Plan ended.')); if (ok) { setEndReason(''); setEndText(''); } return; }
+    if (confirm.kind === 'grant') { const { grant } = confirm; const ok = await act({ action: 'grant-characters', ...grant }, t(`${numberFormat(grant.amount, locale)} karakter dihibahkan.`, `${numberFormat(grant.amount, locale)} characters granted.`)); if (ok) setGrantKey(newKey()); return; }
     if (confirm.kind === 'delete') {
       setBusy('delete');
       try { await request(`/api/admin/users/${userId}`, 'DELETE', undefined, newKey()); notify({ tone: 'success', message: t(`Akun ${user.email} dihapus.`, `Account ${user.email} deleted.`) }); onDeleted(userId); onClose(); }
@@ -195,7 +237,7 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
   // Admins skip the monthly request cap (never the 10-per-minute one) but still spend characters, so nothing shows ∞.
   const limitText = (value: AdminUser) => (value.role === 'admin' ? t('tanpa batas bulanan', 'no monthly cap') : numberFormat(value.requestLimit, locale));
   const dirty = !!user && !!form && JSON.stringify(form) !== JSON.stringify(formOf(user));
-  const confirmTitle: Record<Confirm['kind'], string> = { role: t('Ubah role?', 'Change role?'), ban: t('Nonaktifkan akun?', 'Disable account?'), unban: t('Aktifkan akun?', 'Enable account?'), password: t('Ganti password?', 'Set new password?'), 'revoke-all': t('Cabut semua sesi?', 'Revoke all sessions?'), delete: t('Hapus akun secara permanen?', 'Permanently delete account?'), 'end-plan': t('Akhiri paket?', 'End plan?') };
+  const confirmTitle: Record<Confirm['kind'], string> = { grant: t('Hibahkan karakter?', 'Grant characters?'), role: t('Ubah role?', 'Change role?'), ban: t('Nonaktifkan akun?', 'Disable account?'), unban: t('Aktifkan akun?', 'Enable account?'), password: t('Ganti password?', 'Set new password?'), 'revoke-all': t('Cabut semua sesi?', 'Revoke all sessions?'), delete: t('Hapus akun secara permanen?', 'Permanently delete account?'), 'end-plan': t('Akhiri paket?', 'End plan?') };
 
   return (
     <Modal title={user ? user.name : t('Detail pengguna', 'User details')} description={user ? `${user.email}${user.username ? ` · @${user.username}` : ''}` : undefined} size="2xl" onClose={onClose} busy={busy !== ''}
@@ -239,7 +281,8 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
 
           {tab === 'plan' && <PlanPanel user={user} busy={busy !== ''}
             onActivate={(plan, note) => void act({ action: 'activate-plan', plan, note: note || null }, t(`Paket ${tierLabel(plan, t)} disimpan.`, `${tierLabel(plan, t)} plan saved.`))}
-            onEnd={(reason) => { setEndReason(reason); setEndText(''); setConfirm({ kind: 'end-plan' }); }} />}
+            onEnd={(reason) => { setEndReason(reason); setEndText(''); setConfirm({ kind: 'end-plan' }); }}
+            grants={detail?.grants ?? []} grantKey={grantKey} onGrant={(grant) => setConfirm({ kind: 'grant', grant })} />}
 
           {tab === 'settings' && form && (
             <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); void save(); }}>
@@ -330,9 +373,10 @@ export function UserDetailModal({ userId, summary, onClose, onChange, onDeleted,
 
       {confirm && user && (
         <ConfirmDialog title={confirmTitle[confirm.kind]} tone={confirm.kind === 'delete' || confirm.kind === 'ban' || confirm.kind === 'end-plan' ? 'danger' : 'primary'} busy={busy !== ''} disabled={(confirm.kind === 'delete' && deleteText.trim().toLowerCase() !== user.email.toLowerCase()) || (confirm.kind === 'end-plan' && endText.trim().toUpperCase() !== END_WORD)}
-          confirmLabel={{ role: t('Ya, ubah role', 'Yes, change role'), ban: t('Ya, nonaktifkan', 'Yes, disable'), unban: t('Ya, aktifkan', 'Yes, enable'), password: t('Ya, ganti', 'Yes, set it'), 'revoke-all': t('Ya, cabut semua', 'Yes, revoke all'), delete: t('Hapus permanen', 'Delete permanently'), 'end-plan': t('Ya, akhiri', 'Yes, end it') }[confirm.kind]} onClose={() => setConfirm(null)} onConfirm={() => void runConfirm()}>
+          confirmLabel={{ grant: t('Ya, hibahkan', 'Yes, grant'), role: t('Ya, ubah role', 'Yes, change role'), ban: t('Ya, nonaktifkan', 'Yes, disable'), unban: t('Ya, aktifkan', 'Yes, enable'), password: t('Ya, ganti', 'Yes, set it'), 'revoke-all': t('Ya, cabut semua', 'Yes, revoke all'), delete: t('Hapus permanen', 'Delete permanently'), 'end-plan': t('Ya, akhiri', 'Yes, end it') }[confirm.kind]} onClose={() => setConfirm(null)} onConfirm={() => void runConfirm()}>
           {confirm.kind === 'role' && <p><b className="text-ink-900">{user.name}</b> {confirm.role === 'admin' ? t('akan bisa membuka panel ini, mengubah pengguna lain, dan memakai AI tanpa batas permintaan bulanan. Karakter AI tetap dipotong.', 'will be able to open this panel, manage other users, and use AI without the monthly request cap. AI characters are still charged.') : t('akan kehilangan akses panel admin dan kembali ke batas AI tier-nya.', 'will lose admin panel access and return to their tier’s AI limit.')}</p>}
           {confirm.kind === 'ban' && <p className="flex gap-2"><TriangleAlert size={16} className="mt-0.5 shrink-0 text-red-600" aria-hidden="true" /><span><b className="text-ink-900">{user.name}</b> {t('akan langsung keluar dari semua perangkat dan tidak bisa masuk', 'will be signed out everywhere and unable to sign in')} {banDays === '0' ? t('sampai diaktifkan lagi.', 'until enabled again.') : t(`selama ${banDays} hari.`, `for ${banDays} days.`)} {t('Alasan:', 'Reason:')} <i>{banReason.trim()}</i></span></p>}
+          {confirm.kind === 'grant' && <p><b className="text-ink-900">{numberFormat(confirm.grant.amount, locale)}</b> {t(`karakter AI untuk ${user.name}, berlaku ${confirm.grant.validityDays} hari. Catatan:`, `AI characters for ${user.name}, valid for ${confirm.grant.validityDays} days. Note:`)} <i>{confirm.grant.note}</i></p>}
           {confirm.kind === 'unban' && <p>{t('Ban dicabut dan pengguna bisa masuk kembali.', 'The ban is lifted and the user can sign in again.')}</p>}
           {confirm.kind === 'password' && <p>{t('Password akan diganti dan semua sesi aktif pengguna dicabut. Sampaikan password baru secara aman.', 'The password will be replaced and all active sessions revoked. Share the new password securely.')}</p>}
           {confirm.kind === 'revoke-all' && <p>{t('Pengguna akan keluar dari semua perangkat dan harus masuk ulang.', 'The user will be signed out of every device and must sign in again.')}</p>}

@@ -182,6 +182,15 @@ describe("writing preferences route", () => {
     expect(await read(cookie)).toMatchObject({ writingLanguage: "en", defaultMode: "P05_CREATIVE", humanizerContext: "professional", primaryUseCase: "academic", interfaceLanguage: "id", localDrafts: true, onboarded: true });
   });
 
+  it("accepts the finer main uses and still refuses an unknown one (UX 2)", async () => {
+    const cookie = await register();
+    for (const useCase of ["content", "article", "paraphrase", "academic"]) {
+      expect((await patch(cookie, { ...base, primaryUseCase: useCase })).status).toBe(200);
+      expect(await read(cookie)).toMatchObject({ primaryUseCase: useCase });
+    }
+    expect((await patch(cookie, { ...base, primaryUseCase: "poetry" })).status).toBe(400);
+  });
+
   it("refuses a mode the account default cannot hold", async () => {
     const cookie = await register();
     expect((await patch(cookie, { ...base, defaultMode: "P08_CUSTOM_TRANSFORM" })).status).toBe(400);

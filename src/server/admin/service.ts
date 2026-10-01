@@ -8,6 +8,7 @@ import { writeAudit } from '../audit';
 import { assertMklAccountDeletable, getMklLinkByUserId } from '../identity/links';
 import { walletSummary } from '../usage/wallet';
 import { PAID_PLANS, type PaidPlan } from '../access/periods';
+import { ADMIN_GRANT_MAX, ADMIN_GRANT_MAX_DAYS } from '../usage/admin-grants';
 
 export const RoleSchema = z.enum(['user', 'admin']);
 export const TierSchema = z.enum(TIERS);
@@ -31,6 +32,8 @@ export const ActionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('revoke-sessions'), sessionToken: z.string().min(1).optional() }),
   z.object({ action: z.literal('activate-plan'), plan: z.enum(PAID_PLANS), note: z.string().trim().max(200).nullable().default(null) }),
   z.object({ action: z.literal('end-plan'), reason: z.string().trim().min(3).max(200) }),
+  // Hibah karakter: the request key is made once per grant form, so a doubled or retried submit credits once.
+  z.object({ action: z.literal('grant-characters'), amount: z.number().int().min(1).max(ADMIN_GRANT_MAX), validityDays: z.number().int().min(1).max(ADMIN_GRANT_MAX_DAYS).default(30), note: z.string().trim().min(3).max(200), requestKey: z.string().uuid() }),
 ]);
 export type Role = z.infer<typeof RoleSchema>;
 export type UserPatch = z.infer<typeof UserPatchSchema>;
@@ -85,7 +88,7 @@ const USER_SELECT = `
       SUM(COALESCE(input_tokens,0)+COALESCE(output_tokens,0)) AS tokens, MAX(created_at) AS last_active
     FROM usage_ledger WHERE period_key=? GROUP BY owner_id
   ) l ON l.owner_id=u.id
-  LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents GROUP BY owner_id) d ON d.owner_id=u.id
+  LEFT JOIN (SELECT owner_id, COUNT(1) AS documents FROM documents WHERE deleted_at IS NULL GROUP BY owner_id) d ON d.owner_id=u.id
   ${PLAN_JOIN}`;
 
 async function withWalletCharacters(users: AdminUser[]): Promise<AdminUser[]> {

@@ -138,7 +138,7 @@ describe('review: a free-form instruction is paid, scoped and free', () => {
     expect(transport).not.toHaveBeenCalled();
   });
 
-  // AI Mode is charged MAX(source, output), extending its wallet hold before a
+  // AI Mode is charged MAX(source, output), capped by the 2x hold taken before a
   // preview can become deliverable.
   const charge = () => Number((db.prepare("SELECT COALESCE(SUM(charge_characters),0) AS total FROM usage_ledger WHERE operation='generate'").get() as { total: number }).total);
 
@@ -153,24 +153,67 @@ describe('review: a free-form instruction is paid, scoped and free', () => {
     expect(charge()).toBe(longer.length);
   });
 
-  it('charges all 250 output code points for a 100-code-point source, never the historical 2x clamp', async () => {
+  it('caps the charge at the 2x hold taken before the call: 250 output code points for a 100-code-point source cost 200', async () => {
     paid('payer-exact'); const source = 'a'.repeat(100); const output = 'b'.repeat(250);
     const doc = await createDocument('payer-exact', { title: 'F', language: 'id', content: content(source) });
     always(transform(output)); await instruct('payer-exact', doc.id, doc.revision, source, 'kembangkan teks');
-    expect(charge()).toBe(250);
+    expect(charge()).toBe(200);
     expect(db.prepare("SELECT settled_amount,current_hold,state FROM character_reservations WHERE owner_id='payer-exact'").get())
-      .toEqual({ settled_amount: 250, current_hold: 250, state: 'settled' });
+      .toEqual({ settled_amount: 200, current_hold: 200, state: 'settled' });
   });
 
-  it('rejects and releases a validated long output when the additional hold cannot be acquired', async () => {
+  it('refuses before the provider call when the balance cannot cover the 2x hold', async () => {
     paid('payer-tight'); await ensureFreeGrant('payer-tight');
-    db.prepare("UPDATE character_grants SET original_amount=200 WHERE owner_id='payer-tight' AND kind='free'").run();
+    db.prepare("UPDATE character_grants SET original_amount=150 WHERE owner_id='payer-tight' AND kind='free'").run();
     const source = 'a'.repeat(100); const doc = await createDocument('payer-tight', { title: 'F', language: 'id', content: content(source) });
-    always(transform('b'.repeat(250)));
-    await expect(instruct('payer-tight', doc.id, doc.revision, source, 'kembangkan teks')).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
-    expect(db.prepare("SELECT state,settled_amount FROM character_reservations WHERE owner_id='payer-tight'").get()).toEqual({ state: 'released', settled_amount: 0 });
+    const transport = vi.fn(async () => reply(transform('b'.repeat(120))));
+    vi.stubGlobal('fetch', transport);
+    await expect(instruct('payer-tight', doc.id, doc.revision, source, 'kembangkan teks')).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED', details: { reserve: 200, factor: 2 } });
+    expect(transport).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM character_reservations WHERE owner_id='payer-tight'").get()).toEqual({ n: 0 });
     expect(db.prepare("SELECT reserved_amount,settled_amount FROM character_grants WHERE owner_id='payer-tight' AND kind='free'").get()).toEqual({ reserved_amount: 0, settled_amount: 0 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM transformations WHERE owner_id='payer-tight'").get()).toEqual({ n: 0 });
+  });
+
+  it('settles the exact output and releases the unused part of the hold', async () => {
+    paid('payer-release'); await ensureFreeGrant('payer-release');
+    const source = 'a'.repeat(100); const doc = await createDocument('payer-release', { title: 'F', language: 'id', content: content(source) });
+    always(transform('b'.repeat(130)));
+    await instruct('payer-release', doc.id, doc.revision, source, 'kembangkan teks');
+    expect(db.prepare("SELECT current_hold,settled_amount,state FROM character_reservations WHERE owner_id='payer-release'").get()).toEqual({ current_hold: 200, settled_amount: 130, state: 'settled' });
+    expect(db.prepare("SELECT SUM(reserved_amount) AS reserved,SUM(settled_amount) AS settled,SUM(released_amount) AS released FROM character_allocations WHERE owner_id='payer-release'").get()).toEqual({ reserved: 200, settled: 130, released: 70 });
+    // Nothing stays held: the grant counts only the settled 130.
+    expect(db.prepare("SELECT original_amount,reserved_amount,settled_amount FROM character_grants WHERE owner_id='payer-release' AND kind='free'").get()).toEqual({ original_amount: 3000, reserved_amount: 0, settled_amount: 130 });
+  });
+
+  it('never drives a balance negative: an exact 2x balance is spent to zero, then the next run is refused before the provider', async () => {
+    paid('payer-zero'); await ensureFreeGrant('payer-zero');
+    db.prepare("UPDATE character_grants SET original_amount=200 WHERE owner_id='payer-zero' AND kind='free'").run();
+    const source = 'a'.repeat(100); const doc = await createDocument('payer-zero', { title: 'F', language: 'id', content: content(source) });
+    const transport = vi.fn(async () => reply(transform('b'.repeat(400))));
+    vi.stubGlobal('fetch', transport);
+    await instruct('payer-zero', doc.id, doc.revision, source, 'kembangkan teks');
+    expect(db.prepare("SELECT original_amount-reserved_amount-settled_amount AS remaining,reserved_amount FROM character_grants WHERE owner_id='payer-zero' AND kind='free'").get()).toEqual({ remaining: 0, reserved_amount: 0 });
+    await expect(instruct('payer-zero', doc.id, doc.revision, source, 'kembangkan teks')).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED' });
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM character_reservations WHERE owner_id='payer-zero' AND state='settled'").get()).toEqual({ n: 1 });
+  });
+
+  it('releases the whole hold when the provider fails', async () => {
+    paid('payer-fail'); await ensureFreeGrant('payer-fail');
+    const source = 'a'.repeat(100); const doc = await createDocument('payer-fail', { title: 'F', language: 'id', content: content(source) });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('down', { status: 500 })));
+    await expect(instruct('payer-fail', doc.id, doc.revision, source, 'kembangkan teks')).rejects.toMatchObject({ code: 'AI_UNAVAILABLE' });
+    expect(db.prepare("SELECT current_hold,settled_amount,state FROM character_reservations WHERE owner_id='payer-fail'").get()).toEqual({ current_hold: 200, settled_amount: 0, state: 'released' });
+    expect(db.prepare("SELECT reserved_amount,settled_amount FROM character_grants WHERE owner_id='payer-fail' AND kind='free'").get()).toEqual({ reserved_amount: 0, settled_amount: 0 });
+  });
+
+  it('keeps ordinary rewrites on a source-sized hold', async () => {
+    const source = 'Kami memiliki 10 unit gudang.';
+    const doc = await createDocument('owner-a', { title: 'N', language: 'id', content: content(source) });
+    always(transform('Kami punya 10 unit gudang yang siap dipakai kapan saja.'));
+    await run(doc.id, doc.revision, source);
+    expect(db.prepare("SELECT current_hold,settled_amount FROM character_reservations WHERE owner_id='owner-a'").get()).toEqual({ current_hold: source.length, settled_amount: source.length });
   });
 
   it('charges the source when the output came back shorter', async () => {

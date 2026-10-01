@@ -4,7 +4,8 @@ export { detectLanguage };
 export type Mode = 'standard' | 'academic' | 'humanize' | 'professional' | 'creative' | 'simplify';
 export type WritingLanguage = 'auto' | 'id' | 'en';
 export type Strength = 'light' | 'balanced' | 'strong';
-export type Format = 'paragraph' | 'bullets' | 'numbered_list' | 'table' | 'short_summary' | 'email';
+// script and thread are offered in Sesuaikan only for Script konten and Caption/Post notebooks (see formatOptions).
+export type Format = 'paragraph' | 'bullets' | 'numbered_list' | 'table' | 'short_summary' | 'email' | 'script' | 'thread';
 export type Length = 'shorter' | 'same' | 'more_detailed';
 export type Focus = 'clarity' | 'naturalness' | 'formality' | 'persuasiveness' | 'remove_repetition';
 export type Recipient = 'atasan' | 'klien' | 'rekan' | 'vendor' | 'umum';

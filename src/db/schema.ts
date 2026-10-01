@@ -37,7 +37,7 @@ export const capabilityGrants = sqliteTable("capability_grants", {
 }, (t) => [index("capability_grants_user_active_idx").on(t.userId, t.expiresAt, t.revokedAt)]);
 
 export const documents = sqliteTable("documents", {
-  id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), title: text("title").notNull(), language: text("language").notNull(), preferencesJson: text("preferences_json").notNull().default("{}"), revision: integer("revision").notNull().default(0), bodyJson: text("body_json"), bodyR2Key: text("body_r2_key"), storageMode: text("storage_mode").notNull().default("d1"), originalVersionId: text("original_version_id"), color: text("color"), icon: text("icon"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
+  id: text("id").primaryKey(), ownerId: text("owner_id").notNull(), title: text("title").notNull(), language: text("language").notNull(), preferencesJson: text("preferences_json").notNull().default("{}"), revision: integer("revision").notNull().default(0), bodyJson: text("body_json"), bodyR2Key: text("body_r2_key"), storageMode: text("storage_mode").notNull().default("d1"), originalVersionId: text("original_version_id"), color: text("color"), icon: text("icon"), pinnedAt: integer("pinned_at"), deletedAt: integer("deleted_at"), createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(), updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull()
 }, (t) => [index("documents_owner_updated_idx").on(t.ownerId, t.updatedAt, t.id)]);
 
 export const documentPortabilityEvidence = sqliteTable("document_portability_evidence", {
