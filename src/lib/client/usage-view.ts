@@ -42,7 +42,7 @@ export function featureLabel(feature: Feature, t: T): string {
     case 'saved_styles': return t('Skill tersimpan', 'Saved skills');
     case 'purchase_topup': return t('Beli tambahan karakter', 'Buy character top-ups');
     case 'advanced_notebook': return t('Kanvas halaman', 'Page canvas');
-    case 'docx_import': return t('Impor DOCX', 'DOCX import');
+    case 'docx_import': return t('Impor dokumen (DOCX, PDF)', 'Document import (DOCX, PDF)');
     case 'docx_export': return t('Ekspor DOCX', 'DOCX export');
     case 'freeform_prompt': return t('Perintah AI', 'AI instructions');
     case 'persistent_personalization': return t('Catatan untuk AI tersimpan', 'Note for the AI kept');

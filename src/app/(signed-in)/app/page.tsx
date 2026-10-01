@@ -125,8 +125,8 @@ function FirstVisit() {
       </button>
       <button type="button" className={card} onClick={() => (has('docx_import') ? requestNewWriting() : showLockedFeature(requiredTierFor('docx_import')))}>
         <Upload size={20} aria-hidden="true" className={has('docx_import') ? 'text-brand-700' : 'text-ink-400'} />
-        <span className="flex items-center gap-1.5 text-[14px] font-semibold text-ink-900">{t('Impor DOCX', 'Import DOCX')}{!has('docx_import') && <span className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-500"><PaidLock size={12} />{importTier}</span>}</span>
-        <span className="text-xs leading-relaxed text-ink-500">{t('Bawa dokumen Word lengkap dengan tata letaknya.', 'Bring in a Word document with its layout.')}</span>
+        <span className="flex items-center gap-1.5 text-[14px] font-semibold text-ink-900">{t('Impor dokumen', 'Import document')}{!has('docx_import') && <span className="inline-flex items-center gap-1 text-[12px] font-medium text-ink-500"><PaidLock size={12} />{importTier}</span>}</span>
+        <span className="text-xs leading-relaxed text-ink-500">{t('Bawa dokumen Word atau PDF berteks ke notebook.', 'Bring in a Word document or a text PDF.')}</span>
       </button>
     </section>
   );

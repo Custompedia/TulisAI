@@ -8,6 +8,7 @@ import { guardedPush } from '@/lib/client/navigation-guard';
 import { documentText } from '@/lib/editor/document';
 import { defaults, modeFromPrompt } from '@/lib/writing/settings';
 import { DOCX_CONTENT_TYPE } from '@/lib/docx/export';
+import { MAX_PDF_BYTES, MAX_PDF_PAGES, PDF_CONTENT_TYPE, type PdfPages, type PdfWarning } from '@/lib/pdf/constants';
 import { ADVANCED_PREFERENCE } from '@/lib/plans';
 import { layoutPreferences } from '@/components/workspace/page-layout';
 import type { ImportWarning } from '@/lib/docx/runs';
@@ -20,17 +21,21 @@ import { Toast } from '@/components/ui/Toast';
 import { Alert } from '@/components/ui/Alert';
 import { useSessionGuard, useShell } from './AppShell';
 
-const MAX_BYTES = 5_000_000;
+const MAX_DOCX_BYTES = 5_000_000;
+type Format = 'docx' | 'pdf';
+// The extension decides what the file is meant to be; the server checks the bytes themselves.
+const formatOf = (name: string): Format | null => (/\.docx$/iu.test(name) ? 'docx' : /\.pdf$/iu.test(name) ? 'pdf' : null);
 const PREVIEW_CHARACTERS = 1_200;
 
 type Extraction = {
-  title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; pageMargins: string;
-  orientation: Orientation; columns: number; header: RunningText | null; footer: RunningText | null; warnings: ImportWarning[];
-  docxImportReceipt: string;
+  format: Format; title: string; content: EditorDocument; pageSize: 'a4' | 'letter'; pageMargins: string;
+  orientation: Orientation; columns: number; header: RunningText | null; footer: RunningText | null; warnings: Array<ImportWarning | PdfWarning>;
+  // Only a DOCX import carries the receipt; a PDF never earns DOCX portability evidence.
+  docxImportReceipt?: string; pages?: PdfPages;
 };
 
 // What each warning means to the writer; the file is still imported, these parts simply do not come with it.
-const WARNING_TEXT: Record<ImportWarning, [string, string]> = {
+const WARNING_TEXT: Record<ImportWarning | 'pdfLayout', [string, string]> = {
   images: ['Gambar tidak ikut diimpor — notebook ini khusus teks.', 'Images are not imported — this notebook is text only.'],
   textboxes: ['Isi kotak teks dipindahkan menjadi paragraf biasa.', 'Text box contents were moved into ordinary paragraphs.'],
   revisions: ['Perubahan terlacak yang dihapus tidak dibawa; teks final yang dipakai.', 'Tracked deletions were dropped; the final text is used.'],
@@ -38,27 +43,42 @@ const WARNING_TEXT: Record<ImportWarning, [string, string]> = {
   endnotes: ['Catatan akhir menjadi catatan kaki.', 'Endnotes became footnotes.'],
   runningRich: ['Header/footer disederhanakan menjadi satu baris teks.', 'The header and footer were reduced to a single line of text.'],
   shapes: ['Bentuk dan diagram tidak ikut diimpor.', 'Shapes and diagrams are not imported.'],
+  pdfLayout: ['Tabel dan kolom dari PDF dibuat sebagai teks biasa, dan gambar tidak ikut. Periksa sebelum membuat notebook.', 'Tables and columns from the PDF come across as plain text, and images are left out. Check before creating the notebook.'],
 };
 
+// The PDF warnings that name a page count.
+function warningText(warning: ImportWarning | PdfWarning, pages: PdfPages | undefined, format: (value: number) => string): [string, string] {
+  const read = format(pages?.read ?? 0); const total = format(pages?.total ?? 0); const empty = format(pages?.empty ?? 0);
+  switch (warning) {
+    case 'pdfPagesCapped': return [`PDF ini ${total} halaman; hanya ${format(MAX_PDF_PAGES)} halaman pertama yang dibaca. Pisahkan PDF-nya untuk sisanya.`, `This PDF has ${total} pages; only the first ${format(MAX_PDF_PAGES)} are read. Split the PDF for the rest.`];
+    case 'pdfTruncated': return [`Teksnya melebihi batas 200.000 karakter, jadi hanya bagian awal (sekitar ${read} dari ${total} halaman) yang dibawa. Pisahkan PDF-nya untuk sisanya.`, `The text is over the 200,000-character limit, so only the beginning (about ${read} of ${total} pages) comes across. Split the PDF for the rest.`];
+    case 'pdfEmptyPages': return [`${empty} halaman tidak berisi teks yang terbaca (kosong atau gambar hasil scan) dan dilewati.`, `${empty} pages have no readable text (blank or scanned) and were skipped.`];
+    default: return WARNING_TEXT[warning] ?? [warning, warning];
+  }
+}
+
 // Two steps on purpose: the file is extracted and shown first, and only a confirmed preview creates a notebook.
-export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
+export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
   const { t, locale } = useLocale();
   const router = useRouter();
   const guard = useSessionGuard();
   const { settings: prefs } = useShell();
   const input = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
+  const format = file ? formatOf(file.name) : null;
   const [extraction, setExtraction] = useState<Extraction | null>(null);
   const [busy, setBusy] = useState<'' | 'reading' | 'creating'>('');
   const [error, setError] = useState('');
 
   async function extract(chosen: File) {
     setFile(chosen); setExtraction(null); setError('');
-    if (!chosen.name.toLowerCase().endsWith('.docx')) { setError(t('Pilih berkas .docx. Format lain belum didukung.', 'Choose a .docx file. Other formats are not supported yet.')); return; }
-    if (chosen.size > MAX_BYTES) { setError(t('Berkas lebih dari 5 MB. Pisahkan dokumennya lebih dulu.', 'The file is over 5 MB. Split the document first.')); return; }
+    const kind = formatOf(chosen.name);
+    if (!kind) { setError(t('Pilih berkas .docx atau .pdf. Format lain belum didukung.', 'Choose a .docx or .pdf file. Other formats are not supported yet.')); return; }
+    if (kind === 'docx' && chosen.size > MAX_DOCX_BYTES) { setError(t('Berkas DOCX lebih dari 5 MB. Pisahkan dokumennya lebih dulu.', 'The DOCX file is over 5 MB. Split the document first.')); return; }
+    if (kind === 'pdf' && chosen.size > MAX_PDF_BYTES) { setError(t('Berkas PDF lebih dari 10 MB. Pisahkan PDF-nya lebih dulu.', 'The PDF is over 10 MB. Split the PDF first.')); return; }
     setBusy('reading');
     try {
-      const result = await request<Extraction>(`/api/documents/import?language=${prefs.writingLanguage === 'en' ? 'en' : 'id'}`, 'POST', await chosen.arrayBuffer(), newKey(), DOCX_CONTENT_TYPE);
+      const result = await request<Extraction>(`/api/documents/import?language=${prefs.writingLanguage === 'en' ? 'en' : 'id'}`, 'POST', await chosen.arrayBuffer(), newKey(), kind === 'pdf' ? PDF_CONTENT_TYPE : DOCX_CONTENT_TYPE);
       setExtraction(result);
     } catch (caught) { if (!guard(caught)) setError(errorText(caught, locale === 'en')); }
     finally { setBusy(''); }
@@ -77,7 +97,9 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
           orientation: extraction.orientation, columns: extraction.columns, header: extraction.header, footer: extraction.footer,
         }),
       };
-      const doc = await request<{ id: string }>('/api/documents', 'POST', { title: extraction.title, language: prefs.writingLanguage, content: extraction.content, preferences, docxImportReceipt: extraction.docxImportReceipt }, newKey());
+      // A PDF has no title of its own more often than not; the file name stands in.
+      const title = extraction.title.trim() || file?.name.replace(/\.(?:docx|pdf)$/iu, '').trim().slice(0, 180) || t('Dokumen impor', 'Imported document');
+      const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: prefs.writingLanguage, content: extraction.content, preferences, ...(extraction.docxImportReceipt ? { docxImportReceipt: extraction.docxImportReceipt } : {}) }, newKey());
       if (!guardedPush(router, `/notebooks/${doc.id}`)) onClose();
     } catch (caught) {
       if (!guard(caught)) setError(errorText(caught, locale === 'en'));
@@ -85,14 +107,15 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
     }
   }
 
+  const number = (value: number) => new Intl.NumberFormat(locale).format(value);
   const plain = extraction ? documentText(extraction.content) : '';
   const characters = plain.length;
   const locked = error && extraction === null && busy === '';
 
   return (
     <Modal size="lg" busy={busy !== ''} onClose={onClose}
-      title={t('Impor dokumen Word', 'Import a Word document')}
-      description={t('Teks, judul, daftar, tabel dan formatnya dibawa masuk. Periksa hasilnya sebelum notebook dibuat.', 'Text, headings, lists, tables and their formatting come across. Check the result before the notebook is created.')}
+      title={t('Impor dokumen', 'Import document')}
+      description={t('Word (.docx) dibawa lengkap dengan formatnya; dari PDF berteks dibawa teks, judul dan daftarnya. Periksa hasilnya sebelum notebook dibuat.', 'Word (.docx) comes across with its formatting; from a text PDF come its text, headings and lists. Check the result before the notebook is created.')}
       footer={<>
         <Button onClick={onClose} disabled={busy !== ''}>{t('Batal', 'Cancel')}</Button>
         {extraction && <Button onClick={() => { setExtraction(null); setFile(null); input.current?.click(); }} disabled={busy !== ''}>{t('Ganti berkas', 'Choose another file')}</Button>}
@@ -101,15 +124,15 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
         </Button>
       </>}>
       <div className="space-y-4">
-        <input ref={input} type="file" accept=".docx" className="sr-only"
+        <input ref={input} type="file" accept={`.docx,.pdf,${DOCX_CONTENT_TYPE},${PDF_CONTENT_TYPE}`} className="sr-only"
           onChange={(event) => { const chosen = event.target.files?.[0]; event.target.value = ''; if (chosen) void extract(chosen); }} />
 
         {!extraction && (
           <button type="button" onClick={() => input.current?.click()} disabled={busy !== ''}
             className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line-strong bg-paper px-6 py-10 text-center transition-colors hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60">
             <Upload size={22} aria-hidden="true" className="text-ink-500" />
-            <span className="text-[14px] font-semibold text-ink-900">{busy === 'reading' ? t('Membaca berkas…', 'Reading the file…') : t('Pilih berkas .docx', 'Choose a .docx file')}</span>
-            <span className="text-[12.5px] text-ink-500">{t('Maksimal 5 MB. Teks dan formatnya dibawa seperti di Word.', 'Up to 5 MB. Text and its formatting come across as in Word.')}</span>
+            <span className="text-[14px] font-semibold text-ink-900">{busy === 'reading' ? (format === 'pdf' ? t('Membaca PDF…', 'Reading the PDF…') : t('Membaca berkas…', 'Reading the file…')) : t('Pilih berkas .docx atau .pdf', 'Choose a .docx or .pdf file')}</span>
+            <span className="text-[12.5px] text-ink-500">{t('DOCX maksimal 5 MB, PDF maksimal 10 MB. PDF hasil scan belum bisa dibaca.', 'DOCX up to 5 MB, PDF up to 10 MB. Scanned PDFs cannot be read yet.')}</span>
           </button>
         )}
 
@@ -120,9 +143,13 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
             <div className="flex items-start gap-3 rounded-xl border border-line bg-white p-3">
               <FileText size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-ink-500" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[13.5px] font-semibold text-ink-900">{extraction.title}</p>
+                <p className="flex items-center gap-1.5 text-[13.5px] font-semibold text-ink-900">
+                  <span className="min-w-0 truncate">{extraction.title || file?.name}</span>
+                  <span className="shrink-0 rounded bg-ink-100 px-1.5 py-px text-[11px] font-semibold text-ink-600">{extraction.format === 'pdf' ? 'PDF' : 'Word · DOCX'}</span>
+                </p>
                 <p className="mt-0.5 text-[12px] text-ink-500">
-                  {file?.name} · {new Intl.NumberFormat(locale).format(characters)} {t('karakter', 'characters')} · {extraction.pageSize === 'letter' ? 'Letter' : 'A4'}
+                  {file?.name} · {number(characters)} {t('karakter', 'characters')}
+                  {extraction.format === 'pdf' && extraction.pages ? <> · {number(extraction.pages.read)} {t('halaman', 'pages')}</> : null} · {extraction.pageSize === 'letter' ? 'Letter' : 'A4'}
                 </p>
               </div>
             </div>
@@ -130,9 +157,10 @@ export function ImportDocxDialog({ onClose }: { onClose: () => void }) {
             {!!extraction.warnings?.length && (
               <Alert tone="warning" title={t('Yang tidak ikut terbawa', 'What does not come across')}>
                 <ul className="mt-1 list-disc space-y-0.5 pl-4">
-                  {extraction.warnings.map((warning) => (
-                    <li key={warning}>{t(WARNING_TEXT[warning]?.[0] ?? warning, WARNING_TEXT[warning]?.[1] ?? warning)}</li>
-                  ))}
+                  {extraction.warnings.map((warning) => {
+                    const [id, en] = warningText(warning, extraction.pages, number);
+                    return <li key={warning}>{t(id, en)}</li>;
+                  })}
                 </ul>
               </Alert>
             )}

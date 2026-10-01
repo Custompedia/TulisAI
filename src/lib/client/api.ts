@@ -162,6 +162,10 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'USER_NOT_FOUND': return t('Pengguna tidak ditemukan.', 'User not found.');
     case code === 'INVALID_CURSOR': return t('Halaman tidak valid. Muat ulang daftar.', 'Invalid page. Reload the list.');
     case code === 'INVALID_DOCUMENT': return t('Format dokumen belum didukung.', 'This document format is not supported.');
+    case code === 'PDF_SCANNED': return t('PDF ini berisi gambar hasil scan; teksnya belum bisa dibaca. Gunakan PDF dengan teks atau DOCX.', 'This PDF contains scanned images; its text cannot be read yet. Use a PDF with text, or a DOCX.');
+    case code === 'PDF_ENCRYPTED': return t('PDF ini dilindungi kata sandi. Buka kuncinya dan simpan ulang tanpa kata sandi, atau gunakan DOCX.', 'This PDF is password-protected. Unlock it and save it again without a password, or use a DOCX.');
+    case code === 'PDF_UNREADABLE': return t('PDF ini rusak atau tidak bisa dibaca. Coba simpan ulang PDF-nya, atau gunakan DOCX.', 'This PDF is damaged or cannot be read. Try saving the PDF again, or use a DOCX.');
+    case code === 'DOCX_UNREADABLE': return t('Berkas DOCX ini rusak, terlalu panjang, atau terlalu rumit untuk dibaca. Simpan ulang atau pisahkan dokumennya, lalu coba lagi.', 'This DOCX file is damaged, too long or too complex to read. Save it again or split it, then try again.');
     default: return t('Tindakan belum berhasil. Coba lagi.', 'The action did not finish. Please try again.');
   }
 }

@@ -8,7 +8,7 @@ import { Toast } from '@/components/ui/Toast';
 import { useShell } from './AppShell';
 import { PlansDialog } from './PlansDialog';
 import { ShortcutsDialog } from './ShortcutsDialog';
-import { ImportDocxDialog } from './ImportDocxDialog';
+import { ImportDocumentDialog } from './ImportDocumentDialog';
 import { NewWritingDialog, type Step } from './NewWritingDialog';
 import { NEW_WRITING_EVENT, OPEN_PLANS_EVENT, OPEN_SHORTCUTS_EVENT, PLAN_NOTICE_EVENT, SHELL_NOTICE_EVENT, takeShellNotice, type NewWritingStart, type ShellNotice } from './shell-events';
 
@@ -80,7 +80,7 @@ export function NewWritingHost() {
   return (
     <>
       {open && <NewWritingDialog key={open.key} initialStep={open.step} initialStyleId={open.styleId} onClose={() => setOpen(null)} onImport={() => { setOpen(null); setImporting(true); }} />}
-      {importing && <ImportDocxDialog onClose={() => setImporting(false)} />}
+      {importing && <ImportDocumentDialog onClose={() => setImporting(false)} />}
     </>
   );
 }

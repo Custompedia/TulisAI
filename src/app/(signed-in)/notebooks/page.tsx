@@ -8,7 +8,7 @@ import { errorText, newKey, request } from '@/lib/client/api';
 import { numberFormat } from '@/lib/client/format';
 import { PageHeader, useEntitlements, useSessionGuard, type DocumentSummary } from '@/components/app/AppShell';
 import { NotebookCard, NotebookCardSkeleton, type CardRemoval } from '@/components/app/NotebookCard';
-import { ImportDocxDialog } from '@/components/app/ImportDocxDialog';
+import { ImportDocumentDialog } from '@/components/app/ImportDocumentDialog';
 import { useRequiredTierName } from '@/components/app/PaidLock';
 import { requestNewWriting, showLockedFeature } from '@/components/app/shell-events';
 import { modeLabel } from '@/components/writing/modes';
@@ -97,16 +97,16 @@ function Notebooks() {
   const canImport = has('docx_import');
   const importTier = useRequiredTierName('docx_import');
   // A locked import stays visible and explains itself, rather than hiding the feature from free accounts.
-  const importDocx = (
+  const importDocument = (
     <Button icon={Upload} iconRight={canImport ? undefined : Lock} onClick={() => (canImport ? setImporting(true) : showLockedFeature(requiredTierFor('docx_import')))}
       className={canImport ? '' : 'text-ink-500'}
-      title={canImport ? t('Impor dokumen Word', 'Import a Word document') : t(`Impor DOCX — buka dengan ${importTier}`, `DOCX import — unlock with ${importTier}`)}>
-      {t('Impor DOCX', 'Import DOCX')}
+      title={canImport ? t('Impor dokumen Word atau PDF', 'Import a Word document or a PDF') : t(`Impor dokumen — buka dengan ${importTier}`, `Document import — unlock with ${importTier}`)}>
+      {t('Impor dokumen', 'Import document')}
       {!canImport && <span className="rounded bg-ink-100 px-1.5 py-px text-[11px] font-semibold text-ink-600">{importTier}</span>}
     </Button>
   );
   const newNotebook = <Button variant="primary" icon={Plus} onClick={() => requestNewWriting()}>{t('Tulis baru', 'New writing')}</Button>;
-  const headerActions = <div className="flex flex-wrap items-center gap-2">{importDocx}{newNotebook}</div>;
+  const headerActions = <div className="flex flex-wrap items-center gap-2">{importDocument}{newNotebook}</div>;
   const filterLabel = filter.pinned ? t('Disematkan', 'Pinned')
     : filter.docType ? `${t('Jenis', 'Kind')}: ${isDocType(filter.docType) ? docTypeShort(filter.docType, t) : t('Tanpa jenis', 'No kind')}`
     : filter.mode ? `${t('Mode terakhir', 'Last mode')}: ${modeLabel(filter.mode, t)}` : null;
@@ -152,11 +152,11 @@ function Notebooks() {
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-strong bg-white px-6 py-10 text-center">
               <span className="grid h-12 w-12 place-items-center rounded-xl bg-brand-50 text-brand-700"><NotebookPen size={22} aria-hidden="true" /></span>
               <p className="mt-3 font-semibold text-ink-900">{t('Belum ada notebook', 'No notebooks yet')}</p>
-              <p className="mt-1 text-sm text-ink-500">{t('Mulai dari kerangka, tempel teks yang ingin diolah, atau impor dokumen Word.', 'Start from an outline, paste text to work on, or import a Word document.')}</p>
+              <p className="mt-1 text-sm text-ink-500">{t('Mulai dari kerangka, tempel teks yang ingin diolah, atau impor dokumen Word atau PDF.', 'Start from an outline, paste text to work on, or import a Word document or a PDF.')}</p>
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 {newNotebook}
                 <Link href="/app" className={buttonClass('secondary', 'md')}><House size={17} aria-hidden="true" />{t('Buka Beranda', 'Open Home')}</Link>
-                {importDocx}
+                {importDocument}
               </div>
             </div>
           ) : docs.length === 0 ? (
@@ -173,7 +173,7 @@ function Notebooks() {
           )}
         {cursor && docs && <div className="mt-5 text-center"><Button loading={loadingMore} onClick={() => void load(cursor)}>{t('Muat lebih banyak', 'Load more')}</Button></div>}
       </div>
-      {importing && <ImportDocxDialog onClose={() => setImporting(false)} />}
+      {importing && <ImportDocumentDialog onClose={() => setImporting(false)} />}
     </main>
   );
 }
