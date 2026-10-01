@@ -1,11 +1,13 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { AlignLeft, ChartNoAxesColumn, Columns2, Copy, Download, EllipsisVertical, FileText, Lock, Plus, Save, Trash2, type LucideIcon } from 'lucide-react';
+import { AlignLeft, ChartNoAxesColumn, ChevronLeft, Columns2, Copy, Download, EllipsisVertical, FileText, Lock, Plus, Save, Trash2, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { Button, IconButton } from '@/components/ui/Button';
 import { Segmented } from '@/components/ui/Field';
 import { Logo } from '@/components/ui/Logo';
 import { AccountMenu } from '@/components/app/AccountMenu';
+import { QuotaPill } from '@/components/app/QuotaPill';
 import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
 import { useRequiredTierName } from '@/components/app/PaidLock';
 
@@ -70,8 +72,15 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 bg-shell px-3 sm:px-4">
       <span title={t('Ke beranda', 'Go to home')} className="shrink-0"><Logo href="/app" compact /></span>
+      {/* The way back to the library, so leaving a notebook no longer goes through the account menu. */}
+      <nav aria-label={t('Lokasi', 'Breadcrumb')} className="flex shrink-0 items-center">
+        <Link href="/notebooks" title={t('Kembali ke semua notebook', 'Back to all notebooks')} className="ml-1 inline-flex h-9 items-center gap-1 rounded-lg px-1.5 text-[14px] font-medium text-ink-500 transition-colors hover:bg-white/70 hover:text-ink-900 md:ml-4">
+          <ChevronLeft size={16} aria-hidden="true" className="sm:hidden" /><span className="hidden sm:inline">Notebook</span>
+        </Link>
+        <span aria-hidden="true" className="hidden text-ink-300 sm:inline">/</span>
+      </nav>
       <input aria-label={t('Judul notebook', 'Notebook title')} value={title} maxLength={180} disabled={disabled} onChange={(event) => onTitle(event.target.value)} placeholder={t('Notebook tanpa judul', 'Untitled notebook')}
-        className="ml-1 h-10 min-w-0 max-w-xl flex-1 truncate rounded-lg bg-transparent px-2 text-[20px] font-medium tracking-[-0.01em] text-ink-950 placeholder:text-ink-400 hover:bg-white/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
+        className="h-10 min-w-0 max-w-xl flex-1 truncate rounded-lg bg-transparent px-2 text-[20px] font-medium tracking-[-0.01em] text-ink-950 placeholder:text-ink-400 hover:bg-white/60 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:opacity-60" />
 
       <div className="ml-auto flex shrink-0 items-center gap-1.5">
         <button type="button" onClick={() => setCreating(true)} className="hidden h-9 items-center gap-1.5 rounded-full border border-line bg-white px-3.5 text-[13px] font-medium text-ink-800 transition-colors hover:border-line-strong hover:bg-paper sm:inline-flex">
@@ -127,7 +136,8 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
             </div>
           )}
         </div>
-        <span className="ml-1"><AccountMenu /></span>
+        <span className="ml-1"><QuotaPill /></span>
+        <AccountMenu />
       </div>
       {creating && <NewNotebookDialog onClose={() => setCreating(false)} />}
     </header>

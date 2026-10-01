@@ -1,13 +1,9 @@
 'use client';
 import { useLocale } from '@/lib/client/locale';
-import { AppShell, useShell } from '@/components/app/AppShell';
+import { useShell } from '@/components/app/AppShell';
 import { Composer } from '@/components/compose/Composer';
 
 export default function HomePage() {
-  return <AppShell><Home /></AppShell>;
-}
-
-function Home() {
   const { t } = useLocale();
   const { user } = useShell();
   const name = user.name.split(' ')[0] || user.name;

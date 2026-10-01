@@ -1,30 +1,35 @@
 'use client';
 import { usePathname, useRouter } from 'next/navigation';
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import { Gauge } from 'lucide-react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useLocale } from '@/lib/client/locale';
-import { numberFormat } from '@/lib/client/format';
 import { ApiError, errorText, isUnauthenticated, request } from '@/lib/client/api';
 import { resetStyles } from '@/lib/client/styles-store';
+import { resetBilling } from '@/lib/client/billing-store';
 import { StatusScreen, statusIcons } from '@/components/ui/StatusScreen';
-import { Logo } from '@/components/ui/Logo';
-import { AccountMenu } from './AccountMenu';
-import { PlansDialog } from './PlansDialog';
-import { Sidebar } from './Sidebar';
 import { LoadingBlock } from '@/components/ui/Spinner';
 import { hasFeature, PLAN_LIMITS, type Feature, type PlanLimits, type Tier } from '@/lib/plans';
 
 export type SessionUser = { id: string; name: string; email: string; username?: string | null; image?: string | null; role?: 'user' | 'admin' };
 export type UserSettings = { interfaceLanguage: 'id' | 'en'; writingLanguage: 'auto' | 'id' | 'en'; defaultMode: string; primaryUseCase: 'academic' | 'professional' | 'general'; humanizerContext: 'academic' | 'professional' | 'general'; localDrafts: boolean; onboarded: boolean; updatedAt: string | null };
-export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; charactersUsed: number; characterLimit: number; charactersRemaining: number; characterScope?: 'account' | 'period'; tier?: Tier; access?: { paidUntil: string | null }; limits?: PlanLimits; features?: Feature[] };
+export type WalletSummary = {
+  mode: 'free' | 'paid' | 'unavailable';
+  free: { original: number; remaining: number; state: string } | null;
+  included: { periodStart: string; periodEnd: string; original: number; reserved: number; settled: number; remaining: number } | null;
+  purchased: { available: number; reserved: number; frozen: number; expired: number; settled: number };
+  spendableTotal: number;
+};
+export type Usage = { period: string; requestsUsed: number; requestLimit: number; requestsRemaining: number; charactersUsed: number; characterLimit: number; charactersRemaining: number; characterScope?: 'account' | 'period'; tier?: Tier; access?: { paidUntil: string | null }; limits?: PlanLimits; features?: Feature[]; wallet?: WalletSummary };
 export type DocumentSummary = { id: string; title: string; language: string; revision: number; mode: string | null; color: string | null; icon: string | null; createdAt: string; updatedAt: string };
 
-type Shell = { user: SessionUser; settings: UserSettings; usage: Usage | null; setSettings: (settings: UserSettings) => void; refresh: () => Promise<void> };
+type ShellState = { user: SessionUser; settings: UserSettings; usage: Usage | null };
+type Shell = ShellState & { setSettings: (settings: UserSettings) => void; refresh: () => Promise<void>; refreshUsage: () => Promise<void> };
 const ShellContext = createContext<Shell | null>(null);
 export const useShell = () => { const value = useContext(ShellContext); if (!value) throw new Error('useShell must be used inside AppShell'); return value; };
 
 // Limits and gates resolved from the account, with the free plan as the answer until /api/usage has replied.
 // Client gates only shape the UI; every paid surface is enforced again on the server.
+// GET /api/usage already carries tier, features and access, so this is the only client gate: the unused
+// GET /api/access twin was removed in UX 1b rather than adding a fourth request to every page.
 export function useEntitlements() {
   const { usage } = useShell();
   const tier: Tier = usage?.tier ?? 'free';
@@ -38,7 +43,7 @@ export function useSignOut() {
   const [busy, setBusy] = useState(false);
   const signOut = useCallback(async () => {
     setBusy(true);
-    try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' }); } finally { resetStyles(); router.replace('/'); router.refresh(); }
+    try { await fetch('/api/auth/sign-out', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}', credentials: 'same-origin' }); } finally { resetStyles(); resetBilling(); router.replace('/'); router.refresh(); }
   }, [router]);
   return { signOut, busy };
 }
@@ -52,13 +57,14 @@ export function useSessionGuard() {
   }, [pathname, router]);
 }
 
-
-// bare: provides the session context without top bar, sidebar, or content card.
-export function AppShell({ children, requireOnboarding = true, fullBleed = false, bare = false }: { children: React.ReactNode; requireOnboarding?: boolean; fullBleed?: boolean; bare?: boolean }) {
+// Mounted once by the signed-in layout, so moving between Beranda, Notebook, Skill, Akun and Admin keeps the
+// session, settings and usage in memory: the full-screen loader only shows on the first entry.
+// The layout passes the frame (AppFrame) as children, which keeps this module free of an import cycle.
+export function AppShell({ children }: { children: React.ReactNode }) {
   const { t, locale, setLocale } = useLocale();
   const router = useRouter();
   const guard = useSessionGuard();
-  const [state, setState] = useState<{ user: SessionUser; settings: UserSettings; usage: Usage | null } | null>(null);
+  const [state, setState] = useState<ShellState | null>(null);
   const [error, setError] = useState<unknown>(null);
 
   const load = useCallback(async () => {
@@ -67,16 +73,26 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
         request<SessionUser>('/api/me'), request<UserSettings>('/api/settings'),
         request<Usage>('/api/usage').catch(() => null),
       ]);
-      if (requireOnboarding && !settings.onboarded) { router.replace('/onboarding'); return; }
+      if (!settings.onboarded) { router.replace('/onboarding'); return; }
       setLocale(settings.interfaceLanguage);
       setState({ user, settings, usage });
       setError(null);
     } catch (caught) { if (!guard(caught)) setError(caught); }
-  }, [guard, requireOnboarding, router, setLocale]);
+  }, [guard, router, setLocale]);
 
-  useEffect(() => { void load(); }, [load]);
+  // Only the meter: after an AI run or a payment check the pill and rail dot should move without a reload.
+  const refreshUsage = useCallback(async () => {
+    const usage = await request<Usage>('/api/usage').catch(() => null);
+    if (usage) setState((current) => (current ? { ...current, usage } : current));
+  }, []);
 
-  if (!state) {
+  // The session is loaded once per mount; later navigations reuse it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- `load` changes identity with the pathname guard
+  useEffect(() => { void load(); }, []);
+
+  const shell = useMemo<Shell | null>(() => (state ? { ...state, setSettings: (settings) => setState((current) => (current ? { ...current, settings } : current)), refresh: load, refreshUsage } : null), [load, refreshUsage, state]);
+
+  if (!shell) {
     if (!error) return <main className="grid min-h-dvh place-items-center bg-shell px-4"><LoadingBlock label={t('Menyiapkan ruang kerja…', 'Preparing your workspace…')} /></main>;
     const offline = error instanceof ApiError && error.code === 'NETWORK_ERROR';
     return (
@@ -88,44 +104,7 @@ export function AppShell({ children, requireOnboarding = true, fullBleed = false
     );
   }
 
-  const shell: Shell = { ...state, setSettings: (settings) => setState((current) => (current ? { ...current, settings } : current)), refresh: load };
-  if (bare) return <ShellContext.Provider value={shell}>{children}</ShellContext.Provider>;
-  return (
-    <ShellContext.Provider value={shell}>
-      <div className={`bg-shell ${fullBleed ? 'flex h-dvh flex-col overflow-hidden' : 'min-h-dvh'}`}>
-        <TopBar />
-        <Sidebar />
-        <div className={`min-w-0 pb-16 pt-14 md:pb-0 md:pl-[72px] md:pr-2 ${fullBleed ? 'flex min-h-0 flex-1 flex-col' : ''}`}>
-          <div className={`bg-paper md:rounded-t-[20px] md:border md:border-b-0 md:border-line md:shadow-[0_1px_3px_rgb(31_32_29/0.06)] ${fullBleed ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'min-h-[calc(100dvh-3.5rem)]'}`}>{children}</div>
-        </div>
-      </div>
-    </ShellContext.Provider>
-  );
-}
-
-function TopBar() {
-  const { t, locale } = useLocale();
-  const { usage } = useShell();
-  const [plans, setPlans] = useState(false);
-  // Admins are charged characters like everyone else, so the meter never switches to an unlimited display.
-  const low = usage !== null && usage.charactersRemaining <= Math.max(1, Math.round(usage.characterLimit * 0.1));
-  // Free's allowance is granted once per account, so the label must not promise a monthly reset.
-  const oneTime = usage?.characterScope === 'account';
-
-  return (
-    <header className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-2 bg-shell px-4 md:pl-[18px]">
-      <Logo href="/app" mark="h-9 w-9" />
-      <div className="ml-auto flex items-center gap-2.5">
-        {usage && (
-          <button type="button" onClick={() => setPlans(true)} aria-haspopup="dialog" title={oneTime ? t('Karakter AI sekali pakai yang sudah terpakai', 'One-time AI characters used') : t('Karakter AI terpakai bulan ini', 'AI characters used this month')} className={`hidden h-10 items-center gap-2 rounded-full border px-4 text-[13px] font-medium shadow-[0_1px_2px_rgb(31_32_29/0.05)] transition-colors sm:inline-flex ${low ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-line bg-white text-ink-700 hover:border-line-strong hover:text-ink-900'}`}>
-            <Gauge size={16} aria-hidden="true" className={low ? '' : 'text-brand-700'} /><span className="font-semibold tabular-nums text-ink-900">{numberFormat(usage.charactersUsed, locale)}/{numberFormat(usage.characterLimit, locale)}</span>{oneTime ? t('karakter sekali pakai', 'one-time characters') : t('karakter bulan ini', 'characters this month')}
-          </button>
-        )}
-        <AccountMenu />
-      </div>
-      {plans && <PlansDialog onClose={() => setPlans(false)} />}
-    </header>
-  );
+  return <ShellContext.Provider value={shell}>{children}</ShellContext.Provider>;
 }
 
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: React.ReactNode }) {
