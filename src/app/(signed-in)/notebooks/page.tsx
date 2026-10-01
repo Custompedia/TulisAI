@@ -102,6 +102,7 @@ function Notebooks() {
       className={canImport ? '' : 'text-ink-500'}
       title={canImport ? t('Impor dokumen Word', 'Import a Word document') : t(`Impor DOCX — buka dengan ${importTier}`, `DOCX import — unlock with ${importTier}`)}>
       {t('Impor DOCX', 'Import DOCX')}
+      {!canImport && <span className="rounded bg-ink-100 px-1.5 py-px text-[11px] font-semibold text-ink-600">{importTier}</span>}
     </Button>
   );
   const newNotebook = <Button variant="primary" icon={Plus} onClick={() => requestNewWriting()}>{t('Tulis baru', 'New writing')}</Button>;

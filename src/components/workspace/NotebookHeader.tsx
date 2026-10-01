@@ -106,11 +106,11 @@ export function NotebookHeader(props: Props) {
   // Word tries the server even without Pro: a notebook exported or imported before a downgrade is still allowed,
   // and a refusal comes back with its reason. HTML follows the same rule.
   const exportItems: Item[] = [
-    { key: 'a4', icon: FileText, label: t('Word (.docx) · A4', 'Word (.docx) · A4'), checked: pageSize === 'a4', locked: !canExport, disabled: exporting, onSelect: () => onExportDocx('a4'), title: canExport ? undefined : t(`Ekspor DOCX ada di ${exportTier}. Notebook yang pernah diekspor sebelum turun paket tetap bisa.`, `DOCX export is part of ${exportTier}. A notebook exported before a downgrade still can be.`) },
-    { key: 'letter', icon: FileText, label: t('Word (.docx) · Letter', 'Word (.docx) · Letter'), checked: pageSize === 'letter', locked: !canExport, disabled: exporting, onSelect: () => onExportDocx('letter') },
+    { key: 'a4', icon: FileText, label: t('Word (.docx) · A4', 'Word (.docx) · A4'), checked: pageSize === 'a4', locked: !canExport, hint: canExport ? undefined : exportTier, disabled: exporting, onSelect: () => onExportDocx('a4'), title: canExport ? undefined : t(`Ekspor DOCX ada di ${exportTier}. Notebook yang pernah diekspor sebelum turun paket tetap bisa.`, `DOCX export is part of ${exportTier}. A notebook exported before a downgrade still can be.`) },
+    { key: 'letter', icon: FileText, label: t('Word (.docx) · Letter', 'Word (.docx) · Letter'), checked: pageSize === 'letter', locked: !canExport, hint: canExport ? undefined : exportTier, disabled: exporting, onSelect: () => onExportDocx('letter'), title: canExport ? undefined : t(`Ekspor DOCX ada di ${exportTier}. Notebook yang pernah diekspor sebelum turun paket tetap bisa.`, `DOCX export is part of ${exportTier}. A notebook exported before a downgrade still can be.`) },
     { key: 'copy', icon: Copy, label: t('Salin semua teks', 'Copy all text'), disabled: !canCopy, onSelect: onCopy },
     { key: 'plain', icon: ClipboardCheck, label: t('Salin untuk sosmed', 'Copy for social media'), hint: t('teks polos', 'plain text'), disabled: !canCopy, onSelect: onCopyPlain },
-    { key: 'html', icon: FileCode2, label: t('Unduh HTML', 'Download HTML'), locked: !canExport, disabled: exporting, onSelect: onExportHtml, title: canExport ? undefined : t(`Unduh HTML ada di ${exportTier}.`, `HTML download is part of ${exportTier}.`) },
+    { key: 'html', icon: FileCode2, label: t('Unduh HTML', 'Download HTML'), locked: !canExport, hint: canExport ? undefined : exportTier, disabled: exporting, onSelect: onExportHtml, title: canExport ? undefined : t(`Unduh HTML ada di ${exportTier}.`, `HTML download is part of ${exportTier}.`) },
   ];
   const versionItems: Item[] = [
     { key: 'compare', icon: Columns2, label: compareLabel, disabled: !comparing && compareHint !== null, title: comparing ? undefined : compareHint ?? undefined, onSelect: onCompare },
