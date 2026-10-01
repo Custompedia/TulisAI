@@ -73,7 +73,7 @@ export default function OnboardingPage() {
               <div role="radiogroup" className="space-y-2">
                 <Choice active={useCase === 'academic'} onClick={() => setUseCase('academic')} icon={GraduationCap} title={t('Akademik', 'Academic')} hint={t('Skripsi, tesis, jurnal, tugas kuliah', 'Theses, journals, coursework')} />
                 <Choice active={useCase === 'professional'} onClick={() => setUseCase('professional')} icon={Briefcase} title={t('Profesional', 'Professional')} hint={t('Email, laporan, proposal', 'Emails, reports, proposals')} />
-                <Choice active={useCase === 'general'} onClick={() => setUseCase('general')} icon={PenLine} title={t('Umum', 'General')} hint={t('Tulisan sehari-hari dan konten', 'Everyday writing and content')} />
+                <Choice active={useCase === 'general'} onClick={() => setUseCase('general')} icon={PenLine} title={t('Umum', 'General')} hint={t('Artikel, konten, caption', 'Articles, content, captions')} />
               </div>
             </fieldset>
 

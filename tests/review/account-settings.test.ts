@@ -14,6 +14,7 @@ import { validateUsername } from "@/lib/auth/form";
 import { ApiError, authErrorCode, errorText } from "@/lib/client/api";
 import { GET } from "@/app/api/account/route";
 import { POST as setPassword } from "@/app/api/account/password/route";
+import { GET as getSettings, PATCH as patchSettings } from "@/app/api/settings/route";
 
 let db: DatabaseSync;
 class Statement {
@@ -164,5 +165,25 @@ describe("account routes", () => {
     const verified = await auth().handler(new Request(link, { headers: { cookie } }));
     expect(verified.headers.get("location")).toContain("/settings?email=changed");
     expect(db.prepare("SELECT email,email_verified FROM user").get()).toEqual({ email: "ada.new@example.test", email_verified: 1 });
+  });
+});
+
+// UX 1a: Settings > Preferensi menulis saves these through the existing settings route.
+describe("writing preferences route", () => {
+  const patch = (cookie: string, body: unknown, key = crypto.randomUUID()) => patchSettings(new Request(`${BASE}/api/settings`, { method: "PATCH", headers: { cookie, "content-type": "application/json", "Idempotency-Key": key }, body: JSON.stringify(body) }));
+  const read = async (cookie: string) => ((await (await getSettings(new Request(`${BASE}/api/settings`, { headers: { cookie } }))).json()) as { data: Record<string, unknown> }).data;
+  const base = { interfaceLanguage: "id", writingLanguage: "auto", defaultMode: "P03_HUMANIZER", primaryUseCase: "general", humanizerContext: "general", localDrafts: true };
+
+  it("stores writing language, starting mode, Humanize context and main use", async () => {
+    const cookie = await register();
+    expect((await patch(cookie, base)).status).toBe(200);
+    const saved = await patch(cookie, { ...base, writingLanguage: "en", defaultMode: "P05_CREATIVE", humanizerContext: "professional", primaryUseCase: "academic" });
+    expect(saved.status).toBe(200);
+    expect(await read(cookie)).toMatchObject({ writingLanguage: "en", defaultMode: "P05_CREATIVE", humanizerContext: "professional", primaryUseCase: "academic", interfaceLanguage: "id", localDrafts: true, onboarded: true });
+  });
+
+  it("refuses a mode the account default cannot hold", async () => {
+    const cookie = await register();
+    expect((await patch(cookie, { ...base, defaultMode: "P08_CUSTOM_TRANSFORM" })).status).toBe(400);
   });
 });

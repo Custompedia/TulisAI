@@ -7,6 +7,7 @@ import { Segmented } from '@/components/ui/Field';
 import { Logo } from '@/components/ui/Logo';
 import { AccountMenu } from '@/components/app/AccountMenu';
 import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
+import { useRequiredTierName } from '@/components/app/PaidLock';
 
 type Props = {
   title: string; onTitle: (title: string) => void; disabled: boolean; comparing: boolean; canCopy: boolean;
@@ -61,6 +62,9 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
   }, [menu]);
 
   const pick = (action: () => void) => () => { setMenu(false); action(); };
+  // Lock copy names the plan from the catalogue, so it cannot drift from the gate.
+  const advancedTier = useRequiredTierName('advanced_notebook');
+  const exportTier = useRequiredTierName('docx_export');
   const compareLabel = comparing ? t('Keluar dari Bandingkan', 'Exit Compare') : t('Bandingkan', 'Compare');
 
   return (
@@ -88,13 +92,13 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
               onChange={(next) => onAdvanced(next === 'advanced')} onLocked={onUpgrade}
               options={[
                 { value: 'basic', label: t('Dasar', 'Basic'), icon: AlignLeft },
-                { value: 'advanced', label: t('Lanjutan', 'Advanced'), icon: FileText, locked: !canAdvanced, lockedHint: t('Mode lanjutan — paket berbayar', 'Advanced mode — paid plan') },
+                { value: 'advanced', label: t('Lanjutan', 'Advanced'), icon: FileText, locked: !canAdvanced, lockedHint: t(`Mode lanjutan — buka dengan ${advancedTier}`, `Advanced mode — unlock with ${advancedTier}`) },
               ]} />
           </div>
           <ToolButton icon={Download} locked={!canExport} disabled={exporting}
             label={canExport
               ? (exporting ? t('Mengekspor…', 'Exporting…') : t('Ekspor ke DOCX', 'Export to DOCX'))
-              : t('Ekspor DOCX — paket berbayar', 'DOCX export — paid plan')}
+              : t(`Ekspor DOCX — buka dengan ${exportTier}`, `DOCX export — unlock with ${exportTier}`)}
             onClick={canExport ? onExport : onUpgrade} />
         </div>
         <div className="relative" ref={menuRef}>
@@ -109,11 +113,11 @@ export function NotebookHeader({ title, onTitle, disabled, comparing, canCopy, o
                 <MenuItem icon={Columns2} label={compareLabel} onClick={pick(onCompare)} />
                 <MenuItem icon={Save} label={t('Simpan versi', 'Save version')} disabled={disabled} onClick={pick(onSaveVersion)} />
                 <MenuItem icon={FileText} locked={!canAdvanced}
-                  label={canAdvanced ? (advanced ? t('Mode lanjutan: aktif', 'Advanced mode: on') : t('Mode lanjutan: nonaktif', 'Advanced mode: off')) : t('Mode lanjutan', 'Advanced mode')}
+                  label={canAdvanced ? (advanced ? t('Mode lanjutan: aktif', 'Advanced mode: on') : t('Mode lanjutan: nonaktif', 'Advanced mode: off')) : t(`Mode lanjutan · ${advancedTier}`, `Advanced mode · ${advancedTier}`)}
                   disabled={disabled && canAdvanced}
                   onClick={pick(canAdvanced ? () => onAdvanced(!advanced) : onUpgrade)} />
                 <MenuItem icon={Download} locked={!canExport}
-                  label={exporting ? t('Mengekspor…', 'Exporting…') : t('Ekspor ke DOCX', 'Export to DOCX')}
+                  label={exporting ? t('Mengekspor…', 'Exporting…') : canExport ? t('Ekspor ke DOCX', 'Export to DOCX') : t(`Ekspor ke DOCX · ${exportTier}`, `Export to DOCX · ${exportTier}`)}
                   disabled={exporting}
                   onClick={pick(canExport ? onExport : onUpgrade)} />
               </div>

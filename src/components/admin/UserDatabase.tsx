@@ -11,17 +11,14 @@ import { Button } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import { Pagination } from '@/components/ui/Pagination';
-import { sortLabel, TIERS, tierLabel, type AdminUser, type Role, type Tier, type UsersPage, type UserSort } from './admin-shared';
+import { characterUsage, collectAllPages, sortLabel, TIERS, tierLabel, usersCsv, type Role, type Tier, type UsersPage, type UserSort } from './admin-shared';
 import { CreateUserDialog } from './CreateUserDialog';
 import { RoleBadge, StatusBadge, TierBadge } from './UserDetailModal';
 
 type Filters = { role: 'all' | Role; tier: 'all' | Tier; status: 'all' | 'active' | 'banned'; sort: UserSort };
 const th = 'px-4 py-2 text-left text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-500';
-const csvCell = (value: unknown) => { const text = value === null || value === undefined ? '' : String(value); return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text; };
-function exportCsv(items: AdminUser[]) {
-  const header = ['id', 'name', 'email', 'username', 'role', 'tier', 'status', 'email_verified', 'requests_this_month', 'characters_used', 'character_scope', 'failed_this_month', 'tokens_this_month', 'character_limit', 'documents', 'last_active_at', 'created_at'];
-  const rows = items.map((u) => [u.id, u.name, u.email, u.username, u.role, u.tier, u.banned ? 'disabled' : 'active', u.emailVerified, u.requestsThisMonth, u.charactersUsed, u.characterScope, u.failedThisMonth, u.tokensThisMonth, u.unlimited ? 'unlimited' : u.characterLimit, u.documents, u.lastActiveAt, u.createdAt]);
-  const blob = new Blob([[header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' });
+function downloadCsv(csv: string) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `users-${new Date().toISOString().slice(0, 10)}.csv`; link.click(); URL.revokeObjectURL(url);
 }
 
@@ -38,16 +35,27 @@ export function UserDatabase({ onOpenUser, onPage, refreshKey, notify }: { onOpe
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [creating, setCreating] = useState(false);
+  const [exporting, setExporting] = useState(false);
   useEffect(() => { const timer = setTimeout(() => { setTerm(query.trim()); setPage(1); }, 300); return () => clearTimeout(timer); }, [query]);
 
+  // One query builder for the table and the export, so the CSV always matches the filters on screen.
+  const pageUrl = useCallback((target: number) => {
+    const search = new URLSearchParams({ q: term, page: String(target), sort: filters.sort });
+    if (filters.role !== 'all') search.set('role', filters.role); if (filters.tier !== 'all') search.set('tier', filters.tier); if (filters.status !== 'all') search.set('status', filters.status);
+    return `/api/admin/users?${search}`;
+  }, [filters, term]);
   const load = useCallback(async () => {
     setLoading(true); setError(null);
-    const search = new URLSearchParams({ q: term, page: String(page), sort: filters.sort });
-    if (filters.role !== 'all') search.set('role', filters.role); if (filters.tier !== 'all') search.set('tier', filters.tier); if (filters.status !== 'all') search.set('status', filters.status);
-    try { const next = await request<UsersPage>(`/api/admin/users?${search}`); setData(next); onPage(next); }
+    try { const next = await request<UsersPage>(pageUrl(page)); setData(next); onPage(next); }
     catch (caught) { if (!guard(caught)) setError(caught); }
     finally { setLoading(false); }
-  }, [filters, guard, onPage, page, term]);
+  }, [guard, onPage, page, pageUrl]);
+  async function exportAll() {
+    setExporting(true);
+    try { downloadCsv(usersCsv(await collectAllPages((target) => request<UsersPage>(pageUrl(target))))); }
+    catch (caught) { if (!guard(caught)) notify({ tone: 'error', message: errorText(caught, en) }); }
+    finally { setExporting(false); }
+  }
   useEffect(() => { void load(); }, [load, refreshKey]);
 
   const setFilter = <K extends keyof Filters>(key: K, value: Filters[K]) => { setFilters((current) => ({ ...current, [key]: value })); setPage(1); };
@@ -77,7 +85,7 @@ export function UserDatabase({ onOpenUser, onPage, refreshKey, notify }: { onOpe
           <div className="lg:w-48"><HintSelect size="sm" label={t('Urutkan', 'Sort')} value={filters.sort} onChange={(sort) => setFilter('sort', sort)} options={(['newest', 'oldest', 'name', 'usage', 'active'] as UserSort[]).map((sort) => ({ value: sort, label: sortLabel(sort, t) }))} /></div>
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button size="sm" icon={Download} disabled={!data?.items.length} onClick={() => data && exportCsv(data.items)}>CSV</Button>
+          <Button size="sm" icon={Download} loading={exporting} disabled={!data?.items.length || exporting} title={t('Ekspor semua pengguna yang cocok dengan filter', 'Export every user that matches the filters')} onClick={() => void exportAll()}>CSV</Button>
           <Button size="sm" variant="primary" icon={UserPlus} onClick={() => setCreating(true)}>{t('Tambah pengguna', 'Add user')}</Button>
         </div>
       </div>
@@ -87,7 +95,7 @@ export function UserDatabase({ onOpenUser, onPage, refreshKey, notify }: { onOpe
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] table-fixed">
             <colgroup><col /><col className="w-24" /><col className="w-24" /><col className="w-28" /><col className="w-32" /><col className="w-36" /><col className="w-36" /><col className="w-10" /></colgroup>
-            <thead className="bg-paper/60"><tr><th className={th}>{t('Pengguna', 'User')}</th><th className={th}>Role</th><th className={th}>Tier</th><th className={th}>Status</th><th className={`${th} text-right`}>{t('AI bulan ini', 'AI this month')}</th><th className={th}>{t('Terakhir aktif', 'Last active')}</th><th className={th}>{t('Bergabung', 'Joined')}</th><th className={th}><span className="sr-only">{t('Buka', 'Open')}</span></th></tr></thead>
+            <thead className="bg-paper/60"><tr><th className={th}>{t('Pengguna', 'User')}</th><th className={th}>Role</th><th className={th}>Tier</th><th className={th}>Status</th><th className={`${th} text-right`}>{t('Karakter AI', 'AI characters')}</th><th className={th}>{t('Terakhir aktif', 'Last active')}</th><th className={th}>{t('Bergabung', 'Joined')}</th><th className={th}><span className="sr-only">{t('Buka', 'Open')}</span></th></tr></thead>
             <tbody className="divide-y divide-line">
               {data === null ? Array.from({ length: 6 }, (_, index) => <tr key={index} aria-hidden="true" className="animate-pulse"><td className="px-4 py-3"><span className="flex items-center gap-3"><span className="h-9 w-9 rounded-full bg-paper-deep" /><span className="flex-1 space-y-2"><span className="block h-3 w-40 rounded bg-paper-deep" /><span className="block h-3 w-56 rounded bg-paper-deep" /></span></span></td><td colSpan={7} /></tr>)
                 : data.items.length === 0 ? (
@@ -97,7 +105,7 @@ export function UserDatabase({ onOpenUser, onPage, refreshKey, notify }: { onOpe
                     {filtered && <Button size="sm" className="mt-3" onClick={() => { setQuery(''); setFilters({ role: 'all', tier: 'all', status: 'all', sort: 'newest' }); setPage(1); }}>{t('Hapus filter', 'Clear filters')}</Button>}
                   </td></tr>
                 ) : data.items.map((item) => {
-                  const self = item.id === me.id;
+                  const self = item.id === me.id; const usage = characterUsage(item, t);
                   return (
                     <tr key={item.id} onClick={() => onOpenUser(item.id)} className="cursor-pointer transition-colors hover:bg-paper/70">
                       <td className="px-4 py-2.5">
@@ -109,7 +117,10 @@ export function UserDatabase({ onOpenUser, onPage, refreshKey, notify }: { onOpe
                       <td className="px-4 py-2.5"><RoleBadge role={item.role} /></td>
                       <td className="px-4 py-2.5"><TierBadge tier={item.tier} t={t} /></td>
                       <td className="px-4 py-2.5"><StatusBadge user={item} t={t} /></td>
-                      <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-ink-700" title={t(`${item.failedThisMonth} gagal · ${numberFormat(item.tokensThisMonth, locale)} token`, `${item.failedThisMonth} failed · ${numberFormat(item.tokensThisMonth, locale)} tokens`)}>{numberFormat(item.requestsThisMonth, locale)}<span className="text-ink-400"> / {item.unlimited ? '∞' : numberFormat(item.requestLimit, locale)}</span>{item.failedThisMonth > 0 && <span className="ml-1 text-amber-700">!</span>}</td>
+                      <td className="px-4 py-2.5 text-right text-[13px] tabular-nums text-ink-700" title={t(`${numberFormat(item.requestsThisMonth, locale)} permintaan bulan ini · ${item.failedThisMonth} gagal · ${numberFormat(item.tokensThisMonth, locale)} token`, `${numberFormat(item.requestsThisMonth, locale)} requests this month · ${item.failedThisMonth} failed · ${numberFormat(item.tokensThisMonth, locale)} tokens`)}>
+                        <span className={usage.share >= 0.9 ? 'text-amber-800' : ''}>{numberFormat(usage.used, locale)}</span><span className="text-ink-400"> / {numberFormat(usage.limit, locale)}</span>{item.failedThisMonth > 0 && <span className="ml-1 text-amber-700">!</span>}
+                        <span className="block text-[11px] text-ink-400">{usage.scope}</span>
+                      </td>
                       <td className="px-4 py-2.5 text-[13px] text-ink-700" title={item.lastActiveAt ? dateTime(item.lastActiveAt, locale) : undefined}>{item.lastActiveAt ? relativeTime(item.lastActiveAt, locale) : '—'}</td>
                       <td className="px-4 py-2.5 text-[13px] text-ink-700">{dateTime(item.createdAt, locale)}</td>
                       <td className="px-2 py-2.5 text-ink-400"><ChevronRight size={16} aria-hidden="true" /></td>

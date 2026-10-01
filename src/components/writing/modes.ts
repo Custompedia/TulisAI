@@ -103,6 +103,7 @@ export const formatOptions = (t: T): Option[] => [
   { value: 'paragraph', label: t('Paragraf', 'Paragraph'), hint: t('Bawaan, bentuk paragraf tetap', 'Default, paragraphs stay as they are') },
   { value: 'bullets', label: t('Poin-poin', 'Bullet points'), hint: t('Poin jika isinya memang daftar, argumen tetap prosa', 'Bullets where content is a list; argument stays prose') },
   { value: 'numbered_list', label: t('Daftar bernomor', 'Numbered list'), hint: t('Bernomor hanya jika ada urutan nyata', 'Numbered only where there is a real sequence') },
+  { value: 'table', label: t('Tabel', 'Table'), hint: t('Kolom dari perbedaan yang sudah ada di teks', 'Columns built from distinctions already in the text') },
   { value: 'short_summary', label: t('Ringkasan', 'Summary'), hint: t('Sekitar 40% panjang, semua klaim tetap', 'About 40% of the length, every claim kept') },
   { value: 'email', label: t('Email', 'Email'), hint: t('Salam, isi, penutup, dan tanda tangan', 'Greeting, body, closing, and sign-off') },
 ];
@@ -128,6 +129,10 @@ export const focusOptions = (t: T): Option[] => [
 const find = (options: Option[], value: string) => options.find((option) => option.value === value)?.label ?? value;
 
 // Plain-language line describing what will be requested.
+// Profesional and Sederhanakan already name their reader (Untuk / Untuk siapa), and the backend ignores the
+// Sesuaikan reader for them, so the control is hidden there instead of pretending to work.
+export const usesAudience = (mode: Mode) => mode !== 'professional' && mode !== 'simplify';
+
 export function requestSummary(settings: Settings, t: T): string {
   const parts: string[] = [modeLabel(settings.mode, t)];
   const lower = (options: Option[], value: string) => find(options, value).toLowerCase();
@@ -140,7 +145,7 @@ export function requestSummary(settings: Settings, t: T): string {
   if (settings.customized) {
     if (settings.format !== 'paragraph') parts.push(lower(formatOptions(t), settings.format));
     parts.push(settings.length === 'same' ? t('panjang sama', 'same length') : lower(lengthOptions(t), settings.length));
-    parts.push(`${t('pembaca', 'reader')} ${lower(audienceOptions(t), settings.audience)}`);
+    if (usesAudience(settings.mode)) parts.push(`${t('pembaca', 'reader')} ${lower(audienceOptions(t), settings.audience)}`);
     if (settings.focus.length) parts.push(`${t('penekanan', 'emphasis')} ${settings.focus.map((value) => lower(focusOptions(t), value)).join(', ')}`);
     if (settings.extra.trim()) parts.push(t('dengan catatan', 'with a note'));
   }

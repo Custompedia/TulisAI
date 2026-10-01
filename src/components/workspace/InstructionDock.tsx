@@ -68,7 +68,7 @@ export function InstructionDock({ busy, locked, target, onSubmit, onUpgrade, onO
       >
         {/* Stays mounted while open so keyboard focus hands over to the field instead of being dropped. */}
         <button type="button" tabIndex={expanded ? -1 : 0} aria-hidden={expanded} onClick={() => (locked ? onUpgrade() : expand())}
-          aria-label={locked ? t('Perintah AI — paket berbayar', 'AI instruction — paid plan') : t('Perintah AI', 'AI instruction')}
+          aria-label={locked ? t(`Perintah AI — buka dengan ${tier}`, `AI instruction — unlock with ${tier}`) : t('Perintah AI', 'AI instruction')}
           title={locked ? t(`Perintah AI — buka dengan ${tier}`, `AI instructions — unlock with ${tier}`) : t('Perintahkan AI untuk bagian yang sedang kamu tulis', 'Tell the AI what to do with the passage you are on')}
           className={`absolute inset-0 grid place-items-center transition-opacity duration-100 ${expanded ? 'pointer-events-none opacity-0' : 'opacity-100'} ${locked ? 'text-ink-400' : 'text-brand-700'}`}>
           {locked ? <PaidLock size={15} /> : <PencilSparkles size={17} aria-hidden="true" />}

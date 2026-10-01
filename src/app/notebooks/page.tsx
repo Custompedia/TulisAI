@@ -1,6 +1,7 @@
 'use client';
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Lock, NotebookPen, Plus, Search, SearchX, Upload, X } from 'lucide-react';
+import { House, Lock, NotebookPen, Plus, Search, SearchX, Upload, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, request } from '@/lib/client/api';
 import { AppShell, PageHeader, useEntitlements, useSessionGuard, type DocumentSummary } from '@/components/app/AppShell';
@@ -8,8 +9,9 @@ import { NotebookCard, NotebookCardSkeleton } from '@/components/app/NotebookCar
 import { NewNotebookDialog } from '@/components/app/NewNotebookDialog';
 import { ImportDocxDialog } from '@/components/app/ImportDocxDialog';
 import { PlansDialog } from '@/components/app/PlansDialog';
+import { useRequiredTierName } from '@/components/app/PaidLock';
 import { Toast } from '@/components/ui/Toast';
-import { Button } from '@/components/ui/Button';
+import { Button, buttonClass } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 
 export default function NotebooksPage() {
@@ -44,11 +46,12 @@ function Notebooks() {
   const term = query.trim().toLowerCase();
   const visible = useMemo(() => (docs && term ? docs.filter((doc) => doc.title.toLowerCase().includes(term)) : docs), [docs, term]);
   const canImport = has('docx_import');
+  const importTier = useRequiredTierName('docx_import');
   // A locked import stays visible and explains itself, rather than hiding the feature from free accounts.
   const importDocx = (
     <Button icon={Upload} iconRight={canImport ? undefined : Lock} onClick={() => (canImport ? setImporting(true) : setPlans(true))}
       className={canImport ? '' : 'text-ink-500'}
-      title={canImport ? t('Impor dokumen Word', 'Import a Word document') : t('Impor DOCX ada di paket berbayar', 'DOCX import is on a paid plan')}>
+      title={canImport ? t('Impor dokumen Word', 'Import a Word document') : t(`Impor DOCX — buka dengan ${importTier}`, `DOCX import — unlock with ${importTier}`)}>
       {t('Impor DOCX', 'Import DOCX')}
     </Button>
   );
@@ -73,8 +76,12 @@ function Notebooks() {
             <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-strong bg-white px-6 py-10 text-center">
               <span className="grid h-12 w-12 place-items-center rounded-xl bg-brand-50 text-brand-700"><NotebookPen size={22} aria-hidden="true" /></span>
               <p className="mt-3 font-semibold text-ink-900">{t('Belum ada notebook', 'No notebooks yet')}</p>
-              <p className="mt-1 text-sm text-ink-500">{t('Tempel draft di beranda untuk membuat notebook pertamamu.', 'Paste a draft on the home page to create your first notebook.')}</p>
-              <div className="mt-4 flex flex-wrap justify-center gap-2">{newNotebook}{importDocx}</div>
+              <p className="mt-1 text-sm text-ink-500">{t('Tempel draft di Beranda untuk membuat notebook pertamamu, atau mulai dari notebook kosong.', 'Paste a draft on Home to create your first notebook, or start from an empty one.')}</p>
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                {newNotebook}
+                <Link href="/app" className={buttonClass('secondary', 'md')}><House size={17} aria-hidden="true" />{t('Buka Beranda', 'Open Home')}</Link>
+                {importDocx}
+              </div>
             </div>
           ) : visible && visible.length === 0 ? (
             <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white px-5 py-4 text-sm text-ink-600">

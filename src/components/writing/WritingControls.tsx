@@ -4,11 +4,12 @@ import { Check, ChevronDown, RotateCcw, SlidersHorizontal, X } from 'lucide-reac
 import { useLocale } from '@/lib/client/locale';
 import { AUDIENCES, defaults, EXTRA_LIMIT, FOCUS_LIMIT, type Mode, type Settings } from '@/lib/writing/settings';
 import { Button } from '@/components/ui/Button';
+import { LockedFeatureRow } from '@/components/app/PaidLock';
 import { FieldLabel, inputClass } from '@/components/ui/Field';
 import { HintSelect } from '@/components/ui/HintSelect';
 import {
   academicOptions, audienceOptions, contextOptions, creativityOptions, focusOptions, formatOptions, humanizeStrengthOptions, lengthOptions,
-  MODES, modeHint, modeIcon, modeLabel, modeToneClass, preservationOptions, recipientOptions, requestSummary, simplifyForOptions, strengthOptions,
+  MODES, modeHint, modeIcon, modeLabel, modeToneClass, preservationOptions, recipientOptions, requestSummary, simplifyForOptions, strengthOptions, usesAudience,
 } from './modes';
 
 export function ModePicker({ value, onChange, layout = 'row', disabled }: { value: Mode; onChange: (mode: Mode) => void; layout?: 'row' | 'grid'; disabled?: boolean }) {
@@ -58,7 +59,9 @@ export type CustomFields = Pick<Settings, 'format' | 'length' | 'audience' | 'fo
 export const pickCustom = (settings: Settings): CustomFields => ({ format: settings.format, length: settings.length, audience: settings.audience, focus: settings.focus, extra: settings.extra });
 
 // Format, audience, length, emphasis and (optionally) the note; shared by the panel and the style dialog.
-export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true, describe = false }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean; describe?: boolean }) {
+// The reader is hidden for modes that already name their own; a locked note stays visible as a Max row instead of
+// a field the server would empty on every run.
+export function CustomFields({ draft, onChange, disabled, embedded = false, showExtra = true, describe = false, mode, noteLocked = false, onUpgrade }: { draft: CustomFields; onChange: (draft: CustomFields) => void; disabled?: boolean; embedded?: boolean; showExtra?: boolean; describe?: boolean; mode?: Mode; noteLocked?: boolean; onUpgrade?: () => void }) {
   const { t } = useLocale();
   const id = useId();
   return (
@@ -67,10 +70,12 @@ export function CustomFields({ draft, onChange, disabled, embedded = false, show
         <FieldLabel htmlFor={`${id}-fmt`}>{t('Format', 'Format')}</FieldLabel>
         <HintSelect id={`${id}-fmt`} label={t('Format', 'Format')} value={draft.format} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, format: value })} options={formatOptions(t).map((option) => ({ ...option, disabled: option.value === 'short_summary' && draft.length === 'more_detailed' }))} />
       </div>
-      <div>
-        <FieldLabel htmlFor={`${id}-aud`}>{t('Pembaca', 'Audience')}</FieldLabel>
-        <HintSelect id={`${id}-aud`} label={t('Pembaca', 'Audience')} value={draft.audience} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, audience: value })} options={audienceOptions(t)} />
-      </div>
+      {(!mode || usesAudience(mode)) && (
+        <div>
+          <FieldLabel htmlFor={`${id}-aud`}>{t('Pembaca', 'Audience')}</FieldLabel>
+          <HintSelect id={`${id}-aud`} label={t('Pembaca', 'Audience')} value={draft.audience} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, audience: value })} options={audienceOptions(t)} />
+        </div>
+      )}
       <div>
         <FieldLabel htmlFor={`${id}-len`}>{t('Panjang', 'Length')}</FieldLabel>
         <HintSelect id={`${id}-len`} label={t('Panjang', 'Length')} value={draft.length} disabled={disabled} describe={describe} onChange={(value) => onChange({ ...draft, length: value })} options={lengthOptions(t).map((option) => ({ ...option, disabled: option.value === 'more_detailed' && draft.format === 'short_summary' }))} />
@@ -90,7 +95,10 @@ export function CustomFields({ draft, onChange, disabled, embedded = false, show
           })}
         </div>
       </fieldset>
-      {showExtra && (
+      {showExtra && noteLocked && onUpgrade && (
+        <LockedFeatureRow feature="persistent_personalization" label={t('Catatan untuk AI', 'Note for the AI')} onUpgrade={onUpgrade} className={embedded ? 'md:col-span-2' : ''} />
+      )}
+      {showExtra && !noteLocked && (
         <div className={embedded ? 'md:col-span-2' : ''}>
           <FieldLabel htmlFor={`${id}-extra`} hint={`${draft.extra.length}/${EXTRA_LIMIT}`}>{t('Catatan untuk AI', 'Note for the AI')}</FieldLabel>
           <textarea id={`${id}-extra`} rows={2} maxLength={EXTRA_LIMIT} disabled={disabled} value={draft.extra} onChange={(event) => onChange({ ...draft, extra: event.target.value.slice(0, EXTRA_LIMIT) })}
@@ -102,7 +110,8 @@ export function CustomFields({ draft, onChange, disabled, embedded = false, show
   );
 }
 
-export function CustomizePanel({ settings, onChange, disabled, defaultOpen = false, embedded = false, onClose }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; defaultOpen?: boolean; embedded?: boolean; onClose?: () => void }) {
+// `sessionNote` is shown on plans whose Sesuaikan block the server does not keep, so the limit is said out loud.
+export function CustomizePanel({ settings, onChange, disabled, defaultOpen = false, embedded = false, onClose, noteLocked = false, onUpgrade, sessionNote }: { settings: Settings; onChange: (settings: Settings) => void; disabled?: boolean; defaultOpen?: boolean; embedded?: boolean; onClose?: () => void; noteLocked?: boolean; onUpgrade?: () => void; sessionNote?: string }) {
   const { t } = useLocale();
   const id = useId();
   const [open, setOpen] = useState(embedded || defaultOpen);
@@ -123,7 +132,8 @@ export function CustomizePanel({ settings, onChange, disabled, defaultOpen = fal
       </button>}
       {open && (
         <div id={`${id}-panel`} className={`grid gap-x-5 gap-y-4 ${embedded ? 'md:grid-cols-2' : 'border-t border-line px-3 pb-3.5 pt-3'}`}>
-          <CustomFields draft={draft} onChange={setDraft} disabled={disabled} embedded={embedded} />
+          {sessionNote && !embedded && <p className="text-xs leading-relaxed text-ink-500">{sessionNote}</p>}
+          <CustomFields draft={draft} onChange={setDraft} disabled={disabled} embedded={embedded} mode={settings.mode} noteLocked={noteLocked} onUpgrade={onUpgrade} />
           <div className={`flex flex-wrap items-center justify-between gap-2 ${embedded ? 'border-t border-line pt-3.5 md:col-span-2' : ''}`}>
             <Button size="sm" variant="ghost" icon={RotateCcw} disabled={disabled} onClick={reset}>{t('Reset', 'Reset')}</Button>
             <div className="flex gap-2">

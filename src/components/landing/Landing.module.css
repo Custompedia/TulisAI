@@ -22,6 +22,11 @@
 .primary:hover { transform: translateY(-1px); }
 .primary:active { transform: translateY(1px) scale(.98); }
 .navActions .primary { min-height: 38px; padding: 10px 15px; font-size: 11px; }
+.langToggle { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid #e3e7db; border-radius: 999px; background: #fff; }
+.langToggle button { min-width: 30px; padding: 5px 8px; border-radius: 999px; font-size: 10px; font-weight: 600; color: #686960; transition: color 160ms, background 160ms; }
+.langToggle button:hover { color: #20211f; }
+.langToggle button[aria-pressed=true] { background: #edf1e6; color: #415534; }
+.mobileMenu > .langToggle { align-self: flex-start; }
 .menuToggle, .mobileMenu { display: none; }
 .hero { position: relative; padding: 140px 28px 0; isolation: isolate; }
 .heroArt { position: absolute; z-index: -1; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center bottom; mix-blend-mode: multiply; }

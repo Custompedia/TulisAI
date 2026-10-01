@@ -10,6 +10,7 @@ import { INLINE_LIMIT } from '@/lib/writing/settings';
 import { useEntitlements } from '@/components/app/AppShell';
 import type { WritingStyle } from '@/lib/writing/styles';
 import { StyleMark } from '@/components/writing/StyleMark';
+import { PaidLock, useRequiredTierName } from '@/components/app/PaidLock';
 import { commandLabel, type SelectionCommand } from './selection-commands';
 import type { InlineAction } from './types';
 import { useAutoSide } from '@/components/ui/placement';
@@ -36,16 +37,18 @@ function MenuAction({ icon: Icon, label, onRun, disabled }: { icon: LucideIcon; 
 }
 
 // Hidden while an inline result is open so the two never stack on the same text.
-type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; styles: WritingStyle[]; onCommand: (command: SelectionCommand) => void; onStyle: (style: WritingStyle) => void };
+// `stylesLocked`: the account has no saved_styles, so skills are listed with a padlock and open the plans instead.
+type Props = { editor: Editor; locked: boolean; disabled: boolean; hidden: boolean; chars: number; styles: WritingStyle[]; stylesLocked: boolean; onCommand: (command: SelectionCommand) => void; onStyle: (style: WritingStyle) => void; onUpgrade: () => void };
 const INLINE: Array<[InlineAction, LucideIcon]> = [['alternatives', Shuffle], ['shorter', Minimize2], ['clearer', ScanText], ['formal', BriefcaseBusiness], ['natural', Smile]];
 
-export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles, onCommand, onStyle }: Props) {
+export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles, stylesLocked, onCommand, onStyle, onUpgrade }: Props) {
   const { t, locale } = useLocale();
   const [more, setMore] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const placement = useAutoSide(more, ref, moreRef);
   const { limits } = useEntitlements();
+  const skillTier = useRequiredTierName('saved_styles');
   const overInline = chars > INLINE_LIMIT; const overSelection = chars > limits.runLimit;
   const limit = overSelection ? limits.runLimit : INLINE_LIMIT;
   const hint = overInline ? t(`${numberFormat(chars, 'id')}/${numberFormat(limit, 'id')} karakter — persingkat pilihan`, `${numberFormat(chars, 'en')}/${numberFormat(limit, 'en')} characters — shorten the selection`) : '';
@@ -69,7 +72,7 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles,
   }, [more]);
 
   const run = (command: SelectionCommand) => () => { setMore(false); onCommand(command); };
-  const runStyle = (style: WritingStyle) => () => { setMore(false); onStyle(style); };
+  const runStyle = (style: WritingStyle) => () => { setMore(false); if (stylesLocked) onUpgrade(); else onStyle(style); };
 
   return (
     <BubbleMenu
@@ -104,11 +107,12 @@ export function SelectionMenu({ editor, locked, disabled, hidden, chars, styles,
             {styles.length > 0 && (
               <>
                 <div className="my-1 h-px bg-line" />
-                <p className="px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400">{t('Skills', 'Skills')}</p>
+                <p className="flex items-center gap-1.5 px-2.5 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-ink-400">{t('Skills', 'Skills')}{stylesLocked && <span className="normal-case tracking-normal">· {t(`buka dengan ${skillTier}`, `unlock with ${skillTier}`)}</span>}</p>
                 {styles.map((style) => (
-                  <button key={style.id} type="button" role="menuitem" disabled={disabled || overSelection} onMouseDown={keep} onClick={runStyle(style)}
-                    className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink-700 hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent">
-                    <StyleMark style={style} size={22} /><span className="min-w-0 truncate">{style.name}</span>
+                  <button key={style.id} type="button" role="menuitem" disabled={disabled || (!stylesLocked && overSelection)} onMouseDown={keep} onClick={runStyle(style)}
+                    title={stylesLocked ? t(`Skill tersimpan — buka dengan ${skillTier}`, `Saved skills — unlock with ${skillTier}`) : undefined}
+                    className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-[13px] hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${stylesLocked ? 'text-ink-500' : 'text-ink-700'}`}>
+                    <StyleMark style={style} size={22} /><span className="min-w-0 flex-1 truncate">{style.name}</span>{stylesLocked && <PaidLock size={13} />}
                   </button>
                 ))}
               </>

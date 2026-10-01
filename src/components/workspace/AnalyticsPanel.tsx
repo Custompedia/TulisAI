@@ -8,13 +8,14 @@ import { Spinner } from '@/components/ui/Spinner';
 import type { Quality, QualityBand, QualityDimension } from './types';
 
 type Props = {
-  text: string; original: string | null; scopeLabel: string; quality: Quality | null; stale: boolean; loading: boolean; error: string;
+  // sourceChars: code points of the text that would be analysed, which is exactly what the analysis charges.
+  text: string; original: string | null; scopeLabel: string; sourceChars: number; quality: Quality | null; stale: boolean; loading: boolean; error: string;
   blockedReason: string | null; onAnalyze: () => void;
 };
 
 const BANDS: QualityBand[] = ['rendah', 'sedang', 'tinggi'];
 
-export function AnalyticsPanel({ text, original, scopeLabel, quality, stale, loading, error, blockedReason, onAnalyze }: Props) {
+export function AnalyticsPanel({ text, original, scopeLabel, sourceChars, quality, stale, loading, error, blockedReason, onAnalyze }: Props) {
   const { t, locale } = useLocale();
   const n = (value: number) => numberFormat(value, locale);
   const repeated = repeatedWords(text);
@@ -78,7 +79,8 @@ export function AnalyticsPanel({ text, original, scopeLabel, quality, stale, loa
         <Button className="mt-4 w-full" variant={quality ? 'secondary' : 'primary'} icon={quality ? RefreshCw : Gauge} loading={loading} disabled={loading || Boolean(blockedReason)} onClick={onAnalyze}>
           {loading ? t('Menganalisis…', 'Analysing…') : quality ? t('Analisis ulang', 'Analyse again') : t('Analisis kualitas', 'Analyse quality')}
         </Button>
-        <p className="mt-2 text-center text-[11px] text-ink-500">{loading ? <Spinner size={11} className="mr-1 inline" /> : null}{t('Bagian dianalisis', 'Analysing')}: {scopeLabel} · {t('memakai 1 kuota AI', 'uses 1 AI request')}</p>
+        <p className="mt-2 text-center text-[11px] text-ink-500">{loading ? <Spinner size={11} className="mr-1 inline" /> : null}{t('Bagian dianalisis', 'Analysing')}: {scopeLabel} · {t(`perkiraan biaya ${n(sourceChars)} karakter AI`, `estimated cost ${n(sourceChars)} AI characters`)}</p>
+        <p className="mt-1 text-center text-[11px] text-ink-500">{t('Analisis memakai karakter AI sebanyak teks yang dianalisis.', 'An analysis uses as many AI characters as the text it analyses.')}</p>
       </section>
     </div>
   );

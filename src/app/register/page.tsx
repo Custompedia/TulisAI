@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 import { AuthForm } from '@/components/auth/AuthForm';
-import { LocaleScope } from '@/lib/client/locale';
 
-export const metadata: Metadata = { title: 'Create account', description: 'Create your Tulis Lab account.', robots: { index: false, follow: false } };
+export const metadata: Metadata = { title: 'Buat akun', description: 'Buat akun Tulis Lab.', robots: { index: false, follow: false } };
 
 export default function RegisterPage() {
-  return <LocaleScope locale="en"><AuthForm register /></LocaleScope>;
+  return <AuthForm register />;
 }

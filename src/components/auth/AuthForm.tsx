@@ -90,7 +90,7 @@ export function AuthForm({ register = false }: { register?: boolean }) {
   const setters = { name: setName, username: setUsername, email: setIdentifier, password: setPassword, confirm: setConfirm };
   return <AuthView
     register={register} values={{ name, username, email: identifier, password, confirm }}
-    remember={remember} busy={busy} error={error.replace("Username/email", "Email").replace("username or email", "email and password")}
+    remember={remember} busy={busy} error={error.replace("Username/email", "Email").replace("username or email", "email and password").replace("username atau email", "email dan kata sandi")}
     fieldErrors={fieldErrors} next={next} inputRefs={refs}
     onChange={(field, value) => { setters[field](value); setFieldErrors(current => ({ ...current, [field]: undefined })); setError(""); }}
     onRemember={setRemember} onSubmit={event => void submit(event)} onGoogle={() => void google()}

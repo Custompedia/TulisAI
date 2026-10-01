@@ -6,7 +6,9 @@ import { ApiError, errorText } from '@/lib/client/api';
 import { createStyle, removeStyle, saveStyle } from '@/lib/client/styles-store';
 import { customConflict, EXTRA_LIMIT, FOCUS_LIMIT, SAMPLE_LIMIT, type Settings } from '@/lib/writing/settings';
 import { STYLE_LIMIT, STYLE_NAME_LIMIT, type WritingStyle } from '@/lib/writing/styles';
-import { useSessionGuard } from '@/components/app/AppShell';
+import { useEntitlements, useSessionGuard } from '@/components/app/AppShell';
+import { LockedFeatureRow } from '@/components/app/PaidLock';
+import { PlansDialog } from '@/components/app/PlansDialog';
 import { AppearanceFields } from '@/components/app/AppearancePicker';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -30,6 +32,11 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState('');
   const [nameError, setNameError] = useState('');
+  const [plans, setPlans] = useState(false);
+  const { has } = useEntitlements();
+  // Max-only parts of a skill stay visible as locked rows: below Max the server would drop them on save.
+  const instructionsLocked = !has('persistent_personalization');
+  const sampleLocked = !has('style_reference');
 
   const trimmed = draft.name.trim();
   const duplicate = trimmed !== '' && nameTaken(trimmed, styles, style?.id);
@@ -115,7 +122,9 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
           <p className="mt-2 text-xs leading-relaxed text-ink-500">{modeHint(draft.settings.mode, t)}</p>
         </div>
 
-        <div>
+        {instructionsLocked ? (
+          <LockedFeatureRow feature="persistent_personalization" label={t('Instruksi untuk AI', 'Instructions for the AI')} onUpgrade={() => setPlans(true)} />
+        ) : <div>
           <FieldLabel htmlFor={`${id}-extra`} hint={`${draft.settings.extra.length}/${EXTRA_LIMIT}`}>{t('Instruksi untuk AI', 'Instructions for the AI')}</FieldLabel>
           <textarea id={`${id}-extra`} rows={3} maxLength={EXTRA_LIMIT} disabled={busy} value={draft.settings.extra}
             onChange={(event) => setSettings({ ...draft.settings, extra: event.target.value.slice(0, EXTRA_LIMIT) })}
@@ -134,7 +143,7 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
               );
             })}
           </div>
-        </div>
+        </div>}
 
         <div className="rounded-xl border border-line">
           <button type="button" onClick={() => setAdvanced(!advanced)} aria-expanded={detailsOpen} aria-controls={`${id}-advanced`}
@@ -148,14 +157,17 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
               <p className="text-xs leading-relaxed text-ink-500">{t('Pengaturan mode dan bentuk hasil. Biarkan apa adanya jika kamu tidak yakin.', 'Mode settings and output shape. Leave them as they are if you are unsure.')}</p>
               <ModeOptions describe settings={draft.settings} disabled={busy} onChange={setSettings} />
               <div className="grid gap-x-5 gap-y-4 border-t border-line pt-4 md:grid-cols-2">
-                <CustomFields describe showExtra={false} disabled={busy} draft={pickCustom(draft.settings)} onChange={(next) => setSettings({ ...draft.settings, ...next })} />
+                {instructionsLocked && <p className="text-xs leading-relaxed text-ink-500 md:col-span-2">{t('Di bawah Max, format, panjang, pembaca, dan penekanan belum ikut tersimpan di skill.', 'Below Max, format, length, reader, and emphasis are not saved in the skill yet.')}</p>}
+                <CustomFields describe showExtra={false} disabled={busy} mode={draft.settings.mode} draft={pickCustom(draft.settings)} onChange={(next) => setSettings({ ...draft.settings, ...next })} />
               </div>
               <p className="text-xs text-ink-500">{t(`Penekanan maksimal ${FOCUS_LIMIT} hal; sisanya tetap dijaga apa adanya.`, `Emphasise at most ${FOCUS_LIMIT} things; everything else is left as it is.`)}</p>
               {conflict === 'summary-detail' && (
                 <Alert tone="warning">{t('Format "Ringkasan" tidak bisa digabung dengan panjang "Lebih detail". Ubah salah satu di dua kolom di atas.', 'The "Summary" format cannot be combined with the "More detailed" length. Change one of the two fields above.')}</Alert>
               )}
               <div className="border-t border-line pt-4">
-                <div>
+                {sampleLocked ? (
+                  <LockedFeatureRow feature="style_reference" label={t('Contoh tulisan', 'Writing sample')} onUpgrade={() => setPlans(true)} />
+                ) : <div>
                   <FieldLabel htmlFor={`${id}-sample`} hint={`${draft.settings.sample.length}/${SAMPLE_LIMIT}`}>{t('Contoh tulisan', 'Writing sample')}</FieldLabel>
                   <textarea id={`${id}-sample`} rows={4} maxLength={SAMPLE_LIMIT} disabled={busy} value={draft.settings.sample}
                     onChange={(event) => setSettings({ ...draft.settings, sample: event.target.value.slice(0, SAMPLE_LIMIT) })}
@@ -163,8 +175,8 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
                     className={`${inputClass} h-auto resize-none py-2 leading-relaxed`} />
                   <p className={`mt-1.5 text-xs ${draft.settings.sample.trim() && sampleWords < SAMPLE_MIN_WORDS ? 'font-medium text-amber-700' : 'text-ink-500'}`}>{sampleHint}</p>
                   <p className="mt-1.5 text-xs leading-relaxed text-ink-500">{t('Dipakai sebagai contoh gaya saja: AI meniru cara menulisnya, bukan isinya. Dikirim ke AI hanya saat skill ini dipakai, jadi menambah sedikit biaya token.', 'Used as a style example only: the AI imitates how it is written, never its content. It is sent only when this skill is applied, so it adds a little token cost.')}</p>
-                </div>
-                  </div>
+                </div>}
+              </div>
             </div>
           ) : (
             <p className="border-t border-line px-3.5 py-2 text-xs leading-relaxed text-ink-500">{requestSummary(summary, t)}</p>
@@ -184,6 +196,7 @@ export function StyleDialog({ styles, style = null, preset, initial, onClose, on
           {!trimmed && <p className="mt-2 text-xs font-medium text-amber-700">{t('Beri nama skill ini sebelum menyimpan.', 'Give this skill a name before saving.')}</p>}
         </section>
       </form>
+      {plans && <PlansDialog onClose={() => setPlans(false)} />}
       {confirmDelete && style && (
         <ConfirmDialog title={t('Hapus skill ini?', 'Delete this skill?')} tone="danger" busy={busy} confirmLabel={t('Hapus skill', 'Delete skill')} onClose={() => { if (!busy) setConfirmDelete(false); }} onConfirm={() => void remove()}>
           <p>{t('Skill', 'The skill')} <b className="text-ink-900">“{style.name}”</b> {t('akan dihapus. Notebook yang memakainya tetap menyimpan pengaturannya.', 'will be deleted. Notebooks using it keep their current settings.')}</p>

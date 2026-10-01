@@ -35,7 +35,7 @@ function plans(t: T, freeCharacters: number): Plan[] {
     {
       id: 'plus', name: 'Plus', icon: Sparkles, tagline: t('Untuk yang rutin menulis ulang.', 'For regular rewriting.'), quota: allowance('plus', t, freeCharacters),
       inherits: t('Semua di Gratis, plus:', 'Everything in Free, plus:'),
-      features: [perRun('plus', t), t('Kuota AI isi ulang tiap bulan', 'AI allowance refills every month'), t('Skills & gaya tulisan tersimpan', 'Saved Skills & writing styles')],
+      features: [perRun('plus', t), t('Kuota AI isi ulang tiap bulan', 'AI allowance refills every month'), t('Skill tersimpan: mode beserta pengaturannya', 'Saved skills: a mode with its settings')],
     },
     {
       id: 'pro', name: 'Pro', icon: Crown, tagline: t('Untuk dokumen panjang dan skripsi.', 'For long documents and theses.'), quota: allowance('pro', t, freeCharacters), popular: true,
@@ -45,7 +45,13 @@ function plans(t: T, freeCharacters: number): Plan[] {
     {
       id: 'max', name: 'Max', icon: Rocket, tagline: t('Untuk kontrol penuh atas hasil AI.', 'For full control over AI results.'), quota: allowance('max', t, freeCharacters),
       inherits: t('Semua di Pro, plus:', 'Everything in Pro, plus:'),
-      features: [t('AI Mode: perintah bebas pada teks terpilih', 'AI Mode: free-form instructions on selected text'), t('Kuota AI terbesar — 3,5× Pro', 'The largest AI allowance — 3.5× Pro')],
+      features: [
+        t('Perintah AI: instruksi bebas pada teks terpilih', 'AI instructions: free-form instructions on selected text'),
+        t('Catatan untuk AI di Sesuaikan hasil', 'Notes for the AI in Customize result'),
+        t('Instruksi & contoh tulisan di skill', 'Instructions & writing samples in skills'),
+        t('Sesuaikan hasil tersimpan di notebook & skill', 'Customize result saved in notebooks & skills'),
+        t('Kuota AI terbesar — 3,5× Pro', 'The largest AI allowance — 3.5× Pro'),
+      ],
     },
   ];
 }
@@ -68,8 +74,11 @@ function groups(t: T, freeCharacters: number): Array<{ title: string; rows: Arra
         { label: t('Mode penulisan', 'Writing modes'), cells: [modes, modes, modes, modes] },
         { label: t('Aksi cepat pada teks terpilih', 'Quick actions on selected text'), cells: [true, true, true, true] },
         { label: t('Istilah terkunci & pelindung angka', 'Locked terms & number protection'), cells: [true, true, true, true] },
-        { label: t('Skills & gaya tulisan tersimpan', 'Saved Skills & writing styles'), cells: [false, true, true, true] },
-        { label: t('AI Mode: perintah bebas pada teks terpilih', 'AI Mode: free-form instructions on selected text'), cells: [false, false, false, true] },
+        { label: t('Skill tersimpan', 'Saved skills'), cells: [false, true, true, true] },
+        { label: t('Perintah AI: instruksi bebas pada teks terpilih', 'AI instructions: free-form instructions on selected text'), cells: [false, false, false, true] },
+        { label: t('Catatan untuk AI di Sesuaikan hasil', 'Notes for the AI in Customize result'), cells: [false, false, false, true] },
+        { label: t('Instruksi & contoh tulisan di skill', 'Instructions & writing samples in skills'), cells: [false, false, false, true] },
+        { label: t('Sesuaikan hasil tersimpan di notebook & skill', 'Customize result saved in notebooks & skills'), cells: [false, false, false, true] },
       ],
     },
     {
@@ -86,7 +95,7 @@ function groups(t: T, freeCharacters: number): Array<{ title: string; rows: Arra
 
 function faqs(t: T): Array<[string, string]> {
   return [
-    [t('Bagaimana karakter AI dihitung?', 'How are AI characters counted?'), t('Yang dihitung adalah teks sumber yang benar-benar diproses — kalau kamu memilih 2.000 karakter dari dokumen 30.000 karakter, yang terpotong 2.000. Khusus AI Mode, yang dihitung adalah yang lebih besar antara teks sumber dan hasil yang dikeluarkan. Mengetik, menyimpan, impor/ekspor tanpa AI, dan membandingkan versi tidak memakai kuota.', 'It counts the source text actually processed — select 2,000 characters inside a 30,000-character document and 2,000 are charged. AI Mode is charged the larger of the source text and the generated result. Typing, saving, importing or exporting without AI, and comparing versions never use the allowance.')],
+    [t('Bagaimana karakter AI dihitung?', 'How are AI characters counted?'), t('Yang dihitung adalah teks sumber yang benar-benar diproses — kalau kamu memilih 2.000 karakter dari dokumen 30.000 karakter, yang terpotong 2.000. Khusus Perintah AI, yang dihitung adalah yang lebih besar antara teks sumber dan hasil yang dikeluarkan. Mengetik, menyimpan, impor/ekspor tanpa AI, dan membandingkan versi tidak memakai kuota.', 'It counts the source text actually processed — select 2,000 characters inside a 30,000-character document and 2,000 are charged. AI instructions are charged the larger of the source text and the generated result. Typing, saving, importing or exporting without AI, and comparing versions never use the allowance.')],
     [t('Kalau hasilnya gagal atau ditolak?', 'What if a run fails or is refused?'), t('Tidak ada karakter yang terpotong. Kegagalan provider, hasil yang ditolak pemeriksaan keamanan, dan perbaikan otomatis kami tanggung sendiri. Menekan “buat ulang” dihitung sebagai pemakaian baru.', 'Nothing is charged. Provider failures, results refused by the safety checks, and our own automatic repair are on us. Pressing “generate again” counts as new usage.')],
     [t('Apa bedanya jatah Gratis dan paket berbayar?', 'How does the Free allowance differ from a paid plan?'), t(`Gratis mendapat ${numberFormat(PLAN_LIMITS.free.includedCharacters, 'id')} karakter sekali saja per akun, tidak diisi ulang. Paket berbayar diisi ulang setiap bulan.`, `Free gets ${numberFormat(PLAN_LIMITS.free.includedCharacters, 'en')} characters once per account and they are not refilled. Paid plans refill every month.`)],
     [t('Sisa kuota dibawa ke bulan berikutnya?', 'Does unused allowance roll over?'), t('Tidak. Kuota langganan direset tiap bulan. Karakter tambahan yang kamu beli berlaku 12 bulan sejak pembelian dan baru dipakai setelah kuota langganan habis.', 'No. Subscription allowance resets every month. Characters you buy stay valid for 12 months from purchase and are only used after the subscription allowance is spent.')],
@@ -153,11 +162,11 @@ function TopUps({ t, canBuy, busy, onBuy }: { t: T; canBuy: boolean; busy: strin
 
 export function PlansDialog({ onClose }: { onClose: () => void }) {
   const { t, locale } = useLocale();
-  const { usage } = useShell();
-  // An unlimited account (admin or override) is on no catalogue plan, so nothing is marked as its current plan.
-  const unlimited = usage?.unlimited === true;
-  const CURRENT: Tier | null = unlimited ? null : usage?.tier ?? 'free';
-  const freeCharacters = usage && usage.tier === 'free' && !unlimited ? usage.characterLimit : FREE_CHARACTERS;
+  const { usage, user } = useShell();
+  // An admin is on no catalogue plan, so nothing is marked as its current plan; its characters are still charged.
+  const admin = user.role === 'admin';
+  const CURRENT: Tier | null = admin ? null : usage?.tier ?? 'free';
+  const freeCharacters = usage && usage.tier === 'free' && !admin ? usage.characterLimit : FREE_CHARACTERS;
   const catalogue = plans(t, freeCharacters);
   const [notice, setNotice] = useState('');
   const [billing, setBilling] = useState<Billing | null>(null);
@@ -180,7 +189,7 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI allowance')}>
-      {unlimited && <Alert tone="info" className="mb-4" title={t('Akses AI tanpa batas', 'Unlimited AI access')}>{t('Akun ini tidak memakai kuota paket, jadi tidak ada paket yang ditandai aktif.', 'This account does not use plan allowance, so no plan is marked as active.')}</Alert>}
+      {admin && <Alert tone="info" className="mb-4" title={t('Akun admin', 'Admin account')}>{t('Akun admin tidak dibatasi kuota permintaan bulanan (tetap maks. 10 per menit), tetapi tetap memakai saldo karakter.', 'An admin account has no monthly request cap (still at most 10 per minute), but it still spends its character balance.')}</Alert>}
       {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t(`${notice} belum bisa dibeli karena pembayaran belum dibuka. Tulisan dan kuotamu saat ini tidak berubah.`, `${notice} cannot be bought yet because payments are not open. Your writing and current allowance are unchanged.`)}</Alert>}
       {error && <Alert tone="error" className="mb-4" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Alert>}
       {billing?.checkoutOpen && billing.mode === 'sandbox' && <Alert tone="warning" className="mb-4" title={t('Mode uji (sandbox)', 'Test mode (sandbox)')}>{t('Pembayaran memakai simulator Midtrans. Tidak ada uang sungguhan yang ditarik.', 'Payments use the Midtrans simulator. No real money is charged.')}</Alert>}
