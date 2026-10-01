@@ -79,6 +79,11 @@
 .editor-prose .ProseMirror[contenteditable="false"] { cursor: default; }
 .editor-plain .ProseMirror { outline: none; min-height: 60vh; font-family: var(--font-sans); font-size: 16px; line-height: 1.75; color: var(--color-ink-900); overflow-wrap: anywhere; tab-size: 4; }
 .editor-plain .ProseMirror > * + * { margin-top: 0.75em; }
+/* Teks headings: the same sans family as the body, set apart by size and weight so an outline reads as one. */
+.editor-plain .ProseMirror h1 { font-size: 1.75rem; line-height: 1.25; font-weight: 700; letter-spacing: -0.015em; }
+.editor-plain .ProseMirror h2 { font-size: 1.375rem; line-height: 1.3; font-weight: 650; letter-spacing: -0.01em; }
+.editor-plain .ProseMirror h3 { font-size: 1.125rem; line-height: 1.4; font-weight: 600; }
+.editor-plain .ProseMirror > :is(h1, h2, h3):not(:first-child) { margin-top: 1.25em; }
 .editor-plain .ProseMirror ul { list-style-type: disc; padding-left: 1.5em; }
 .editor-plain .ProseMirror ol { list-style-type: decimal; padding-left: 1.5em; }
 .editor-plain .ProseMirror li > p { margin: 0.15em 0; }
