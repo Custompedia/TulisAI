@@ -60,6 +60,13 @@ describe('pagination follows the DOCX: explicit page breaks', () => {
     expect(content.content[2]).toMatchObject({ type: 'paragraph', attrs: { lineHeight: '27.6pt' } });
     expect(content.content[0]!.attrs?.lineHeight).toBe('1.7248');
   });
+
+  it('states a heading line in points when its text is smaller than the canvas heading, as Word measures it', async () => {
+    // Heading 1 on the canvas is 16 pt; a 12 pt thesis heading at 1.5 lines is one 20.7 pt line in Word, not 27.6 pt.
+    const { content } = await load(p(r('BAB 1'), '<w:pStyle w:val="Heading1"/>') + p(r('Isi')));
+    expect(content.content[0]).toMatchObject({ type: 'heading', attrs: { level: 1, lineHeight: '20.7pt' } });
+    expect(content.content[1]!.attrs?.lineHeight).toBe('1.7248');
+  });
 });
 
 describe('pictures become empty spaces of the same size, in the same place', () => {

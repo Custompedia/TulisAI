@@ -23,7 +23,8 @@ export async function docxPackage(body: string, parts: PackageParts = {}): Promi
     ...media.map((item) => `<Relationship Id="${item.id}" Type="${REL}/image" Target="media/${item.name}"/>`),
   ].filter(Boolean).join('');
   return zip([
-    { name: '[Content_Types].xml', data: encode('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>') },
+    // Real content types, so the same package also opens in Word (the browser check compares page counts with it).
+    { name: '[Content_Types].xml', data: encode('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' + (parts.styles !== undefined ? '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' : '') + '</Types>') },
     { name: '_rels/.rels', data: encode(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${REL}/officeDocument" Target="word/document.xml"/></Relationships>`) },
     { name: 'word/document.xml', data: encode(`<w:document ${NS}><w:body>${body}</w:body></w:document>`) },
     { name: 'word/_rels/document.xml.rels', data: encode(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`) },
@@ -60,7 +61,8 @@ export function sentence(seed: number, length: number): string {
   return `${text.trim()}.`;
 }
 
-export type ThesisOptions = { pages: number; charactersPerPage?: number; pictures?: boolean; mediaBytes?: number };
+// `picture`: 'noise' gives the package a real picture's weight; 'png' a tiny valid PNG that Word can draw.
+export type ThesisOptions = { pages: number; charactersPerPage?: number; pictures?: boolean; mediaBytes?: number; picture?: 'noise' | 'png' };
 export type ThesisStats = { paragraphs: number; characters: number; breaks: { pageBreak: number; pageBreakBefore: number; sectionNextPage: number; sectionOddPage: number; sectionEvenPage: number }; pictures: number };
 
 // A Word-shaped thesis: every paragraph split into three runs (one italic) with rsid attributes, as Word saves them.
@@ -95,7 +97,7 @@ export async function thesisDocx(options: ThesisOptions): Promise<{ bytes: Uint8
     }
   }
   const body = parts.join('') + sectPr();
-  const media = options.pictures ? [{ id: 'rImg1', name: 'image1.png', bytes: noise(options.mediaBytes ?? 2_000_000) }] : [];
+  const media = options.pictures ? [{ id: 'rImg1', name: 'image1.png', bytes: options.picture === 'png' ? PNG : noise(options.mediaBytes ?? 2_000_000) }] : [];
   return { bytes: await docxPackage(body, { styles: THESIS_STYLES, media }), stats };
 }
 
@@ -105,3 +107,6 @@ export function noise(size: number): Uint8Array {
   for (let index = 0; index < size; index++) { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; bytes[index] = state & 0xff; }
   return bytes;
 }
+
+// A 1 x 1 grey PNG.
+export const PNG = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNoAAAAggCB3UNq9AAAAABJRU5ErkJggg=='), (char) => char.charCodeAt(0));

@@ -269,7 +269,7 @@ html[data-ww-painting] .ProseMirror { cursor: copy; }
 :is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-toc > p:last-child { margin-bottom: 0; }
 
 /* Newspaper columns; one column is the default and leaves the layout untouched. */
-.editor-paged .ProseMirror { column-count: var(--page-column-count, 1); column-gap: var(--page-column-gap, 0); }
+.editor-paged .ProseMirror { column-count: var(--page-column-count, auto); column-gap: var(--page-column-gap, 0); }
 
 /* The running header and footer, drawn over each sheet at Word's own distance from its edges. */
 .ww-running-layer { position: absolute; inset: 0; pointer-events: none; }

@@ -54,10 +54,12 @@ export function paragraphGutterExtension({ enabled, label }: Options) {
       return [new Plugin<DecorationSet>({
         key: paragraphGutterKey,
         state: {
-          init: (_, state) => (enabled() ? build(state.doc, label()) : DecorationSet.empty),
+          init: (_, state) => (enabled() ? build(state.doc, label(), state.selection.from) : DecorationSet.empty),
           apply(transaction, old, _oldState, newState) {
             if (!enabled()) return DecorationSet.empty;
-            if (transaction.getMeta(paragraphGutterKey)) return build(newState.doc, label());
+            // A long notebook shows the handle on the caret's paragraph only (see build).
+            if (newState.doc.childCount > ALL_HANDLES_LIMIT) return build(newState.doc, label(), newState.selection.from, transaction.docChanged ? old.map(transaction.mapping, transaction.doc) : old);
+            if (transaction.getMeta(paragraphGutterKey)) return build(newState.doc, label(), newState.selection.from);
             if (!transaction.docChanged) return old;
             // Only the blocks the change touched get new handles; every other handle just moves with the text.
             const changed = changedTopRange(transaction.before, newState.doc);
@@ -89,8 +91,15 @@ export function paragraphGutterExtension({ enabled, label }: Options) {
   });
 }
 
-function build(doc: PMNode, label: string): DecorationSet {
-  return DecorationSet.create(doc, gutterTargets(doc).map((target) => widget(target, label)));
+// Past this many blocks a handle on every paragraph costs more than it gives: ProseMirror compares every widget on
+// every keystroke, which made typing in a 2,000-page notebook lag. There the handle follows the caret instead.
+export const ALL_HANDLES_LIMIT = 1500;
+function build(doc: PMNode, label: string, caret = 0, previous?: DecorationSet): DecorationSet {
+  if (doc.childCount <= ALL_HANDLES_LIMIT) return DecorationSet.create(doc, gutterTargets(doc).map((target) => widget(target, label)));
+  const target = targetAtPosition(doc, caret);
+  const current = previous?.find()[0];
+  if (target && current && current.from === target.from) return previous!;
+  return target ? DecorationSet.create(doc, [widget(target, label)]) : DecorationSet.empty;
 }
 
 function widget(target: GutterTarget, label: string): Decoration {

@@ -178,6 +178,22 @@ function contextualSpacing(records: Entry[]) {
   }
 }
 
+// The canvas element's own font size: what CSS gives a paragraph or heading before any mark (globals.css).
+const elementPoints = (record: ParaRecord) => (record.role === 'heading' ? HEADINGS[record.level as 1]?.points ?? DEFAULT_FONT_POINTS : DEFAULT_FONT_POINTS);
+// The largest font size among the text runs, null when one of them has no size mark (it then uses the element's).
+function largestRun(content: EditorNode[]): number | null {
+  let largest = 0;
+  for (const node of content) {
+    if (node.type !== 'text') continue;
+    const size = node.marks?.find((mark) => mark.type === 'textStyle')?.attrs?.fontSize;
+    const points = typeof size === 'string' && size.endsWith('pt') ? Number.parseFloat(size) : NaN;
+    if (!Number.isFinite(points)) return null;
+    largest = Math.max(largest, points);
+  }
+  return largest || null;
+}
+const strutTaller = (record: ParaRecord) => { const largest = largestRun(record.content); return largest !== null && largest < elementPoints(record) - 0.01; };
+
 function paragraphNode(record: ParaRecord): EditorNode {
   const { para } = record;
   const nested = !record.top || record.list !== undefined;
@@ -190,6 +206,11 @@ function paragraphNode(record: ParaRecord): EditorNode {
       // An empty paragraph is one line of its mark's font: stated in points, because the canvas would otherwise size
       // it from its own 11 pt default, and a thesis full of blank 12 pt lines would drift a little on every one.
       attrs.lineHeight = pt((para.line / 240) * fontLineFactor(record.markFont) * record.markSize * 20);
+    } else if (strutTaller(record) && Math.abs((para.line / 240) * fontLineFactor(record.firstFont) - LINE_HEIGHT) > 0.005) {
+      // Every run is smaller than the canvas element's own size (a 12 pt heading where the canvas heading is 16 pt,
+      // 10 pt body text): a ratio would size each line from the element's larger font, so it is stated in points from
+      // the largest run, as Word does.
+      attrs.lineHeight = pt((para.line / 240) * fontLineFactor(record.firstFont) * largestRun(record.content)! * 20);
     } else {
       const ratio = Number(((para.line / 240) * fontLineFactor(record.firstFont)).toFixed(4));
       if (Math.abs(ratio - LINE_HEIGHT) > 0.005) attrs.lineHeight = String(ratio);

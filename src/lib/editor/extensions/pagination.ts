@@ -28,6 +28,8 @@ export type PageSplit = { index: number; line: number; height: number; band: num
 export type PagePlan = { gaps: PageGap[]; splits: PageSplit[]; filler: number; pages: number };
 
 const EPSILON = 0.5;
+// Spacers applied per slice on a long notebook (see apply in paginationExtension).
+const SLICE = 150;
 // Word's widow and orphan control: never a single line alone at the foot or the head of a page.
 const MIN_LINES = 2;
 
@@ -121,15 +123,47 @@ const collapse = (a: number, b: number) => (a >= 0 && b >= 0 ? Math.max(a, b) : 
 // What gets its own place on a sheet: top-level blocks, and the items of a list, a quote or a table of contents, so a
 // long reference list or contents page breaks between entries like it does in Word. Tables stay whole.
 const CONTAINERS = new Set(['bulletList', 'orderedList', 'taskList', 'tableOfContents', 'blockquote']);
-type Unit = { pos: number; node: PMNode; text: boolean; keepNext: boolean };
-function unitsOf(doc: PMNode): Unit[] {
+// ProseMirror's view descriptions (internal, but stable): each holds a node and its DOM. Walking them in step with
+// the document gives every block's DOM in one pass; view.nodeDOM() searches from the start of the document on every
+// call, which for 12,000 blocks made one measurement quadratic.
+type Desc = { node?: PMNode | null; dom: Node; children?: Desc[]; widget?: unknown; domFromPos?: (pos: number, side: number) => { node: Node; offset: number } };
+const nodeDescs = (desc: Desc | undefined) => (desc?.children ?? []).filter((child) => child.node && !child.widget);
+type Unit = { pos: number; node: PMNode; text: boolean; keepNext: boolean; desc?: Desc };
+function unitsOf(doc: PMNode, root?: Desc): Unit[] {
   const units: Unit[] = [];
-  doc.forEach((node, offset) => {
-    if (CONTAINERS.has(node.type.name) && node.childCount) node.forEach((child, childOffset) => units.push({ pos: offset + 1 + childOffset, node: child, text: false, keepNext: false }));
-    else units.push({ pos: offset, node, text: node.type.name === 'paragraph', keepNext: node.type.name === 'heading' });
+  const top = nodeDescs(root);
+  const aligned = top.length === doc.childCount;
+  doc.forEach((node, offset, index) => {
+    const desc = aligned && top[index]!.node === node ? top[index] : undefined;
+    if (CONTAINERS.has(node.type.name) && node.childCount) {
+      const inner = nodeDescs(desc);
+      node.forEach((child, childOffset, childIndex) => units.push({ pos: offset + 1 + childOffset, node: child, text: false, keepNext: false, desc: inner[childIndex]?.node === child ? inner[childIndex] : undefined }));
+    } else units.push({ pos: offset, node, text: node.type.name === 'paragraph', keepNext: node.type.name === 'heading', desc });
   });
   return units;
 }
+
+// The top of the character at a position inside a block, found through the block's own description, so it costs the
+// block's length rather than the document's. Null when the description cannot answer.
+function topIn(unit: Unit, position: number, side: number): number | null {
+  const desc = unit.desc;
+  if (!desc?.domFromPos) return null;
+  const { node, offset } = desc.domFromPos(position - unit.pos - 1, side);
+  const range = document.createRange();
+  if (node.nodeType === 3) {
+    const length = node.nodeValue?.length ?? 0;
+    if (side > 0 && offset < length) { range.setStart(node, offset); range.setEnd(node, offset + 1); }
+    else if (offset > 0) { range.setStart(node, offset - 1); range.setEnd(node, offset); }
+    else return null;
+    const rects = range.getClientRects();
+    return rects.length ? rects[side > 0 ? 0 : rects.length - 1]!.top : null;
+  }
+  const child = node.childNodes[side > 0 ? offset : offset - 1];
+  if (child instanceof HTMLElement) return child.getBoundingClientRect().top;
+  if (child && child.nodeType === 3) { range.selectNodeContents(child); const rects = range.getClientRects(); return rects.length ? rects[side > 0 ? 0 : rects.length - 1]!.top : null; }
+  return null;
+}
+const topAt = (view: EditorView, unit: Unit, position: number, side: number) => topIn(unit, position, side) ?? view.coordsAtPos(position, side).top;
 
 type Styled = { generation: number; marginTop: number; marginBottom: number; padTop: number; padBottom: number; padLeft: number; padRight: number };
 type Grid = { generation: number; grid: LineGrid | null };
@@ -165,11 +199,11 @@ function measure(view: EditorView, generation: number): Measured | null {
   if (!contentWidth || !sheet.height || rootBox.width === 0) return null;
   // Zoom scales every rect equally; dividing by it measures in the page's own CSS px.
   const scale = rootBox.width / contentWidth;
-  const all = unitsOf(view.state.doc); const spacers = innerSpacers(view, all);
+  const all = unitsOf(view.state.doc, (view as unknown as { docView?: Desc }).docView); const spacers = innerSpacers(view, all);
   const blocks: PageBlock[] = []; const units: Unit[] = []; const doms: HTMLElement[] = []; const ownSpacers: Spacer[][] = [];
   let previous: { box: DOMRect; marginBottom: number } | null = null; let afterBreak = false;
   all.forEach((unit, unitIndex) => {
-    const dom = view.nodeDOM(unit.pos);
+    const dom = unit.desc?.dom ?? view.nodeDOM(unit.pos);
     if (!(dom instanceof HTMLElement)) return;
     const box = dom.getBoundingClientRect();
     let css = styled.get(unit.node);
@@ -201,7 +235,7 @@ function gridFor(view: EditorView, unit: Unit, dom: HTMLElement, height: number,
   try {
     const from = unit.pos + 1; const to = unit.pos + unit.node.nodeSize - 1;
     if (to - from >= 2) {
-      const first = view.coordsAtPos(from, 1).top; const last = view.coordsAtPos(to, -1).top;
+      const first = topAt(view, unit, from, 1); const last = topAt(view, unit, to, -1);
       const content = height - css.padTop - css.padBottom;
       const spread = (last - first) / scale - own.reduce((sum, item) => sum + item.height, 0);
       if (content > 0 && spread > 0.5 && content - spread > 0.5) {
@@ -227,7 +261,7 @@ function lineStart(view: EditorView, unit: Unit, dom: HTMLElement, grid: LineGri
   const from = unit.pos + 1; const to = unit.pos + unit.node.nodeSize - 1;
   const lineOf = (position: number) => {
     const shift = own.reduce((sum, item) => sum + (item.pos <= position ? item.height : 0), 0);
-    return Math.floor(((view.coordsAtPos(position, 1).top - top) / scale - shift - grid.offset) / grid.pitch + 0.25);
+    return Math.floor(((topAt(view, unit, position, 1) - top) / scale - shift - grid.offset) / grid.pitch + 0.25);
   };
   let low = from; let high = to;
   try {
@@ -326,7 +360,7 @@ export function paginationExtension({ enabled, onPages }: { enabled: () => boole
           decorations(state) { return enabled() && !window.matchMedia(NARROW).matches ? paginationKey.getState(state) : DecorationSet.empty; },
         },
         view(view) {
-          let timer: ReturnType<typeof setTimeout> | undefined; let frame = 0; let width = -1; let wasEnabled = enabled();
+          let timer: ReturnType<typeof setTimeout> | undefined; let width = -1; let wasEnabled = enabled();
           // Anything that reflows text (width, page setup, fonts) invalidates every cached measurement at once.
           let generation = 0;
           let host: Element | null = null;
@@ -337,8 +371,35 @@ export function paginationExtension({ enabled, onPages }: { enabled: () => boole
             vars.disconnect(); host = next; generation++;
             if (host) vars.observe(host, { attributes: true, attributeFilter: ['style'] });
           };
+          // Applying thousands of changed spacers at once means one long reflow; a long notebook gets them in slices,
+          // the part on screen first, with the browser free to handle typing in between. An edit cancels the rest:
+          // the next run starts again from the document as it is.
+          let pending: ReturnType<typeof setTimeout> | undefined;
+          const apply = (next: DecorationSet) => {
+            clearTimeout(pending);
+            const doc = view.state.doc; const size = doc.content.size;
+            const wanted = next.find(0, size);
+            if (wanted.length < SLICE) { view.dispatch(view.state.tr.setMeta(paginationKey, next).setMeta('addToHistory', false)); return; }
+            const box = view.dom.getBoundingClientRect(); const scroller = view.dom.closest('.editor-paged') ?? document.documentElement;
+            const visible = scroller.getBoundingClientRect();
+            const at = (y: number) => view.posAtCoords({ left: box.left + 4, top: Math.min(Math.max(y, box.top + 1), box.bottom - 1) })?.pos ?? 0;
+            const first = at(visible.top - visible.height); const last = at(visible.bottom + visible.height);
+            const cuts = [0];
+            for (let index = SLICE; index < wanted.length; index += SLICE) cuts.push(wanted[index]!.from);
+            cuts.push(size + 1);
+            const slices = cuts.slice(1).map((to, index) => [cuts[index]!, to] as const);
+            slices.sort((a, b) => Number(!(a[0] <= last && a[1] > first)) - Number(!(b[0] <= last && b[1] > first)) || a[0] - b[0]);
+            const step = (index: number) => {
+              if (view.isDestroyed || view.state.doc !== doc) return;
+              const [from, to] = slices[index]!;
+              const current = paginationKey.getState(view.state) ?? DecorationSet.empty;
+              const merged = current.remove(current.find(from, to - 1)).add(doc, wanted.filter((item) => item.from >= from && item.from < to));
+              view.dispatch(view.state.tr.setMeta(paginationKey, merged).setMeta('addToHistory', false));
+              if (index + 1 < slices.length) pending = setTimeout(() => step(index + 1), 0);
+            };
+            step(0);
+          };
           const run = () => {
-            frame = 0;
             if (view.isDestroyed) return;
             watch();
             if (view.composing) { schedule(); return; }
@@ -349,13 +410,14 @@ export function paginationExtension({ enabled, onPages }: { enabled: () => boole
             if (!measured) onPages?.(1);
             const current = paginationKey.getState(view.state) ?? DecorationSet.empty;
             if (same(current, next, view.state.doc.content.size)) return;
-            view.dispatch(view.state.tr.setMeta(paginationKey, next).setMeta('addToHistory', false));
+            apply(next);
           };
           // A long notebook waits for a longer pause before re-measuring, so typing never queues behind a reflow.
           const schedule = (delay?: number) => {
             const size = view.state.doc.content.size;
             clearTimeout(timer);
-            timer = setTimeout(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(run); }, delay ?? (size > 3_000_000 ? 800 : size > 500_000 ? 400 : 120));
+            // A timer, not an animation frame: a tab in the background still gets its pages counted.
+            timer = setTimeout(run, delay ?? (size > 3_000_000 ? 800 : size > 500_000 ? 400 : 120));
           };
           // Only width changes reflow text; height changes are our own spacers and must not retrigger.
           const resize = new ResizeObserver((entries) => {
@@ -370,7 +432,8 @@ export function paginationExtension({ enabled, onPages }: { enabled: () => boole
           const onFonts = () => { generation++; schedule(0); };
           fonts?.addEventListener('loadingdone', onFonts);
           void fonts?.ready.then(onFonts);
-          schedule(0);
+          // The first measurement waits for the page fonts (ready.then above), so a long notebook is not measured twice.
+          if (!fonts || fonts.status === 'loaded') schedule(0);
           return {
             update(updated, previous) {
               const now = enabled();
@@ -378,7 +441,7 @@ export function paginationExtension({ enabled, onPages }: { enabled: () => boole
               if (updated.state.doc !== previous.doc || now !== wasEnabled) { wasEnabled = now; schedule(); }
             },
             destroy() {
-              clearTimeout(timer); cancelAnimationFrame(frame); resize.disconnect(); vars.disconnect();
+              clearTimeout(timer); clearTimeout(pending); resize.disconnect(); vars.disconnect();
               media.removeEventListener('change', onMedia); fonts?.removeEventListener('loadingdone', onFonts);
             },
           };

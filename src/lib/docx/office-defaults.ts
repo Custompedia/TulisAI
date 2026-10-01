@@ -127,7 +127,9 @@ export function pageStyle(layout: PageLayout): Record<string, string> {
     '--page-margin-bottom': px(margin.bottom),
     '--page-margin-left': px(margin.left),
     '--page-content-width': px(contentWidth(layout.size, margin, orientation)),
-    '--page-column-count': String(columns),
+    // One column is 'auto', not 1: column-count 1 still makes the browser lay the whole notebook out as a multi-column
+    // box, which cost a long notebook hundreds of milliseconds per keystroke.
+    '--page-column-count': columns > 1 ? String(columns) : 'auto',
     '--page-column-gap': px(COLUMN_GAP_TWIPS),
     '--page-header-top': px(HEADER_DISTANCE_TWIPS),
     '--page-footer-bottom': px(FOOTER_DISTANCE_TWIPS),
