@@ -1,5 +1,5 @@
 import { ADVANCED_PREFERENCE, PAGE_LAYOUT_PREFERENCES } from '@/lib/plans';
-import { normalizeSettings, type Settings } from './settings';
+import { normalizeSettings, SAMPLE_LIMIT, type Settings } from './settings';
 
 // Notebook facts that are not writing settings: the kind of writing, where it came from, a word target and the
 // writer's own brief. They share the notebook's preferences row with the settings and the page layout, so every
@@ -11,13 +11,15 @@ export const NOTEBOOK_META_KEYS = ['docType', 'docSource', 'wordTarget', ...BRIE
 export type BriefKey = (typeof BRIEF_KEYS)[number];
 export type MetaKey = (typeof NOTEBOOK_META_KEYS)[number];
 
-// Create and PATCH cap every string preference at 500 characters; the client caps them itself too, so a copy or a
+// Create and PATCH cap every string preference at 500 characters (a writing sample at SAMPLE_LIMIT); the client caps them itself too, so a copy or a
 // restore never fails with a 400. The brief (the brief keys and the notes beside them) is the exception since UX 3:
 // Draf dari brief reads it, so each brief value may hold up to BRIEF_VALUE_LIMIT on create, PATCH and autosave.
 export const META_VALUE_LIMIT = 500;
 export const BRIEF_VALUE_LIMIT = 2_000;
 export const LONG_META_KEYS: readonly string[] = [...BRIEF_KEYS, 'notes'];
-export const metaLimit = (key: string) => (LONG_META_KEYS.includes(key) ? BRIEF_VALUE_LIMIT : META_VALUE_LIMIT);
+// A Max writing sample (`sample`) is a setting, not a notebook fact, but it rides in the same row: it keeps its own
+// SAMPLE_LIMIT (1,000) on create, PATCH and every copy path instead of the 500 every other string gets.
+export const metaLimit = (key: string) => (LONG_META_KEYS.includes(key) ? BRIEF_VALUE_LIMIT : key === 'sample' ? SAMPLE_LIMIT : META_VALUE_LIMIT);
 export const WORD_TARGET_MAX = 200_000;
 // The create schema's array rule: at most 20 strings of at most 300 characters.
 const ARRAY_LIMIT = 20;
