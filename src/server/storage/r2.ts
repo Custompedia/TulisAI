@@ -26,12 +26,14 @@ export async function putImmutableSnapshot(documentId: string, versionId: string
   return { key, hash: body.hash };
 }
 
-// The current body of a notebook between versions (what autosave writes). One object per saved revision; the
-// previous one is deleted once the row points at the new one, and the hourly orphan sweep catches any left behind.
+// The current body of a notebook between versions (what autosave writes). Every write gets its own key (a random
+// id, never the revision and hash alone): two identical saves racing on one revision must not share an object, or
+// the loser's clean-up would delete the winner's body. The previous body is deleted once the row points at the new
+// one, and the hourly orphan sweep catches any left behind.
 export const BODY_PREFIX = "/body/";
 export async function putBody(documentId: string, revision: number, body: StoredBody): Promise<string> {
   if (tooLarge(body.bytes.length)) throw new Error("Body exceeds the document size limit.");
-  const key = `documents/${documentId}${BODY_PREFIX}${revision}-${body.hash.slice(0, 16)}.json`;
+  const key = `documents/${documentId}${BODY_PREFIX}${revision}-${crypto.randomUUID()}.json`;
   await runtime().DOCUMENTS.put(key, putValue(body.bytes), { httpMetadata: { contentType: "application/json" }, customMetadata: { hash: body.hash } });
   return key;
 }

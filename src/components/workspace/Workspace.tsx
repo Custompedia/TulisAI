@@ -7,7 +7,7 @@ import { del, get, set } from 'idb-keyval';
 import { ChevronsRight, ClipboardPaste, CopyPlus, FileText, Minimize2, RefreshCw, RotateCcw, Save, Trash2, X } from 'lucide-react';
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef, type LayoutStorage } from 'react-resizable-panels';
 import { useLocale } from '@/lib/client/locale';
-import { ApiError, errorText, jsonBody, newKey, request } from '@/lib/client/api';
+import { ApiError, errorText, jsonBody, newKey, request, whenIdle } from '@/lib/client/api';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { guardedPush, leaveHref, leavesPath, setLeaveGuard } from '@/lib/client/navigation-guard';
 import { documentText, plainTextDocument } from '@/lib/editor/document';
@@ -460,8 +460,17 @@ export default function Workspace() {
     return () => { live = false; initializing.current = true; };
   }, [id, editor, loadAttempt]);
 
+  // One save at a time: Ctrl+S, leaving, blur and Retry can all call this while a save runs. Each caller waits until
+  // nothing is in flight (not only the save it first saw) and then reads the state afresh, so a burst of callers sends
+  // one request instead of several identical ones racing on the same revision. The whole save, follow-up included,
+  // is what is in flight, so the leave and unmount guards count it as unsaved until it is done.
   async function flush(): Promise<Doc> {
-    if (inFlight.current) await inFlight.current.catch(() => undefined);
+    await whenIdle(inFlight);
+    const run = saveNow();
+    inFlight.current = run;
+    try { return await run; } finally { if (inFlight.current === run) inFlight.current = null; }
+  }
+  async function saveNow(): Promise<Doc> {
     const base = current.current;
     if (!base || !editor) throw new Error('not-loaded');
     if (!dirty.current && !metaDirty.current) return base;
@@ -471,7 +480,6 @@ export default function Workspace() {
     // Lean: the server does not echo a long notebook back; what it stored is exactly what was sent.
     const promise = request<Doc>(`/api/documents/${id}/autosave?lean=1`, 'PATCH', payload, newKey()).then((saved) => ({ ...saved, content: payload.content as Doc['content'] }));
     contentRef.current = payload.content;
-    inFlight.current = promise;
     try {
       const updated = await promise;
       current.current = { ...base, ...updated }; setDoc(current.current);
@@ -487,7 +495,7 @@ export default function Workspace() {
       setSave(code === 'REVISION_CONFLICT' ? 'conflict' : code === 'NETWORK_ERROR' ? 'offline' : 'error');
       if (!guard(caught) && code !== 'NETWORK_ERROR' && code !== 'REVISION_CONFLICT') setNotice({ tone: 'error', message: errorText(caught, english), retrySave: true });
       throw caught;
-    } finally { inFlight.current = null; }
+    }
   }
   const autosave = useEffectEvent(() => { void flush().catch(() => undefined); });
 

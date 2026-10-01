@@ -63,6 +63,16 @@ export function authErrorCode(result: { code?: unknown; message?: unknown; error
 }
 
 export const newKey = () => crypto.randomUUID();
+// Resolves once no request is held in the ref, waiting again for any that started while it waited. Nothing awaits
+// between this returning and the caller storing its own request, so callers proceed strictly one at a time.
+export async function whenIdle(ref: { current: Promise<unknown> | null }): Promise<void> {
+  while (ref.current) {
+    const seen = ref.current;
+    await seen.catch(() => undefined);
+    // The owner clears the ref right after its request settles; if it has not yet, give it a turn instead of spinning.
+    if (ref.current === seen) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
 export const isUnauthenticated = (error: unknown) => error instanceof ApiError && error.status === 401;
 
 // The offending string the server named, quoted into the message so the user can see what blocked the result.
