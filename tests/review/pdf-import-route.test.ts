@@ -55,9 +55,7 @@ describe('PDF import route', () => {
     expect(count('document_portability_evidence')).toBe(0);
   });
 
-  it('still issues the DOCX receipt for a DOCX file', async () => {
-    // The local admin authority: plan periods (payment, admin_grant) need the CHECK widened by migration 0018 (PR #22).
-    state.user = 'admin';
+  it('still issues the DOCX receipt for a DOCX file (Pro through an admin-granted period)', async () => {
     const response = await call(await docx('Isi dokumen Word.'), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
     expect(response.status).toBe(200);
     const { data } = await response.json() as { data: Record<string, unknown> };
