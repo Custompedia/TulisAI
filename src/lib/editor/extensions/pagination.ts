@@ -83,7 +83,9 @@ export function planPages(blocks: PageBlock[], sheet: SheetGeometry): PagePlan {
     const block = blocks[index]!;
     snapshots[index] = { page, pageStart, bottom, marginBottom, placed, gaps: gaps.length, splits: splits.length };
     if (!placed) {
-      bottom = block.gap + block.height; marginBottom = block.marginBottom; placed = true; startsPage[index] = true;
+      placed = true; startsPage[index] = true;
+      if (block.gap + block.height > body + EPSILON && block.lines && split(index, block, block.gap)) { startsPage[index] = true; index++; continue; }
+      bottom = block.gap + block.height; marginBottom = block.marginBottom;
       settle(); index++; continue;
     }
     const top = bottom + block.gap;
