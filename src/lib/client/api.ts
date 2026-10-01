@@ -4,16 +4,32 @@ export class ApiError extends Error {
   constructor(public code: string, public status: number, public details?: unknown) { super(code); this.name = 'ApiError'; }
 }
 
+// Editor JSON carries every attribute TipTap knows, mostly null; the server drops them anyway, so they are not sent.
+const compactAttrs = (key: string, value: unknown) => (key === 'attrs' && value && typeof value === 'object' && !Array.isArray(value)
+  ? Object.fromEntries(Object.entries(value).filter(([, item]) => item !== null && item !== undefined)) : value);
+// Bodies past this size are gzipped: a 2,000-page notebook is ~12 MB of JSON and ~1.5 MB compressed. The server
+// recognises gzip by its magic bytes, so no proxy can mistake what it receives.
+const COMPRESS_FROM = 32_768;
+export async function jsonBody(body: unknown): Promise<{ body: BodyInit; compressed: boolean }> {
+  const json = JSON.stringify(body, compactAttrs);
+  if (json.length < COMPRESS_FROM || typeof CompressionStream === 'undefined') return { body: json, compressed: false };
+  try {
+    const stream = new Blob([json]).stream().pipeThrough(new CompressionStream('gzip') as unknown as TransformStream<Uint8Array, Uint8Array>);
+    return { body: await new Response(stream).arrayBuffer(), compressed: true };
+  } catch { return { body: json, compressed: false }; }
+}
+
 // `contentType` switches the body from JSON to raw bytes, which is what a file upload needs.
 export async function request<T>(path: string, method = 'GET', body?: unknown, key?: string, contentType?: string): Promise<T> {
   let response: Response;
   const binary = contentType !== undefined;
   try {
+    const payload = body === undefined ? null : binary ? { body: body as BodyInit, compressed: false } : await jsonBody(body);
     response = await fetch(path, {
       method,
       credentials: 'same-origin',
-      headers: { 'Content-Type': contentType ?? 'application/json', ...(key ? { 'Idempotency-Key': key } : {}) },
-      ...(body === undefined ? {} : { body: binary ? (body as BodyInit) : JSON.stringify(body) }),
+      headers: { 'Content-Type': contentType ?? 'application/json', ...(payload?.compressed ? { 'X-Body-Encoding': 'gzip' } : {}), ...(key ? { 'Idempotency-Key': key } : {}) },
+      ...(payload ? { body: payload.body } : {}),
     });
   } catch {
     throw new ApiError('NETWORK_ERROR', 0);
@@ -47,6 +63,16 @@ export function authErrorCode(result: { code?: unknown; message?: unknown; error
 }
 
 export const newKey = () => crypto.randomUUID();
+// Resolves once no request is held in the ref, waiting again for any that started while it waited. Nothing awaits
+// between this returning and the caller storing its own request, so callers proceed strictly one at a time.
+export async function whenIdle(ref: { current: Promise<unknown> | null }): Promise<void> {
+  while (ref.current) {
+    const seen = ref.current;
+    await seen.catch(() => undefined);
+    // The owner clears the ref right after its request settles; if it has not yet, give it a turn instead of spinning.
+    if (ref.current === seen) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
 export const isUnauthenticated = (error: unknown) => error instanceof ApiError && error.status === 401;
 
 // The offending string the server named, quoted into the message so the user can see what blocked the result.

@@ -1,6 +1,7 @@
 import { EditorDocumentSchema } from '../contracts';
 import type { EditorDocument, EditorNode } from '../editor/document';
-import { zip, type ZipEntry } from './zip';
+import { deflateText, zip, type DeflatedEntry, type ZipEntry } from './zip';
+import { imagePoints, imageWrap } from '../editor/extensions/image-space';
 import { element, escapeXml, XML_DECLARATION } from './xml';
 import {
   alignmentFrom, asColumns, asOrientation, columnWidth, COLUMN_GAP_TWIPS, contentWidth, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize,
@@ -16,6 +17,37 @@ import { safeAnchor } from '../editor/extensions/anchors';
 
 const W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"';
 const R = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+// VML, for the invisible frames that keep a picture's space (see imageSpaceRun).
+const VML = 'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w10="urn:schemas-microsoft-com:office:word"';
+// Word refuses exact line spacing above 1584 pt.
+const MAX_EXACT_LINE_TWIPS = 31_680;
+
+// A picture's space in Word: an unfilled, unstroked VML rectangle of the same size, so nothing shows and every reader
+// that understands VML (Word since 2000, LibreOffice) keeps the space. Inline it sits on the line like the picture
+// did; "top and bottom" and the side wraps become a positioned frame with the same wrap, which the importer reads
+// back as the same space.
+function imageSpaceRun(node: EditorNode): string {
+  const attrs = node.attrs ?? {};
+  const width = imagePoints(attrs.width) ?? 0; const height = imagePoints(attrs.height) ?? 0;
+  if (!width || !height) return '';
+  const wrap = imageWrap(attrs.wrap);
+  const size = `width:${width}pt;height:${height}pt`;
+  if (wrap === 'inline') return `<w:r><w:pict><v:rect style="${size}" stroked="f" filled="f"/></w:pict></w:r>`;
+  const side = wrap === 'right' ? 'right' : 'left';
+  const style = `position:absolute;margin-left:0;margin-top:0;${size};z-index:1;mso-position-horizontal:${side};mso-position-horizontal-relative:margin;mso-position-vertical-relative:line`;
+  return `<w:r><w:pict><v:rect style="${style}" stroked="f" filled="f">${element('w10:wrap', { type: wrap === 'block' ? 'topAndBottom' : 'square' })}</v:rect></w:pict></w:r>`;
+}
+
+// A paragraph that holds nothing but picture spaces is written as an empty paragraph exactly as tall as its
+// tallest space (margins included): the most portable empty space Word, Google Docs and LibreOffice all keep.
+function pictureOnlyLine(node: EditorNode): number | null {
+  const inline = node.content ?? [];
+  // A floated space is written as a floating frame instead: its text flowed beside it, not under it.
+  if (!inline.length || !inline.every((child) => child.type === 'imageSpace' && (imageWrap(child.attrs?.wrap) === 'inline' || imageWrap(child.attrs?.wrap) === 'block'))) return null;
+  const tallest = Math.max(...inline.map((child) => (imagePoints(child.attrs?.height) ?? 0) + Number(child.attrs?.marginTop ?? 0) + Number(child.attrs?.marginBottom ?? 0)));
+  const twips = Math.round(tallest * 20);
+  return twips > 0 && twips <= MAX_EXACT_LINE_TWIPS ? twips : null;
+}
 
 type Mark = NonNullable<EditorNode['marks']>[number];
 type Relationship = { id: string; target: string };
@@ -96,6 +128,7 @@ function runs(node: EditorNode, writer: Writer): string {
     const id = writer.footnotes.length;
     return `<w:r>${element('w:rPr', {}, element('w:rStyle', { 'w:val': 'FootnoteReference' }))}${element('w:footnoteReference', { 'w:id': id })}</w:r>`;
   }
+  if (node.type === 'imageSpace') return imageSpaceRun(node);
   if (node.type !== 'text') return (node.content ?? []).map((child) => runs(child, writer)).join('');
   const text = node.text ?? '';
   if (!text) return '';
@@ -108,7 +141,8 @@ function runs(node: EditorNode, writer: Writer): string {
   return element('w:hyperlink', { 'r:id': id }, run);
 }
 
-type ParagraphOptions = { style?: string; list?: { numId: number; level: number }; indent?: number; hanging?: number; prefix?: string; header?: boolean };
+// exactLine: an exact line height in twips, for a paragraph that only holds picture spaces.
+type ParagraphOptions = { style?: string; list?: { numId: number; level: number }; indent?: number; hanging?: number; prefix?: string; header?: boolean; exactLine?: number };
 
 function paragraphProperties(node: EditorNode, options: ParagraphOptions): string {
   const attrs = node.attrs ?? {};
@@ -133,6 +167,7 @@ function paragraphProperties(node: EditorNode, options: ParagraphOptions): strin
     if (exact && exact > 0) line = { 'w:line': exact, 'w:lineRule': 'exact' };
     else if (Number.isFinite(ratio) && ratio > 0) line = { 'w:line': Math.round((ratio / factor) * 240), 'w:lineRule': 'auto' };
   } else if (factor !== fontLineFactor(DEFAULT_FONT)) line = { 'w:line': Math.round((LINE_HEIGHT / factor) * 240), 'w:lineRule': 'auto' };
+  if (options.exactLine) line = { 'w:line': options.exactLine, 'w:lineRule': 'exact' };
   if (before !== null || after !== null || line['w:line'] !== undefined) properties.push(element('w:spacing', { 'w:before': before ?? undefined, 'w:after': after ?? undefined, ...line }));
   const left = lengthTwips(attrs.indentLeft) ?? options.indent ?? null; const right = lengthTwips(attrs.indentRight);
   // A list marker hangs to the left of its text, which is the only place `hanging` comes from.
@@ -149,6 +184,8 @@ function paragraphProperties(node: EditorNode, options: ParagraphOptions): strin
 
 function paragraph(node: EditorNode, writer: Writer, options: ParagraphOptions = {}): string {
   const prefix = options.prefix ? `<w:r>${textElements(options.prefix)}</w:r>` : '';
+  const exactLine = options.prefix ? null : pictureOnlyLine(node);
+  if (exactLine) return `<w:p>${paragraphProperties(node, { ...options, exactLine })}</w:p>`;
   const body = (node.content ?? []).map((child) => runs(child, writer)).join('');
   return `<w:p>${paragraphProperties(node, options)}${prefix}${body}</w:p>`;
 }
@@ -446,21 +483,32 @@ export type ExportOptions = {
 
 export type DocumentXmlOptions = { orientation?: Orientation; columns?: number; header?: RunningText | null; footer?: RunningText | null };
 
+function newWriter(size: PageSize, margins: PageMargins | null | undefined, options: DocumentXmlOptions): Writer {
+  const orientation = asOrientation(options.orientation);
+  return {
+    relationships: [], lists: [], size, margins: margins ?? pageGeometry(size, orientation).margin,
+    orientation, columns: asColumns(options.columns), footnotes: [], bookmarks: 0,
+  };
+}
+
+// document.xml one top-level block at a time. The writer collects links, lists and footnotes as it goes, so the parts
+// that depend on them are written after the last piece.
+function* documentPieces(document: EditorDocument, writer: Writer, options: DocumentXmlOptions): Generator<string> {
+  yield `${XML_DECLARATION}<w:document ${W} ${R} ${VML}><w:body>`;
+  let written = false;
+  for (const node of document.content) { const xml = blocks(node, writer); if (xml) { written = true; yield xml; } }
+  if (!written) yield '<w:p/>';
+  const refs = { header: options.header ? 'rId3' : undefined, footer: options.footer ? 'rId4' : undefined };
+  yield `${sectionProperties(writer, refs)}</w:body></w:document>`;
+}
+
 // The body XML plus what it references; exported separately so tests can read it directly.
 export function documentXml(value: unknown, size: PageSize, margins?: PageMargins | null, options: DocumentXmlOptions = {}):
   { xml: string; relationships: Relationship[]; numbering: string; footnotes: string[] } {
   const document: EditorDocument = EditorDocumentSchema.parse(value);
-  const orientation = asOrientation(options.orientation);
-  const writer: Writer = {
-    relationships: [], lists: [], size, margins: margins ?? pageGeometry(size, orientation).margin,
-    orientation, columns: asColumns(options.columns), footnotes: [], bookmarks: 0,
-  };
-  const body = document.content.map((node) => blocks(node, writer)).join('') || '<w:p/>';
-  const refs = { header: options.header ? 'rId3' : undefined, footer: options.footer ? 'rId4' : undefined };
-  return {
-    xml: `${XML_DECLARATION}<w:document ${W} ${R}><w:body>${body}${sectionProperties(writer, refs)}</w:body></w:document>`,
-    relationships: writer.relationships, numbering: numberingXml(writer.lists), footnotes: writer.footnotes,
-  };
+  const writer = newWriter(size, margins, options);
+  const xml = [...documentPieces(document, writer, options)].join('');
+  return { xml, relationships: writer.relationships, numbering: numberingXml(writer.lists), footnotes: writer.footnotes };
 }
 
 export async function editorDocumentToDocx(value: unknown, options: ExportOptions = {}): Promise<Uint8Array> {
@@ -470,7 +518,11 @@ export async function editorDocumentToDocx(value: unknown, options: ExportOption
   const margins = options.margins ?? pageGeometry(size, orientation).margin;
   const header = options.header ?? null;
   const footer = options.footer ?? null;
-  const { xml, relationships, numbering, footnotes } = documentXml(value, size, margins, { orientation, columns, header, footer });
+  const document: EditorDocument = EditorDocumentSchema.parse(value);
+  const writer = newWriter(size, margins, { orientation, columns, header, footer });
+  // Streamed and compressed as it is written: a 2,000-page body never exists as one string in the Worker.
+  const body = await deflateText('word/document.xml', documentPieces(document, writer, { orientation, columns, header, footer }));
+  const { relationships, footnotes } = writer;
   const encoder = new TextEncoder();
   const modified = (options.modified ?? new Date()).toISOString().replace(/\.\d{3}Z$/, 'Z');
   const parts: Array<{ id: string; type: string; target: string }> = [
@@ -481,12 +533,12 @@ export async function editorDocumentToDocx(value: unknown, options: ExportOption
   if (footer) parts.push({ id: 'rId4', type: 'footer', target: 'footer1.xml' });
   if (footnotes.length) parts.push({ id: 'rId5', type: 'footnotes', target: 'footnotes.xml' });
 
-  const entries: ZipEntry[] = [
+  const entries: Array<ZipEntry | DeflatedEntry> = [
     { name: '_rels/.rels', data: encoder.encode(PACKAGE_RELS) },
     { name: 'docProps/core.xml', data: encoder.encode(coreXml(options.title ?? 'Document', modified)) },
-    { name: 'word/document.xml', data: encoder.encode(xml) },
+    body,
     { name: 'word/styles.xml', data: encoder.encode(stylesXml(columnWidth(size, margins, orientation, columns))) },
-    { name: 'word/numbering.xml', data: encoder.encode(numbering) },
+    { name: 'word/numbering.xml', data: encoder.encode(numberingXml(writer.lists)) },
     { name: 'word/_rels/document.xml.rels', data: encoder.encode(documentRels(relationships, parts)) },
   ];
   if (header) entries.push({ name: 'word/header1.xml', data: encoder.encode(runningXml('hdr', header)) });

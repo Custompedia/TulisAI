@@ -1,6 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { MAX_DOCX_BYTES } from '@/lib/limits';
 import { FileText, TriangleAlert, Upload } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { errorText, newKey, request } from '@/lib/client/api';
@@ -21,7 +22,7 @@ import { Toast } from '@/components/ui/Toast';
 import { Alert } from '@/components/ui/Alert';
 import { useSessionGuard, useShell } from './AppShell';
 
-const MAX_DOCX_BYTES = 5_000_000;
+// A long thesis with its figures: pictures are never read, so the upload cap is about the file, not the text.
 type Format = 'docx' | 'pdf';
 // The extension decides what the file is meant to be; the server checks the bytes themselves.
 const formatOf = (name: string): Format | null => (/\.docx$/iu.test(name) ? 'docx' : /\.pdf$/iu.test(name) ? 'pdf' : null);
@@ -36,7 +37,9 @@ type Extraction = {
 
 // What each warning means to the writer; the file is still imported, these parts simply do not come with it.
 const WARNING_TEXT: Record<ImportWarning | 'pdfLayout', [string, string]> = {
-  images: ['Gambar tidak ikut diimpor — notebook ini khusus teks.', 'Images are not imported — this notebook is text only.'],
+  images: ['Gambar tidak diimpor; tempatnya dibiarkan kosong seukuran aslinya, jadi letak dan gaya teks tetap sama.', 'Images are not imported; their place is kept as an empty space of the same size, so the text keeps its position and style.'],
+  imageWrap: ['Sebagian gambar berada di tengah teks; ruangnya dibuat selebar baris, jadi letak teks di sekitarnya bisa sedikit bergeser.', 'Some images sat in the middle of the text; their space takes the full line, so the text around them may shift slightly.'],
+  sectionsDiffer: ['Bagian dokumen memakai ukuran atau margin halaman yang berbeda; notebook memakai pengaturan halaman bagian pertama.', 'The document’s sections use different page sizes or margins; the notebook uses the first section’s page setup.'],
   textboxes: ['Isi kotak teks dipindahkan menjadi paragraf biasa.', 'Text box contents were moved into ordinary paragraphs.'],
   revisions: ['Perubahan terlacak yang dihapus tidak dibawa; teks final yang dipakai.', 'Tracked deletions were dropped; the final text is used.'],
   comments: ['Komentar tidak ikut diimpor.', 'Comments are not imported.'],
@@ -74,7 +77,7 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
     setFile(chosen); setExtraction(null); setError('');
     const kind = formatOf(chosen.name);
     if (!kind) { setError(t('Pilih berkas .docx atau .pdf. Format lain belum didukung.', 'Choose a .docx or .pdf file. Other formats are not supported yet.')); return; }
-    if (kind === 'docx' && chosen.size > MAX_DOCX_BYTES) { setError(t('Berkas DOCX lebih dari 5 MB. Pisahkan dokumennya lebih dulu.', 'The DOCX file is over 5 MB. Split the document first.')); return; }
+    if (kind === 'docx' && chosen.size > MAX_DOCX_BYTES) { setError(t('Berkas DOCX lebih dari 50 MB. Pisahkan dokumennya lebih dulu.', 'The DOCX file is over 50 MB. Split the document first.')); return; }
     if (kind === 'pdf' && chosen.size > MAX_PDF_BYTES) { setError(t('Berkas PDF lebih dari 10 MB. Pisahkan PDF-nya lebih dulu.', 'The PDF is over 10 MB. Split the PDF first.')); return; }
     setBusy('reading');
     try {
@@ -99,7 +102,7 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
       };
       // A PDF has no title of its own more often than not; the file name stands in.
       const title = extraction.title.trim() || file?.name.replace(/\.(?:docx|pdf)$/iu, '').trim().slice(0, 180) || t('Dokumen impor', 'Imported document');
-      const doc = await request<{ id: string }>('/api/documents', 'POST', { title, language: prefs.writingLanguage, content: extraction.content, preferences, ...(extraction.docxImportReceipt ? { docxImportReceipt: extraction.docxImportReceipt } : {}) }, newKey());
+      const doc = await request<{ id: string }>('/api/documents?lean=1', 'POST', { title, language: prefs.writingLanguage, content: extraction.content, preferences, ...(extraction.docxImportReceipt ? { docxImportReceipt: extraction.docxImportReceipt } : {}) }, newKey());
       if (!guardedPush(router, `/notebooks/${doc.id}`)) onClose();
     } catch (caught) {
       if (!guard(caught)) setError(errorText(caught, locale === 'en'));
@@ -108,7 +111,8 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
   }
 
   const number = (value: number) => new Intl.NumberFormat(locale).format(value);
-  const plain = extraction ? documentText(extraction.content) : '';
+  // Once per extraction: a 2,000-page import is not flattened again on every render of the dialog.
+  const plain = useMemo(() => (extraction ? documentText(extraction.content) : ''), [extraction]);
   const characters = plain.length;
   const locked = error && extraction === null && busy === '';
 
@@ -132,7 +136,7 @@ export function ImportDocumentDialog({ onClose }: { onClose: () => void }) {
             className="flex w-full flex-col items-center gap-2 rounded-xl border-2 border-dashed border-line-strong bg-paper px-6 py-10 text-center transition-colors hover:border-brand-400 hover:bg-brand-50 disabled:cursor-not-allowed disabled:opacity-60">
             <Upload size={22} aria-hidden="true" className="text-ink-500" />
             <span className="text-[14px] font-semibold text-ink-900">{busy === 'reading' ? (format === 'pdf' ? t('Membaca PDF…', 'Reading the PDF…') : t('Membaca berkas…', 'Reading the file…')) : t('Pilih berkas .docx atau .pdf', 'Choose a .docx or .pdf file')}</span>
-            <span className="text-[12.5px] text-ink-500">{t('DOCX maksimal 5 MB, PDF maksimal 10 MB. PDF hasil scan belum bisa dibaca.', 'DOCX up to 5 MB, PDF up to 10 MB. Scanned PDFs cannot be read yet.')}</span>
+            <span className="text-[12.5px] text-ink-500">{t('DOCX maksimal 50 MB, PDF maksimal 10 MB. PDF hasil scan belum bisa dibaca.', 'DOCX up to 50 MB, PDF up to 10 MB. Scanned PDFs cannot be read yet.')}</span>
           </button>
         )}
 

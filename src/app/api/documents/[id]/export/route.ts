@@ -5,7 +5,7 @@ import { DOCX_CONTENT_TYPE, docxFilename, editorDocumentToDocx } from "@/lib/doc
 import { pageGeometry, parseMargins } from "@/lib/docx/office-defaults";
 import { readLayout } from "@/components/workspace/page-layout";
 import { assertDocxExport, recordDocxExportEvidence } from "@/server/documents/portability";
-import { documentHtml } from "@/lib/editor/clipboard";
+import { documentHtmlPieces } from "@/lib/editor/clipboard";
 
 // Server-side so the paid gate is real: a client-side writer could simply be called directly.
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -19,7 +19,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       // HTML is gated like DOCX (owner decision): Pro and up, or a notebook with DOCX evidence from before a
       // downgrade. It records no evidence of its own, so an HTML download never unlocks a later DOCX export.
       await assertDocxExport(user.id, documentId);
-      const body = `<!doctype html><html lang="${document.language === "en" ? "en" : "id"}"><head><meta charset="utf-8"><title>${document.title.replace(/[&<>]/g, (value) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[value]!)}</title></head><body>${documentHtml(document.content)}</body></html>`;
+      const head = `<!doctype html><html lang="${document.language === "en" ? "en" : "id"}"><head><meta charset="utf-8"><title>${document.title.replace(/[&<>]/g, (value) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[value]!)}</title></head><body>`;
+      // Streamed block by block, so a 2,000-page notebook is never one HTML string in the Worker.
+      const pieces = (function* () { yield head; yield* documentHtmlPieces(document.content); yield '</body></html>'; })();
+      const encoder = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({ pull(controller) { let batch = ''; for (let next = pieces.next(); !next.done; next = pieces.next()) { batch += next.value; if (batch.length >= 65_536) break; } if (batch) controller.enqueue(encoder.encode(batch)); else controller.close(); } });
       return new Response(body, { headers: { "Content-Type": "text/html; charset=utf-8", "Content-Disposition": `attachment; filename="${encodeURIComponent(document.title || "document")}.html"`, "Cache-Control": "no-store" } });
     }
     const access = await assertDocxExport(user.id, documentId);

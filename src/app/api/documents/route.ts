@@ -1,6 +1,6 @@
 import { DocumentCreateSchema, DocumentListQuerySchema, jsonData } from "@/lib/contracts";
 import { requireUser } from "@/server/auth/auth";
-import { handleRouteError, idempotencyKey, readJson, RequestError } from "@/server/http";
+import { DOCUMENT_JSON, handleRouteError, idempotencyKey, readJson, RequestError } from "@/server/http";
 import { createDocument, libraryCounts, listDocuments } from "@/server/documents/service";
 
 export async function GET(request: Request) {
@@ -13,4 +13,12 @@ export async function GET(request: Request) {
     return jsonData(query.counts ? { ...page, counts: await libraryCounts(user.id) } : page);
   } catch (error) { return handleRouteError(error); }
 }
-export async function POST(request: Request) { try { const user = await requireUser(request); idempotencyKey(request); return jsonData(await createDocument(user.id, await readJson(request, DocumentCreateSchema)), { status: 201 }); } catch (error) { return handleRouteError(error); } }
+// ?lean=1 answers with the notebook's metadata only: the client that just sent a long document does not need it back.
+export async function POST(request: Request) {
+  try {
+    const user = await requireUser(request); idempotencyKey(request);
+    const created = await createDocument(user.id, await readJson(request, DocumentCreateSchema, DOCUMENT_JSON));
+    if (new URL(request.url).searchParams.get("lean") === "1") { const { content: _content, ...meta } = created; void _content; return jsonData(meta, { status: 201 }); }
+    return jsonData(created, { status: 201 });
+  } catch (error) { return handleRouteError(error); }
+}

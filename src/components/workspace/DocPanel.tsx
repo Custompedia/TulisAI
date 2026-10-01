@@ -20,6 +20,7 @@ import { IconButton } from '@/components/ui/Button';
 import { inputClass } from '@/components/ui/Field';
 import { modeLabel, modeToneClass } from '@/components/writing/modes';
 import { outlineSections, type OutlineSection } from './editor-rules';
+import { topBlocks as cachedTopBlocks } from '@/lib/editor/text-map';
 import { isReferenceHeading } from '@/lib/editor/document';
 import type { Term } from './types';
 
@@ -181,12 +182,10 @@ function Outline({ editor, navigable, busy, onNavigate, onCopied, onProcess, onD
   const [menu, setMenu] = useState<number | null>(null);
   const items = useEditorState({
     editor,
-    selector: ({ editor: e }) => {
-      const blocks: Array<{ type: string; level?: number; text: string; pos: number; size: number }> = [];
-      e.state.doc.forEach((node, offset) => { if (blocks.length < 2000) blocks.push({ type: node.type.name, level: Number(node.attrs.level) || undefined, text: node.textContent, pos: offset, size: node.nodeSize }); });
-      return outlineSections(blocks).slice(0, 200);
-    },
-    equalityFn: (a, b) => JSON.stringify(a) === JSON.stringify(b),
+    // Every heading of the whole document (a thesis has hundreds), computed once per document version from the
+    // cached per-block text; a keystroke inside a section only moves its word count.
+    selector: ({ editor: e }) => outlineOf(e.state.doc),
+    equalityFn: (a, b) => a === b || (!!a && !!b && a.length === b.length && a.every((item, index) => { const other = b[index]!; return item.pos === other.pos && item.end === other.end && item.words === other.words && item.level === other.level && item.text === other.text; })),
   });
   useEffect(() => {
     if (menu === null) return;
@@ -319,4 +318,11 @@ export function DocPanelFrame({ width, onWidth, children }: { width: number; onW
       </div>
     </aside>
   );
+}
+
+const outlines = new WeakMap<object, OutlineSection[]>();
+function outlineOf(doc: Parameters<typeof cachedTopBlocks>[0]): OutlineSection[] {
+  let items = outlines.get(doc);
+  if (!items) { items = outlineSections(cachedTopBlocks(doc)).slice(0, 1000); outlines.set(doc, items); }
+  return items;
 }

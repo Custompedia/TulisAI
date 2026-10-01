@@ -7,9 +7,13 @@ import { looksLikePdf, MAX_PDF_BYTES, PDF_CONTENT_TYPE, pdfToEditorDocument, Pdf
 import { entitlement } from "@/server/usage/quota";
 import { createDocxImportReceipt } from "@/server/documents/portability";
 import { assertFeature } from "@/server/usage/features";
+import { MAX_DOCX_BYTES as MAX_UPLOAD_BYTES } from "@/lib/limits";
+import { encodeChunks, serializeDocumentChunks } from "@/lib/editor/serialize";
+import { sha256Bytes } from "@/server/storage/r2";
 
-// 5 MB covers a long thesis chapter of text; images are dropped on import, so nothing bigger is useful.
-const MAX_DOCX_BYTES = 5_000_000;
+// A 2,000-page thesis with its figures: the pictures make up most of the file and are never inflated (see
+// src/lib/docx/import.ts), so the cap bounds the upload itself, which is held once in memory.
+const MAX_DOCX_BYTES = MAX_UPLOAD_BYTES;
 
 // Extraction only: the notebook is created by the existing POST /api/documents once the user confirms
 // the preview, so a cancelled import leaves nothing behind. One route for both formats: the PDF branch is
@@ -21,7 +25,7 @@ export async function POST(request: Request) {
     // PDF import is the same Pro feature as DOCX import.
     assertFeature(rights, "docx_import");
     const declaredPdf = (request.headers.get("content-type") ?? "").toLowerCase().startsWith(PDF_CONTENT_TYPE);
-    const bytes = await readBinary(request, declaredPdf ? MAX_PDF_BYTES : MAX_DOCX_BYTES);
+    let bytes: Uint8Array | null = await readBinary(request, declaredPdf ? MAX_PDF_BYTES : MAX_DOCX_BYTES);
     const language = new URL(request.url).searchParams.get("language") ?? "id";
     if (declaredPdf || looksLikePdf(bytes)) {
       const result = await pdfToEditorDocument(bytes, { language });
@@ -32,12 +36,18 @@ export async function POST(request: Request) {
       });
     }
     const result = await docxToEditorDocument(bytes, { language });
-    const docxImportReceipt = await createDocxImportReceipt(user.id, result.content, rights);
-    return jsonData({
-      format: "docx", title: result.title, content: result.content, pageSize: result.pageSize, pageMargins: formatMargins(result.pageMargins),
+    bytes = null; // the upload (mostly pictures) can be collected before the answer is written
+    // The content is serialized once, in its canonical stored form: the receipt hashes exactly these bytes (the create
+    // that follows hashes the same form) and the answer carries them, so a long document is never stringified twice.
+    const content = encodeChunks(serializeDocumentChunks(result.content));
+    const docxImportReceipt = await createDocxImportReceipt(user.id, null, rights, await sha256Bytes(content));
+    const rest = JSON.stringify({
+      format: "docx", title: result.title, pageSize: result.pageSize, pageMargins: formatMargins(result.pageMargins),
       orientation: result.orientation, columns: result.columns,
       header: result.header, footer: result.footer, warnings: result.warnings, docxImportReceipt,
     });
+    const body = new Blob(['{"data":{"content":', content as BlobPart, ',', rest.slice(1), '}']);
+    return new Response(body, { headers: { "Content-Type": "application/json" } });
   } catch (error) {
     if (error instanceof PdfError) return handleRouteError(new RequestError(error.code, error.message, 422));
     if (error instanceof DocxError) return handleRouteError(new RequestError("DOCX_UNREADABLE", error.message, 422));

@@ -1,10 +1,11 @@
 import { EditorDocumentSchema } from '../contracts';
-import { documentText, type EditorDocument, type EditorNode } from '../editor/document';
-import { documentSchema } from '../editor/extensions';
+import type { EditorDocument, EditorNode } from '../editor/document';
+import { jsonDocumentTextLength, schemaProblem } from '../editor/validate';
+import { MAX_DOCUMENT_CHARACTERS, MAX_TOP_LEVEL_BLOCKS } from '../limits';
 import { safeAnchor } from '../editor/extensions/anchors';
 import { MAX_FOOTNOTE_CHARS } from '../editor/extensions/footnote';
 import { formatTabStops } from '../editor/extensions/paragraph-format';
-import { unzip, ZipError, type ZipLimits } from './zip';
+import { readZipEntry, streamZipEntry, ZIP_LIMITS, zipDirectory, ZipError, type ZipDirectoryEntry, type ZipLimits } from './zip';
 import { BORDER_SIDES, borderAttr, cssBorder } from './borders';
 import { asRunningText, PAGE_TOKEN, PAGES_TOKEN, type RunningText } from './running';
 import { asColumns, contentWidth, TWIPS_PER_POINT, DEFAULT_FONT, DEFAULT_FONT_POINTS, defaultPageSize, fontLineFactor, HEADING_FONT, HEADINGS, LINE_HEIGHT, MAX_COLUMNS, PAGES, pageGeometry, parseMargins, formatMargins, SPACE_AFTER_TWIPS, type Orientation, type PageMargins, type PageSize } from './office-defaults';
@@ -12,7 +13,7 @@ import { advance, levelOf, listShape, parseNumbering, type ListShape, type Numbe
 import { inlinesFrom, marksFor, PAGE_BREAK, pushText, type Baseline, type ImportWarning, type NoteKind, type RunContext } from './runs';
 import { applyParagraph, applyRun, defaultParagraph, defaultRun, headingLevel, paragraphStyleProps, parseStyles, parseTheme, type ParaProps, type Styles } from './styles';
 import { tableFrom, type CellBase } from './tables';
-import { attr, childrenNamed, findDeep, firstNamed, parseXml, type XmlNode } from './xml';
+import { attr, childrenNamed, collectElements, findDeep, firstNamed, forEachBodyChild, parseXml, textChunks, type XmlNode } from './xml';
 
 export class DocxError extends Error {}
 
@@ -20,9 +21,11 @@ export type DocxImport = {
   content: EditorDocument; title: string; pageSize: PageSize; pageMargins: PageMargins;
   orientation: Orientation; columns: number; header: RunningText | null; footer: RunningText | null; warnings: ImportWarning[];
 };
-export type ImportOptions = { language?: string; limits?: ZipLimits };
+// maxCharacters lowers the text cap (tests use it to keep fixtures small); it never raises it.
+export type ImportOptions = { language?: string; limits?: ZipLimits; maxCharacters?: number };
 
-export const MAX_IMPORT_CHARACTERS = 200_000;
+// Any realistic length imports: the cap is the notebook's own (src/lib/limits.ts), about 2,600 A4 pages of text.
+export const MAX_IMPORT_CHARACTERS = MAX_DOCUMENT_CHARACTERS;
 const DECODER = new TextDecoder();
 
 // A DOCX is a ZIP whose first bytes are the local file header; the MIME type a browser reports is not evidence.
@@ -35,6 +38,8 @@ type ListInfo = { ilvl: number; shape: Exclude<ListShape, { kind: 'literal' }>; 
 type ParaRecord = {
   kind: 'para'; styleId: string; para: ParaProps; before: number; after: number; role: 'paragraph' | 'heading' | 'quote';
   level: number; top: boolean; firstFont?: string; content: EditorNode[]; list?: ListInfo; anchor?: string; toc?: boolean;
+  // The paragraph mark's font and size: an empty paragraph is exactly one line of it in Word.
+  markFont?: string; markSize?: number;
 };
 type Entry = ParaRecord | { kind: 'block'; node: EditorNode };
 
@@ -107,6 +112,9 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
   const anchor = bookmarkNames(node)[0] ?? pending;
   const entries: Entry[] = [];
   if (para.pageBreakBefore) entries.push({ kind: 'block', node: { type: 'pageBreak' } });
+  const mark = applyRun(run, pPr && firstNamed(pPr, 'w:rPr'), styles.theme);
+  // Floating pictures sit at the top of their paragraph, before the list label and the text.
+  const lead = [...inlines.anchored, ...prefix];
 
   // A page break inside a paragraph splits it; the empty halves Word leaves around the break are dropped.
   const segments: EditorNode[][] = [[]];
@@ -115,12 +123,12 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
   let first = true;
   segments.forEach((segment, index) => {
     if (index > 0) entries.push({ kind: 'block', node: { type: 'pageBreak' } });
-    if (!segment.length && segments.length > 1) return;
+    if (!segment.length && segments.length > 1 && !(first && inlines.anchored.length)) return;
     // A paragraph whose only decoration is a bottom border is Word's horizontal rule.
-    if (!segment.length && !prefix.length && borders && firstNamed(borders, 'w:bottom')) { entries.push({ kind: 'block', node: { type: 'horizontalRule' } }); return; }
+    if (!segment.length && !lead.length && borders && firstNamed(borders, 'w:bottom')) { entries.push({ kind: 'block', node: { type: 'horizontalRule' } }); return; }
     const content: EditorNode[] = [];
-    for (const inline of first ? [...prefix, ...segment] : segment) if (inline.type === 'text') pushText(content, inline.text ?? '', inline.marks ?? []); else content.push(inline);
-    entries.push({ kind: 'para', styleId, para, before: para.before ?? 0, after: para.after ?? 0, role, level: heading ?? 0, top, firstFont: inlines.firstFont ?? run.font, content, ...(first && list ? { list } : {}), ...(anchor ? { anchor } : {}), ...(toc ? { toc: true } : {}) });
+    for (const inline of first ? [...lead, ...segment] : segment) if (inline.type === 'text') pushText(content, inline.text ?? '', inline.marks ?? []); else content.push(inline);
+    entries.push({ kind: 'para', styleId, para, before: para.before ?? 0, after: para.after ?? 0, role, level: heading ?? 0, top, firstFont: inlines.firstFont ?? run.font, markFont: mark.font, markSize: mark.size, content, ...(first && list ? { list } : {}), ...(anchor ? { anchor } : {}), ...(toc ? { toc: true } : {}) });
     first = false;
   });
 
@@ -133,24 +141,30 @@ function paragraphEntries(node: XmlNode, context: Context, top: boolean, cell?: 
   return entries;
 }
 
-function entriesFrom(container: XmlNode, context: Context, top: boolean, cell?: CellBase): Entry[] {
-  const entries: Entry[] = [];
+// Reads a container's children one at a time, so the document body can be fed to it as it streams in. A bookmark
+// Word wrote just before a heading is carried to that heading.
+function blockReader(context: Context, top: boolean, cell?: CellBase): (child: XmlNode) => Entry[] {
   let pending: string | undefined;
-  for (const child of container.children) {
+  return (child) => {
     switch (child.name) {
-      case 'w:bookmarkStart': { const name = safeAnchor(attr(child, 'w:name')); if (name) pending = name; break; }
-      case 'w:p': entries.push(...paragraphEntries(child, context, top, cell, pending)); pending = undefined; break;
+      case 'w:bookmarkStart': { const name = safeAnchor(attr(child, 'w:name')); if (name) pending = name; return []; }
+      case 'w:p': { const entries = paragraphEntries(child, context, top, cell, pending); pending = undefined; return entries; }
       case 'w:tbl': {
         const base = { run: cell?.run ?? defaultRun(context.styles), para: cell?.para ?? defaultParagraph(context.styles) };
         const table = tableFrom(child, context.styles, base, (tc, cellBase) => assemble(entriesFrom(tc, context, false, cellBase)), context.contentWidth);
-        if (table) entries.push({ kind: 'block', node: table });
-        break;
+        return table ? [{ kind: 'block', node: table }] : [];
       }
-      case 'w:sdt': { const content = firstNamed(child, 'w:sdtContent'); if (content) entries.push(...entriesFrom(content, context, top, cell)); break; }
-      case 'w:customXml': case 'w:ins': case 'w:moveTo': case 'w:smartTag': entries.push(...entriesFrom(child, context, top, cell)); break;
-      default: break;
+      case 'w:sdt': { const content = firstNamed(child, 'w:sdtContent'); return content ? entriesFrom(content, context, top, cell) : []; }
+      case 'w:customXml': case 'w:ins': case 'w:moveTo': case 'w:smartTag': return entriesFrom(child, context, top, cell);
+      default: return [];
     }
-  }
+  };
+}
+
+function entriesFrom(container: XmlNode, context: Context, top: boolean, cell?: CellBase): Entry[] {
+  const read = blockReader(context, top, cell);
+  const entries: Entry[] = [];
+  for (const child of container.children) for (const entry of read(child)) entries.push(entry);
   return entries;
 }
 
@@ -164,6 +178,22 @@ function contextualSpacing(records: Entry[]) {
   }
 }
 
+// The canvas element's own font size: what CSS gives a paragraph or heading before any mark (globals.css).
+const elementPoints = (record: ParaRecord) => (record.role === 'heading' ? HEADINGS[record.level as 1]?.points ?? DEFAULT_FONT_POINTS : DEFAULT_FONT_POINTS);
+// The largest font size among the text runs, null when one of them has no size mark (it then uses the element's).
+function largestRun(content: EditorNode[]): number | null {
+  let largest = 0;
+  for (const node of content) {
+    if (node.type !== 'text') continue;
+    const size = node.marks?.find((mark) => mark.type === 'textStyle')?.attrs?.fontSize;
+    const points = typeof size === 'string' && size.endsWith('pt') ? Number.parseFloat(size) : NaN;
+    if (!Number.isFinite(points)) return null;
+    largest = Math.max(largest, points);
+  }
+  return largest || null;
+}
+const strutTaller = (record: ParaRecord) => { const largest = largestRun(record.content); return largest !== null && largest < elementPoints(record) - 0.01; };
+
 function paragraphNode(record: ParaRecord): EditorNode {
   const { para } = record;
   const nested = !record.top || record.list !== undefined;
@@ -172,7 +202,16 @@ function paragraphNode(record: ParaRecord): EditorNode {
   if (align) attrs.textAlign = align;
   if (para.line !== undefined) {
     if (para.lineRule === 'exact' || para.lineRule === 'atLeast') attrs.lineHeight = pt(para.line);
-    else {
+    else if (!record.content.length && record.markSize) {
+      // An empty paragraph is one line of its mark's font: stated in points, because the canvas would otherwise size
+      // it from its own 11 pt default, and a thesis full of blank 12 pt lines would drift a little on every one.
+      attrs.lineHeight = pt((para.line / 240) * fontLineFactor(record.markFont) * record.markSize * 20);
+    } else if (strutTaller(record) && Math.abs((para.line / 240) * fontLineFactor(record.firstFont) - LINE_HEIGHT) > 0.005) {
+      // Every run is smaller than the canvas element's own size (a 12 pt heading where the canvas heading is 16 pt,
+      // 10 pt body text): a ratio would size each line from the element's larger font, so it is stated in points from
+      // the largest run, as Word does.
+      attrs.lineHeight = pt((para.line / 240) * fontLineFactor(record.firstFont) * largestRun(record.content)! * 20);
+    } else {
       const ratio = Number(((para.line / 240) * fontLineFactor(record.firstFont)).toFixed(4));
       if (Math.abs(ratio - LINE_HEIGHT) > 0.005) attrs.lineHeight = String(ratio);
     }
@@ -370,8 +409,8 @@ function resolvePart(base: string, target: string): string {
   return parts.join('/');
 }
 
-function pageFrom(body: XmlNode, language: string): { pageSize: PageSize; pageMargins: PageMargins; orientation: Orientation; columns: number; section: XmlNode | undefined } {
-  const section = childrenNamed(body, 'w:sectPr').pop() ?? findDeep(body, 'w:sectPr');
+type PageSetup = { pageSize: PageSize; pageMargins: PageMargins; orientation: Orientation; columns: number };
+function sectionPage(section: XmlNode | undefined, language: string): PageSetup {
   const size = section && firstNamed(section, 'w:pgSz');
   const width = Number(attr(size, 'w:w') ?? '0'); const height = Number(attr(size, 'w:h') ?? '0');
   let pageSize = defaultPageSize(language);
@@ -388,7 +427,17 @@ function pageFrom(body: XmlNode, language: string): { pageSize: PageSize; pageMa
   const valid = read && Object.values(read).every(Number.isFinite) ? parseMargins(formatMargins(read), pageSize, orientation) : null;
   const columnCount = Number(attr(section && firstNamed(section, 'w:cols'), 'w:num') ?? '1');
   const columns = asColumns(Math.min(MAX_COLUMNS, Number.isFinite(columnCount) ? columnCount : 1));
-  return { pageSize, pageMargins: valid ?? { ...pageGeometry(pageSize, orientation).margin }, orientation, columns, section };
+  return { pageSize, pageMargins: valid ?? { ...pageGeometry(pageSize, orientation).margin }, orientation, columns };
+}
+
+// A notebook has one page setup, so the first section's (the one the document opens with) is used; a document whose
+// later sections differ says so in a warning. Sections are listed in document order, the body's own last.
+function pageFrom(sections: XmlNode[], language: string, warn: (warning: ImportWarning) => void): PageSetup {
+  const setups = sections.map((section) => sectionPage(section, language));
+  const first = setups[0] ?? sectionPage(undefined, language);
+  const key = (setup: PageSetup) => `${setup.pageSize}|${setup.orientation}|${formatMargins(setup.pageMargins)}|${setup.columns}`;
+  if (setups.some((setup) => key(setup) !== key(first))) warn('sectionsDiffer');
+  return first;
 }
 
 const titleFrom = (files: Map<string, Uint8Array>): string => {
@@ -406,59 +455,98 @@ function titleFromContent(content: EditorNode[]): string {
 
 export async function docxToEditorDocument(bytes: Uint8Array, options: ImportOptions = {}): Promise<DocxImport> {
   if (!looksLikeDocx(bytes)) throw new DocxError('This file is not a .docx document.');
-  let files: Map<string, Uint8Array>;
-  try { files = await unzip(bytes, options.limits); }
+  const limits = options.limits ?? ZIP_LIMITS;
+  const maxCharacters = Math.min(MAX_IMPORT_CHARACTERS, options.maxCharacters ?? MAX_IMPORT_CHARACTERS);
+  let directory: Map<string, ZipDirectoryEntry>;
+  try { directory = zipDirectory(bytes, limits.maxEntries); }
   catch (error) { throw new DocxError(error instanceof ZipError ? error.message : 'This .docx file could not be read.'); }
   // Every part is attacker-shaped: any failure past the ZIP layer is reported as an unreadable file, never a 500.
   try {
-    if (!files.has('[Content_Types].xml')) throw new DocxError('This file is not a .docx document.');
+    if (!directory.has('[Content_Types].xml')) throw new DocxError('This file is not a .docx document.');
+    // Only the parts that are mapped are ever inflated: pictures, fonts and embedded files stay compressed and unread,
+    // which is why a 50 MB thesis full of figures costs no more than its text.
+    const files = new Map<string, Uint8Array>(); let inflated = 0;
+    const charge = (entry: ZipDirectoryEntry) => { inflated += entry.uncompressedSize; if (inflated > limits.maxTotalBytes) throw new ZipError('ZIP contents exceed the allowed total size.'); };
+    const load = async (path: string | undefined) => {
+      const entry = path ? directory.get(path) : undefined;
+      if (!entry || files.has(entry.name)) return;
+      if (entry.uncompressedSize > limits.maxEntryBytes) throw new ZipError(`ZIP entry ${entry.name} is too large.`);
+      charge(entry);
+      files.set(entry.name, await readZipEntry(bytes, entry, limits.maxEntryBytes));
+    };
 
+    await load('_rels/.rels');
     const main = resolvePart('', relationshipsOf(files, '_rels/.rels').byType.get('officeDocument') ?? 'word/document.xml');
-    const documentPath = files.has(main) ? main : 'word/document.xml';
-    const root = readXml(files, documentPath);
-    const body = root && findDeep(root, 'w:body');
-    if (!body) throw new DocxError('This .docx file has no document body.');
+    const documentPath = directory.has(main) ? main : 'word/document.xml';
+    const mainEntry = directory.get(documentPath);
+    if (!mainEntry) throw new DocxError('This .docx file has no document body.');
+    const streamLimit = limits.maxStreamBytes ?? limits.maxEntryBytes;
+    charge(mainEntry);
+    // The body is read twice as a stream: first for its sections (the page setup decides table widths), then block by
+    // block. It never exists as one string, so its size is bounded by what it produces, not by the XML around it.
+    const body = () => textChunks(streamZipEntry(bytes, mainEntry, streamLimit));
 
     const relsPath = `${documentPath.replace(/[^/]+$/u, '')}_rels/${documentPath.split('/').pop()}.rels`;
+    await load(relsPath);
     const rels = relationshipsOf(files, relsPath);
     const part = (type: string, fallback: string) => { const target = rels.byType.get(type); return target ? resolvePart(documentPath, target) : fallback; };
-    const theme = parseTheme(readXml(files, part('theme', 'word/theme/theme1.xml')));
-    const styles: Styles = parseStyles(readXml(files, part('styles', 'word/styles.xml')), theme);
+    const parts = { theme: part('theme', 'word/theme/theme1.xml'), styles: part('styles', 'word/styles.xml'), numbering: part('numbering', 'word/numbering.xml'), footnotes: part('footnotes', 'word/footnotes.xml'), endnotes: part('endnotes', 'word/endnotes.xml') };
+    for (const path of [...Object.values(parts), 'docProps/core.xml']) await load(path);
+    const theme = parseTheme(readXml(files, parts.theme));
+    const styles: Styles = parseStyles(readXml(files, parts.styles), theme);
     const language = options.language ?? 'id';
-    const page = pageFrom(body, language);
 
     const found = new Set<ImportWarning>();
     const warn = (warning: ImportWarning) => { found.add(warning); };
+    const sections = await collectElements(body(), 'w:sectPr');
+    const page = pageFrom(sections, language, warn);
+    const width = contentWidth(page.pageSize, page.pageMargins, page.orientation);
     const context: Context = {
-      styles, numbering: parseNumbering(readXml(files, part('numbering', 'word/numbering.xml')), styles),
+      styles, numbering: parseNumbering(readXml(files, parts.numbering), styles),
       relationships: rels.byId, fields: [], textBoxes: [], warn,
-      noteTexts: noteTexts(files, { footnote: part('footnotes', 'word/footnotes.xml'), endnote: part('endnotes', 'word/endnotes.xml') }),
-      contentWidth: contentWidth(page.pageSize, page.pageMargins, page.orientation),
+      noteTexts: noteTexts(files, { footnote: parts.footnotes, endnote: parts.endnotes }),
+      contentWidth: width, columnPoints: width / 20,
     };
-    if (files.has('word/comments.xml')) warn('comments');
+    if (directory.has('word/comments.xml')) warn('comments');
 
-    // A header or footer is read from the section's default reference, which is the one Word shows on every page.
-    const reference = (name: 'w:headerReference' | 'w:footerReference') => {
-      const nodes = page.section ? childrenNamed(page.section, name) : [];
+    // A header or footer is the default reference of the last section that has one, which is what Word shows on the
+    // pages that carry the body text (a cover section often has none).
+    const reference = async (name: 'w:headerReference' | 'w:footerReference') => {
+      const section = [...sections].reverse().find((candidate) => childrenNamed(candidate, name).length);
+      const nodes = section ? childrenNamed(section, name) : [];
       const chosen = nodes.find((node) => attr(node, 'w:type') === 'default') ?? nodes[0];
       const target = chosen && rels.byId.get(attr(chosen, 'r:id') ?? '');
-      return target ? readXml(files, resolvePart(documentPath, target)) : null;
+      if (!target) return null;
+      const path = resolvePart(documentPath, target);
+      await load(path);
+      return readXml(files, path);
     };
-    const header = runningFrom(reference('w:headerReference'), warn);
-    const footer = runningFrom(reference('w:footerReference'), warn);
+    const header = runningFrom(await reference('w:headerReference'), warn);
+    const footer = runningFrom(await reference('w:footerReference'), warn);
 
-    const all = tidyBreaks(assemble(entriesFrom(body, context, true)));
+    const tooLong = (characters: number) => new DocxError(`This document has ${characters.toLocaleString('en-US')} characters of text; the limit is ${maxCharacters.toLocaleString('en-US')}. Split it into smaller files first.`);
+    const records: Entry[] = []; let characters = 0;
+    const read = blockReader(context, true);
+    await forEachBodyChild(body(), (child) => {
+      for (const entry of read(child)) {
+        characters += entry.kind === 'para' ? entry.content.reduce((sum, node) => sum + textOf(node).length, 0) : textOf(entry.node).length;
+        if (characters > maxCharacters) throw tooLong(characters);
+        records.push(entry);
+      }
+    });
+    const all = tidyBreaks(assemble(records));
+    records.length = 0;
     context.fields.length = 0;
-    const tooLong = (characters: number) => new DocxError(`This document has ${characters.toLocaleString('en-US')} characters of text; the limit is ${MAX_IMPORT_CHARACTERS.toLocaleString('en-US')}. Split it into smaller files first.`);
-    const characters = all.reduce((sum, node) => sum + textOf(node).length, 0);
     if (!characters) throw new DocxError('This document has no readable text.');
-    if (characters > MAX_IMPORT_CHARACTERS) throw tooLong(characters);
-    // Both the stored-document contract and the editor schema must accept the result, or the notebook would not open.
+    if (all.length > MAX_TOP_LEVEL_BLOCKS) throw new DocxError('This document has too many paragraphs to import. Split it into smaller files first.');
+    // Both the stored-document contract and the editor schema must accept the result, or the notebook would not open;
+    // both checks walk the JSON as it is, with no copy and no ProseMirror tree.
     const content = EditorDocumentSchema.parse({ type: 'doc', content: all });
-    documentSchema.nodeFromJSON(content).check();
+    const problem = schemaProblem(content);
+    if (problem) throw new Error(problem);
     // The saved-document limit counts block and cell separators too, so an import it would refuse is refused here.
-    const stored = documentText(content).length;
-    if (stored > MAX_IMPORT_CHARACTERS) throw tooLong(stored);
+    const stored = jsonDocumentTextLength(content);
+    if (stored > maxCharacters) throw tooLong(stored);
     return {
       content, title: titleFrom(files) || titleFromContent(content.content) || 'Untitled document',
       pageSize: page.pageSize, pageMargins: page.pageMargins, orientation: page.orientation, columns: page.columns,
@@ -466,6 +554,7 @@ export async function docxToEditorDocument(bytes: Uint8Array, options: ImportOpt
     };
   } catch (error) {
     if (error instanceof DocxError) throw error;
+    if (error instanceof ZipError) throw new DocxError(error.message);
     throw new DocxError('This document is too large or too complex to import. Split it into smaller files and try again.');
   }
 }

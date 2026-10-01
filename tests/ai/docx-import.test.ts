@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { docxToEditorDocument, DocxError } from '../../src/lib/docx/import';
+import { docxToEditorDocument, DocxError, MAX_IMPORT_CHARACTERS } from '../../src/lib/docx/import';
 import { editorDocumentToDocx } from '../../src/lib/docx/export';
 import { unzip, zip, ZipError } from '../../src/lib/docx/zip';
 import { parseXml, XML_LIMITS } from '../../src/lib/docx/xml';
@@ -381,17 +381,20 @@ describe('DOCX import: section and limits', () => {
   it('refuses a document with no text, or more text than the limit, with a clear message', async () => {
     await expect(docxToEditorDocument(await docx(p('<w:r><w:drawing/></w:r>')))).rejects.toThrowError(/no readable text/);
     const long = p(r('a'.repeat(100_001))) + p(r('b'.repeat(100_001)));
-    const error = await docxToEditorDocument(await docx(long)).catch((caught: unknown) => caught);
+    // The real cap is the notebook's 8,000,000 characters; a smaller one is passed in to keep the fixture small.
+    const error = await docxToEditorDocument(await docx(long), { maxCharacters: 200_000 }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(DocxError);
     expect((error as Error).message).toMatch(/200,000/);
+    expect(MAX_IMPORT_CHARACTERS).toBe(8_000_000);
   });
 
   it('splits huge runs of formatting into a valid document instead of failing', async () => {
     const runs = Array.from({ length: 6000 }, (_, index) => r(`k${index} `, index % 2 ? '<w:b/>' : '')).join('');
-    const result = await docxToEditorDocument(await docx(p(runs))).catch((caught: unknown) => caught);
-    // More than 5000 inline nodes cannot be stored; the importer says so rather than a generic failure.
-    expect(result).toBeInstanceOf(DocxError);
-    expect((result as Error).message).toMatch(/too large or too complex/);
+    // 6,000 alternating runs used to pass the old 5,000-node cap; the cap is now 50,000 children per node.
+    const result = await docxToEditorDocument(await docx(p(runs)));
+    const inline = result.content.content[0]!.content!;
+    expect(inline).toHaveLength(6000);
+    expect(inline.filter((node) => node.marks?.some((mark) => mark.type === 'bold'))).toHaveLength(3000);
   });
 });
 
@@ -445,7 +448,7 @@ describe('DOCX import: hostile and minimal packages', () => {
     const cell = `<w:tc>${p(r('x'.repeat(40)))}</w:tc>`;
     const table = `<w:tbl>${`<w:tr>${cell.repeat(10)}</w:tr>`.repeat(480)}</w:tbl>`;
     // 192,000 characters of text, but 480 rows x 9 " | " separators take the saved text past 200,000.
-    const error = await failure(await docx(table));
+    const error = await docxToEditorDocument(await docx(table), { maxCharacters: 200_000 }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(DocxError);
     expect((error as Error).message).toMatch(/200,000/);
   });

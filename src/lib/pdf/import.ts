@@ -2,7 +2,7 @@ import { EditorDocumentSchema } from '../contracts';
 import { documentText, type EditorDocument, type EditorNode } from '../editor/document';
 import { documentSchema } from '../editor/extensions';
 import { defaultPageSize, formatMargins, pageGeometry, type Orientation, type PageSize } from '../docx/office-defaults';
-import { MAX_IMPORT_CHARACTERS } from '../docx/import';
+import { MAX_PDF_CHARACTERS as MAX_IMPORT_CHARACTERS } from './constants';
 import { blocksFromLines, dropRunningLines, linesFromRuns, type Line, type TextRun } from './layout';
 import { MAX_PDF_PAGES, type PdfPages, type PdfWarning } from './constants';
 

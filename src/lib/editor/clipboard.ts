@@ -6,6 +6,7 @@ import { documentText, type EditorDocument, type EditorNode } from './document';
 import { clipboardStyle, withAlignment, type ClipboardMode, type ClipboardStyle } from './clipboard-style';
 import { safeLength } from './extensions/paragraph-format';
 import { BULLET_STYLES } from './extensions/list-style';
+import { imagePoints, imageSpaceStyle, imageWrap } from './extensions/image-space';
 import { OWN_CLIPBOARD_ATTRIBUTE, OWN_STYLE_ATTRIBUTE, TASK_GLYPH_ATTRIBUTE } from './paste-normalize';
 
 // Copying wrote text/plain only, so headings, bold, lists and tables were lost on paste into Word or Docs.
@@ -117,6 +118,13 @@ function serializeNode(node: EditorNode, style: ClipboardStyle, inList = false):
     case 'horizontalRule': return `<hr${attribute(style.rule)} />`;
     // Word's own page-break spelling; Docs and our paste both read it.
     case 'pageBreak': return '<br clear="all" style="mso-special-character:line-break;page-break-before:always" />';
+    // An empty box of the picture's size; our own paste reads it back from the data attributes.
+    case 'imageSpace': {
+      const attrs = node.attrs ?? {}; const wrap = imageWrap(attrs.wrap);
+      const placement = wrap === 'block' ? 'display:block;' : wrap === 'left' ? 'display:block;float:left;' : wrap === 'right' ? 'display:block;float:right;' : 'display:inline-block;';
+      const data = ['marginTop', 'marginRight', 'marginBottom', 'marginLeft'].map((side) => typeof attrs[side] === 'number' ? ` data-${side.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`)}="${attrs[side]}"` : '').join('');
+      return `<span data-image-space="" data-wrap="${wrap}" data-width="${imagePoints(attrs.width) ?? 0}" data-height="${imagePoints(attrs.height) ?? 0}"${data}${attribute(`${placement}${imageSpaceStyle(attrs)}`)}></span>`;
+    }
     case 'paragraph': return paragraph(node, style, inList);
     case 'heading': {
       const level = typeof node.attrs?.level === 'number' ? Math.min(6, Math.max(1, node.attrs.level)) : 1;
@@ -155,10 +163,16 @@ export type HtmlOptions = { mode?: ClipboardMode };
 // A full HTML fragment for the clipboard; unknown nodes fall through to their children rather than being dropped.
 // The wrapper carries the font and line height so every block inherits the canvas defaults.
 export function documentHtml(value: unknown, options: HtmlOptions = {}): string {
+  return [...documentHtmlPieces(value, options)].join('');
+}
+
+// The same HTML one top-level block at a time, so the HTML export of a 2,000-page notebook can stream.
+export function* documentHtmlPieces(value: unknown, options: HtmlOptions = {}): Generator<string> {
   const document: EditorDocument = EditorDocumentSchema.parse(value);
   const style = clipboardStyle(options.mode ?? 'plain');
-  const body = document.content.map((node) => serializeNode(node, style)).join('');
-  return `<div${attribute(style.root)} ${OWN_CLIPBOARD_ATTRIBUTE}=""${exact('white-space:pre-wrap;')}>${body}</div>`;
+  yield `<div${attribute(style.root)} ${OWN_CLIPBOARD_ATTRIBUTE}=""${exact('white-space:pre-wrap;')}>`;
+  for (const node of document.content) yield serializeNode(node, style);
+  yield '</div>';
 }
 
 export type CopyResult = 'rich' | 'plain';

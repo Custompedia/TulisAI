@@ -122,6 +122,20 @@
 :is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror.resize-cursor { cursor: col-resize; }
 .ProseMirror .ww-page-break { height: 0; margin: 0.75em 0; border-top: 1px dashed var(--color-ink-300); }
 .ProseMirror .ww-page-break.ProseMirror-selectednode { outline: 2px solid var(--color-brand-300); outline-offset: 3px; }
+/* A picture that was not imported: an empty box of its exact size, invisible except for a faint outline and label
+   while hovered or selected, and never in print. Floats keep Word's 0.125 in gap on the text side by default. */
+.ProseMirror .ww-image-space { display: inline-block; position: relative; box-sizing: border-box; max-width: 100%; vertical-align: baseline; outline: 1px dashed transparent; outline-offset: -1px; border-radius: 2px; }
+.ProseMirror .ww-image-space-block { display: block; }
+.ProseMirror .ww-image-space-left { float: left; }
+.ProseMirror .ww-image-space-right { float: right; }
+.ProseMirror .ww-image-space-left:not([data-margin-right]) { margin-right: 9pt; }
+.ProseMirror .ww-image-space-right:not([data-margin-left]) { margin-left: 9pt; }
+.ProseMirror .ww-image-space:hover, .ProseMirror .ww-image-space.ProseMirror-selectednode { outline-color: var(--color-ink-300); }
+.ProseMirror .ww-image-space:hover::after, .ProseMirror .ww-image-space.ProseMirror-selectednode::after {
+  content: attr(aria-label); position: absolute; left: 6px; top: 6px; max-width: calc(100% - 12px); overflow: hidden; text-overflow: ellipsis;
+  font: 500 11px/1.3 var(--font-sans); color: var(--color-ink-400); white-space: nowrap; pointer-events: none;
+}
+@media print { .ProseMirror .ww-image-space { outline: none !important; } .ProseMirror .ww-image-space::after { content: none !important; } }
 
 /* Find & replace matches; the current one is stronger so it stays visible among many. */
 .ww-search-match { background: #fce8b2; box-decoration-break: clone; }
@@ -193,6 +207,9 @@ html[data-ww-painting] .ProseMirror { cursor: copy; }
 .ww-page-gap-band::before, .ww-page-gap-band::after { content: ""; position: absolute; left: 3px; right: 3px; height: 1px; background: #d6d8d1; }
 .ww-page-gap-band::before { top: 0; box-shadow: 0 1px 3px rgb(31 32 29 / 0.10); }
 .ww-page-gap-band::after { bottom: 0; }
+/* A sheet boundary inside a paragraph: an empty line as tall as the rest of the sheet plus the gutter, so the next line
+   starts on the next sheet (Word splits paragraphs between pages; the canvas does too). */
+.ww-page-split { display: inline-block; position: relative; width: 100%; vertical-align: top; pointer-events: none; user-select: none; }
 
 /* Read-only page surface, so Compare shows the document the way the paged canvas does. */
 .ww-paged-surface { background: #f4f5f2; }
@@ -252,7 +269,7 @@ html[data-ww-painting] .ProseMirror { cursor: copy; }
 :is(.editor-plain, .editor-paged, .editor-prose) .ProseMirror .ww-toc > p:last-child { margin-bottom: 0; }
 
 /* Newspaper columns; one column is the default and leaves the layout untouched. */
-.editor-paged .ProseMirror { column-count: var(--page-column-count, 1); column-gap: var(--page-column-gap, 0); }
+.editor-paged .ProseMirror { column-count: var(--page-column-count, auto); column-gap: var(--page-column-gap, 0); }
 
 /* The running header and footer, drawn over each sheet at Word's own distance from its edges. */
 .ww-running-layer { position: absolute; inset: 0; pointer-events: none; }

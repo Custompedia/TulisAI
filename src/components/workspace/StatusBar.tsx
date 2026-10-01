@@ -1,4 +1,5 @@
 'use client';
+import { useMemo } from 'react';
 import { useLocale } from '@/lib/client/locale';
 import { numberFormat } from '@/lib/client/format';
 import { countCharacters, countWords, formatDuration, readingMinutes, speakingSeconds } from '@/lib/editor/metrics';
@@ -7,12 +8,13 @@ import { countCharacters, countWords, formatDuration, readingMinutes, speakingSe
 export function StatusBar({ text, spoken, page, onOpen }: { text: string; spoken: boolean; page: { current: number; total: number } | null; onOpen: () => void }) {
   const { t, locale } = useLocale();
   const n = (value: number) => numberFormat(value, locale);
-  const words = countWords(text);
+  // Counted when the text changes, not on every render: the bar re-renders with each keystroke.
+  const counts = useMemo(() => ({ words: countWords(text), characters: countCharacters(text), reading: readingMinutes(text), speaking: speakingSeconds(text) }), [text]);
   const parts = [
-    `${n(words)} ${t('kata', 'words')}`,
-    `${n(countCharacters(text))} ${t('kar', 'chars')}`,
-    `${readingMinutes(text)} ${t('mnt baca', 'min read')}`,
-    ...(spoken ? [`${formatDuration(speakingSeconds(text), t)} ${t('bicara', 'spoken')}`] : []),
+    `${n(counts.words)} ${t('kata', 'words')}`,
+    `${n(counts.characters)} ${t('kar', 'chars')}`,
+    `${counts.reading} ${t('mnt baca', 'min read')}`,
+    ...(spoken ? [`${formatDuration(counts.speaking, t)} ${t('bicara', 'spoken')}`] : []),
     ...(page ? [`${t('hal', 'page')} ${n(page.current)}/${n(page.total)}`] : []),
   ];
   return (

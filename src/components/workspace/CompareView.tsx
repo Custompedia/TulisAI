@@ -1,5 +1,5 @@
 'use client';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { ArrowLeftRight, Check, ChevronDown, Columns2, CopyCheck, Info, Lock, RotateCcw, Rows3, X } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { changePercentage, readingMinutes, wordDelta } from '@/lib/editor/metrics';
@@ -36,9 +36,8 @@ export function CompareView({ options, a, b, before, after, loading, busy, apply
   // Side by side by default in advanced mode, so the two versions read as two documents rather than one merged run.
   const [layout, setLayout] = useState<'inline' | 'side'>(paged ? 'side' : 'inline');
   const parts = useDiff(before, after);
-  const delta = wordDelta(before, after);
-  const change = changePercentage(before, after);
-  const readDelta = readingMinutes(after) - readingMinutes(before);
+  // Measured once per pair of texts; two 2,000-page versions would otherwise be re-split on every render.
+  const { delta, change, readDelta } = useMemo(() => ({ delta: wordDelta(before, after), change: changePercentage(before, after), readDelta: readingMinutes(after) - readingMinutes(before) }), [before, after]);
   const identical = before === after;
   const restorable = b !== WORKING && b !== PREVIEW && b !== SOURCE ? b : null;
   const sideOptions = (side: string) => options.filter((option) => option.value !== PREVIEW || side === PREVIEW);

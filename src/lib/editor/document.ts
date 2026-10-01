@@ -1,10 +1,10 @@
 import { Fragment, Slice, type Node as PMNode } from '@tiptap/pm/model';
 import { Transform } from '@tiptap/pm/transform';
-import { EditorDocumentSchema } from '../contracts';
+import { EditorDocumentSchema, type EditorDocument, type EditorNode } from '../contracts';
 import { documentSchema } from './extensions';
+import { jsonDocumentText, schemaProblem } from './validate';
 
-export type EditorDocument = ReturnType<typeof EditorDocumentSchema.parse>;
-export type EditorNode = EditorDocument['content'][number];
+export type { EditorDocument, EditorNode } from '../contracts';
 export type PlainRange = {from:number;to:number};
 // The same schema the editor builds, so server-side edits never drop or reject an attribute the editor wrote.
 const schema = documentSchema;
@@ -30,7 +30,13 @@ function mapping(doc:PMNode) {
   };
   walk(doc,0);return {text,spans};
 }
-export function documentText(document:unknown):string {return mapping(parsed(document)).text;}
+// The plain text every AI anchor is measured in. Read straight from the validated JSON (the same flattening as
+// mapping() above), so a 2,000-page notebook is not rebuilt as ProseMirror nodes just to be counted.
+export function documentText(document:unknown):string {
+  const json:EditorDocument=EditorDocumentSchema.parse(document);
+  const problem=schemaProblem(json);if(problem)throw new RangeError(problem);
+  return jsonDocumentText(json);
+}
 function inline(text:string):EditorNode[] {
   return text.split(/(\n)/u).flatMap((part):EditorNode[]=>part==='\n'?[{type:'hardBreak'}]:part?[{type:'text',text:part}]:[]);
 }

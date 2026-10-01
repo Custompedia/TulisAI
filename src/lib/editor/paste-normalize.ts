@@ -13,7 +13,9 @@ export const TASK_GLYPH_ATTRIBUTE = 'data-ww-task';
 
 const ELEMENT = 1, TEXT = 3, COMMENT = 8;
 const REMOVED = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'FORM', 'INPUT', 'BUTTON', 'SELECT', 'TEXTAREA', 'IMG', 'PICTURE', 'SVG', 'VIDEO', 'AUDIO', 'CANVAS', 'NOSCRIPT', 'TEMPLATE', 'LINK', 'META', 'TITLE', 'HEAD', 'FRAME', 'FRAMESET', 'APPLET', 'BASE', 'MATH', 'SOURCE', 'TRACK', 'MAP', 'AREA', 'XML', 'O:P']);
-const ALLOWED_ATTRIBUTES = new Set(['href', 'style', 'colspan', 'rowspan', 'colwidth', 'start', 'type', 'data-type', 'data-checked', 'data-color', 'data-page-break']);
+const ALLOWED_ATTRIBUTES = new Set(['href', 'style', 'colspan', 'rowspan', 'colwidth', 'start', 'type', 'data-type', 'data-checked', 'data-color', 'data-page-break',
+  // An image space copied inside the app keeps its size and wrap (see extensions/image-space.ts).
+  'data-image-space', 'data-wrap', 'data-width', 'data-height', 'data-margin-top', 'data-margin-right', 'data-margin-bottom', 'data-margin-left']);
 const TEXT_BLOCKS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6']);
 const INLINE = new Set(['SPAN', 'A', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL', 'INS', 'SUP', 'SUB', 'MARK', 'SMALL', 'BIG', 'FONT', 'CITE', 'Q', 'ABBR', 'CODE']);
 const INHERITED = ['font-family', 'font-size', 'color', 'font-weight', 'font-style'];

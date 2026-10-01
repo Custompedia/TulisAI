@@ -3,6 +3,7 @@ import { fontStack } from './office-defaults';
 import { normalizeGlyphs } from './numbering';
 import { applyRun, characterStyleProps, type RunProps, type Styles } from './styles';
 import { attr, firstNamed, type XmlNode } from './xml';
+import { objectSpaces } from './images';
 
 type Mark = NonNullable<EditorNode['marks']>[number];
 // What the canvas already renders for a block, so only real differences become marks.
@@ -10,15 +11,20 @@ export type Baseline = { font: string; size: number; color: string; bold: boolea
 type Field = { phase: 'instr' | 'result'; instr: string; link?: string };
 export type NoteKind = 'footnote' | 'endnote';
 // What the file carried that the notebook cannot hold as-is; the import dialog lists these before anything is created.
-export const IMPORT_WARNINGS = ['images', 'textboxes', 'revisions', 'comments', 'endnotes', 'runningRich', 'shapes'] as const;
+// 'images' now means "pictures became empty spaces"; 'imageWrap' that a centred or unusual wrap was approximated by a
+// full-width space; 'sectionsDiffer' that later sections had another page setup and the first section's was used.
+export const IMPORT_WARNINGS = ['images', 'textboxes', 'revisions', 'comments', 'endnotes', 'runningRich', 'shapes', 'imageWrap', 'sectionsDiffer'] as const;
 export type ImportWarning = (typeof IMPORT_WARNINGS)[number];
 export type RunContext = {
   styles: Styles; relationships: Map<string, string>; fields: Field[];
   // Footnote and endnote bodies, already flattened to text, keyed "footnote:3".
   noteTexts: Map<string, string>; textBoxes: XmlNode[]; warn: (warning: ImportWarning) => void;
+  // The text column's width in points, which decides the side of a picture positioned by offset.
+  columnPoints?: number;
 };
 export const PAGE_BREAK: EditorNode = { type: 'pageBreak' };
-export type Inlines = { nodes: EditorNode[]; firstFont?: string };
+// `anchored` holds the spaces of floating pictures, which belong at the top of their paragraph whatever run carried them.
+export type Inlines = { nodes: EditorNode[]; anchored: EditorNode[]; firstFont?: string };
 
 const LINK_COLOR = '0563C1';
 const HTTP_LINK = /^https?:\/\/[^\s"<>]+$/iu;
@@ -44,6 +50,19 @@ export function marksFor(props: RunProps, baseline: Baseline, link?: string, for
   if (run.size && Math.abs(run.size - baseline.size) > 0.01) style.fontSize = `${run.size}pt`;
   if ((run.color ?? '000000') !== baseline.color && !(link && run.color === LINK_COLOR)) style.color = `#${run.color ?? '000000'}`;
   if (Object.keys(style).length) marks.push({ type: 'textStyle', attrs: style });
+  return shared(marks);
+}
+
+// A long document repeats the same few formats thousands of times; one shared list per format keeps a 2,000-page
+// import from holding a separate copy of each on every run. Mark lists are never mutated after import.
+const SHARED = new Map<string, Mark[]>();
+function shared(marks: Mark[]): Mark[] {
+  if (!marks.length) return marks;
+  const key = JSON.stringify(marks);
+  const known = SHARED.get(key);
+  if (known) return known;
+  if (SHARED.size > 5000) SHARED.clear();
+  SHARED.set(key, marks);
   return marks;
 }
 
@@ -107,7 +126,7 @@ export function collectTextBoxes(node: XmlNode, out: XmlNode[]) {
 const fieldLink = (instr: string) => { const match = /^\s*HYPERLINK\s+"([^"]+)"/iu.exec(instr); return match && HTTP_LINK.test(match[1]!) ? match[1] : undefined; };
 
 export function inlinesFrom(paragraph: XmlNode, paraRun: RunProps, baseline: Baseline, context: RunContext): Inlines {
-  const result: Inlines = { nodes: [] };
+  const result: Inlines = { nodes: [], anchored: [] };
   const inInstructions = () => context.fields.some((field) => field.phase === 'instr');
   const activeLink = () => { for (let index = context.fields.length - 1; index >= 0; index--) if (context.fields[index]!.link) return context.fields[index]!.link; return undefined; };
 
@@ -115,6 +134,17 @@ export function inlinesFrom(paragraph: XmlNode, paraRun: RunProps, baseline: Bas
     if (!value || props.vanish) return;
     if (result.firstFont === undefined) result.firstFont = props.font;
     pushText(result.nodes, props.caps ? value.toUpperCase() : value, marksFor(props, baseline, link ?? activeLink(), force));
+  };
+
+  // A drawing or VML object: a text box's text is read after the paragraph (as before); anything else leaves an empty
+  // space of its own size where it stood (see images.ts), and the picture itself is reported, never imported.
+  const object = (piece: XmlNode) => {
+    const before = context.textBoxes.length;
+    collectTextBoxes(piece, context.textBoxes);
+    if (context.textBoxes.length > before) { context.warn('textboxes'); return; }
+    const spaces = objectSpaces(piece, context.columnPoints ?? 468, (warning) => context.warn(warning));
+    for (const space of spaces) (space.anchored ? result.anchored : result.nodes).push(space.node);
+    if (spaces.length || hasPicture(piece)) context.warn('images');
   };
 
   const run = (node: XmlNode, link: string | undefined) => {
@@ -152,13 +182,7 @@ export function inlinesFrom(paragraph: XmlNode, paraRun: RunProps, baseline: Bas
           break;
         }
         case 'w:footnoteRef': case 'w:endnoteRef': break;
-        case 'w:drawing': case 'w:pict': case 'w:object': case 'mc:AlternateContent': {
-          const before = context.textBoxes.length;
-          collectTextBoxes(piece, context.textBoxes);
-          if (context.textBoxes.length > before) context.warn('textboxes');
-          if (hasPicture(piece)) context.warn('images');
-          break;
-        }
+        case 'w:drawing': case 'w:pict': case 'w:object': case 'mc:AlternateContent': object(piece); break;
         default: break;
       }
     }
@@ -179,12 +203,7 @@ export function inlinesFrom(paragraph: XmlNode, paraRun: RunProps, baseline: Bas
         // Deleted and moved-away revisions are not part of the text the writer sees; they are reported, not kept.
         case 'w:del': case 'w:moveFrom': context.warn('revisions'); break;
         case 'w:commentRangeStart': case 'w:commentReference': context.warn('comments'); break;
-        case 'mc:AlternateContent': {
-          const before = context.textBoxes.length;
-          collectTextBoxes(child, context.textBoxes);
-          if (context.textBoxes.length > before) context.warn('textboxes');
-          break;
-        }
+        case 'mc:AlternateContent': object(child); break;
         case 'm:oMath': case 'm:oMathPara': if (!inInstructions()) text(mathText(child), paraRun, link); break;
         default: break;
       }
