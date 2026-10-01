@@ -32,6 +32,10 @@ const EPSILON = 0.5;
 const SLICE = 150;
 // Word's widow and orphan control: never a single line alone at the foot or the head of a page.
 const MIN_LINES = 2;
+// A last line may run this share of a line past the text area. The browser lays a line out a fraction of a point
+// taller than Word does (it rounds each line box and unites the canvas font with the run font), and over 31 lines
+// that fraction pushed a line Word keeps onto the next page; the part that runs over is leading below the text.
+const LINE_SLACK = 0.15;
 
 // Pure layout: where each sheet starts, so a block (or a paragraph's next line) lands on the next page's top margin.
 export function planPages(blocks: PageBlock[], sheet: SheetGeometry): PagePlan {
@@ -64,7 +68,7 @@ export function planPages(blocks: PageBlock[], sheet: SheetGeometry): PagePlan {
     let first = 0; let blockTop = top; let current = page; let currentStart = pageStart;
     const made: PageSplit[] = [];
     for (;;) {
-      const fit = Math.floor((currentStart + body - (blockTop + grid.offset) + EPSILON) / grid.pitch);
+      const fit = Math.floor((currentStart + body - (blockTop + grid.offset) + EPSILON + LINE_SLACK * grid.pitch) / grid.pitch);
       if (fit >= grid.count) break;
       let line = fit;
       if (grid.count - line < MIN_LINES) line = grid.count - MIN_LINES;
@@ -73,9 +77,12 @@ export function planPages(blocks: PageBlock[], sheet: SheetGeometry): PagePlan {
       made.push({ index, line, height: target - lineTop, band: target - sheet.top - sheet.gutter - lineTop });
       blockTop = target - grid.offset - line * grid.pitch; current = next; currentStart = target; first = line;
     }
-    if (!made.length) return false;
+    // With the slack the whole paragraph may fit: it then stays where it is.
+    if (!made.length && (first !== 0 || blockTop !== top)) return false;
     splits.push(...made);
-    page = current; pageStart = currentStart; bottom = blockTop + block.height; marginBottom = block.marginBottom; startsPage[index] = false;
+    // A last line inside the slack ends the page instead of starting another one.
+    const end = blockTop + block.height; const limit = currentStart + body;
+    page = current; pageStart = currentStart; bottom = end > limit && end - limit <= LINE_SLACK * grid.pitch + EPSILON ? limit : end; marginBottom = block.marginBottom; startsPage[index] = false;
     settle();
     return true;
   };

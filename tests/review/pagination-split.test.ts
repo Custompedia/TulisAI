@@ -30,6 +30,14 @@ describe('review: paragraphs split between pages', () => {
     expect(plan.splits.map((split) => split.line)).toEqual([8]);
   });
 
+  it('keeps a last line that runs a sliver past the text area, as Word does', () => {
+    // 682 + 6 lines of 20 ends 2 px past the 800 px text area: within the 3 px slack. At 690 it is 10 px past.
+    const keeps = planPages([block(682), paragraph(6)], sheet);
+    expect(keeps.splits).toEqual([]); expect(keeps.gaps).toEqual([]); expect(keeps.pages).toBe(1);
+    const moves = planPages([block(690), paragraph(6)], sheet);
+    expect(moves.splits.map((split) => split.line)).toEqual([4]);
+  });
+
   it('splits a paragraph longer than a page more than once', () => {
     const plan = planPages([paragraph(100)], sheet);
     expect(plan.splits.map((split) => split.line)).toEqual([40, 80]);
