@@ -139,21 +139,47 @@ export async function unzip(bytes: Uint8Array, limits: ZipLimits = ZIP_LIMITS): 
   return files;
 }
 
-type Prepared = { name: Uint8Array; data: Uint8Array; stored: Uint8Array; method: number; crc: number };
+type Prepared = { name: Uint8Array; size: number; stored: Uint8Array; method: number; crc: number };
+// An entry already compressed from text produced piece by piece (the body of a long export), with its CRC and size.
+export type DeflatedEntry = { name: string; stored: Uint8Array; crc: number; size: number };
+
+// Deflates text as it is generated, so a 2,000-page document.xml never exists as one string or one byte array:
+// pieces are encoded in batches of about 64 KB, checksummed and compressed as they stream.
+export async function deflateText(name: string, pieces: Iterable<string>): Promise<DeflatedEntry> {
+  const encoder = new TextEncoder(); const iterator = pieces[Symbol.iterator](); let crc = 0; let size = 0;
+  const source = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      let batch = '';
+      for (;;) {
+        const next = iterator.next();
+        if (next.done) break;
+        batch += next.value;
+        if (batch.length >= 65_536) break;
+      }
+      if (!batch) { controller.close(); return; }
+      const bytes = encoder.encode(batch);
+      crc = crc32(bytes, crc); size += bytes.length;
+      controller.enqueue(bytes);
+    },
+  });
+  const stored = new Uint8Array(await new Response(source.pipeThrough(new CompressionStream('deflate-raw') as unknown as TransformStream<Uint8Array, Uint8Array>)).arrayBuffer());
+  return { name, stored, crc, size };
+}
 
 // DOS timestamp; DOCX readers ignore it, so a fixed value keeps exports byte-stable.
 const DOS_TIME = 0;
 const DOS_DATE = 0x21; // 1980-01-01
 
-export async function zip(entries: ZipEntry[]): Promise<Uint8Array> {
+export async function zip(entries: Array<ZipEntry | DeflatedEntry>): Promise<Uint8Array> {
   const encoder = new TextEncoder();
   const prepared: Prepared[] = [];
   for (const entry of entries) {
+    if ('stored' in entry) { prepared.push({ name: encoder.encode(entry.name), size: entry.size, stored: entry.stored, method: 8, crc: entry.crc }); continue; }
     const data = entry.data;
     // Deflate only pays off past a few hundred bytes; STORE keeps the tiny OOXML parts simple and is equally valid.
     const compressed = data.length > 256 ? await deflateRaw(data) : null;
     const useDeflate = compressed !== null && compressed.length < data.length;
-    prepared.push({ name: encoder.encode(entry.name), data, stored: useDeflate ? compressed : data, method: useDeflate ? 8 : 0, crc: crc32(data) });
+    prepared.push({ name: encoder.encode(entry.name), size: data.length, stored: useDeflate ? compressed : data, method: useDeflate ? 8 : 0, crc: crc32(data) });
   }
 
   const localSize = prepared.reduce((sum, item) => sum + 30 + item.name.length + item.stored.length, 0);
@@ -173,7 +199,7 @@ export async function zip(entries: ZipEntry[]): Promise<Uint8Array> {
     view.setUint16(cursor + 12, DOS_DATE, true);
     view.setUint32(cursor + 14, item.crc, true);
     view.setUint32(cursor + 18, item.stored.length, true);
-    view.setUint32(cursor + 22, item.data.length, true);
+    view.setUint32(cursor + 22, item.size, true);
     view.setUint16(cursor + 26, item.name.length, true);
     view.setUint16(cursor + 28, 0, true);
     output.set(item.name, cursor + 30);
@@ -192,7 +218,7 @@ export async function zip(entries: ZipEntry[]): Promise<Uint8Array> {
     view.setUint16(cursor + 14, DOS_DATE, true);
     view.setUint32(cursor + 16, item.crc, true);
     view.setUint32(cursor + 20, item.stored.length, true);
-    view.setUint32(cursor + 24, item.data.length, true);
+    view.setUint32(cursor + 24, item.size, true);
     view.setUint16(cursor + 28, item.name.length, true);
     view.setUint16(cursor + 30, 0, true);
     view.setUint16(cursor + 32, 0, true);
