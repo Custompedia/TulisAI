@@ -1,6 +1,19 @@
 # Buying through Lynk
 
-Status: **built and tested; not deployed, migration `0019` not applied remotely.**
+Status: **live since 2026-11-13** (owner: "lanjut sampai live").
+
+- PR Custompedia/TulisAI#25 is merged (main d4a5312).
+- Migration `0019` is applied to the remote D1.
+- Worker `tulisai` version ca3d3f7c is deployed, with `LYNK_MERCHANT_KEY` and `RESEND_API_KEY` set.
+- Ruang KOL forwards non-Ruang-KOL payments (Worker d459a1ca).
+- The nine products are shown on lynk.id/custompedia.
+
+Checks on the live Worker:
+
+- `test_event` → 200;
+- a forged signature → 401, with nothing recorded.
+
+No real signed payment had gone through yet when the products were shown.
 
 Owner decisions, 2026-11-13:
 
@@ -37,7 +50,8 @@ Settings shared by every product:
 
 Each product has a 1024×1024 image drawn in the Tulis Lab palette.
 
-Until go-live, all nine products are hidden from the store page ("Show / Hide" off). Their direct links work.
+They were hidden from the store page ("Show / Hide" off) until the endpoint was live, then shown (owner: "Langsung
+tampilkan").
 
 A yearly plan is twelve monthly access periods in a row, each with its own allowance. The periods are anchored to the
 first day, so 31 Jan is followed by 29 Feb and then 31 Mar.
