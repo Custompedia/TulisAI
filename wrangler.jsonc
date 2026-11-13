@@ -9,7 +9,7 @@
   "preview_urls": false,
   "routes": [{ "pattern": "tulis.marikitalembur.com", "custom_domain": true }],
   "assets": { "directory": "dist/client", "not_found_handling": "none", "binding": "ASSETS" },
-  "vars": { "AI_PUBLIC_ENABLED": "true", "AI_MONTHLY_REQUEST_LIMIT": "100", "OPENROUTER_MODEL": "openai/gpt-6-luna", "EMAIL_FROM": "no-reply@REPLACE_WITH_VERIFIED_DOMAIN", "BETTER_AUTH_URL": "https://tulis.marikitalembur.com", "MKL_SSO_ENABLED": "false", "TULISAI_COMMERCE_CHECKOUT_ENABLED": "false", "MIDTRANS_MODE": "sandbox", "MKL_ISSUER": "https://marikitalembur.com" },
+  "vars": { "AI_PUBLIC_ENABLED": "true", "AI_MONTHLY_REQUEST_LIMIT": "100", "OPENROUTER_MODEL": "openai/gpt-6-luna", "EMAIL_FROM": "Tulis Lab <noreply@mail.marikitalembur.com>", "EMAIL_REPLY_TO": "marikitalembur@gmail.com", "BETTER_AUTH_URL": "https://tulis.marikitalembur.com", "MKL_SSO_ENABLED": "false", "TULISAI_COMMERCE_CHECKOUT_ENABLED": "false", "MIDTRANS_MODE": "sandbox", "MKL_ISSUER": "https://marikitalembur.com" },
   "triggers": { "crons": ["17 * * * *"] },
   "d1_databases": [{ "binding": "DB", "database_name": "tulisai", "database_id": "6b563c85-9817-4c3d-910c-00a29ab2aaa0" }],
   "send_email": [{ "name": "EMAIL" }],

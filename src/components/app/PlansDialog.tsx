@@ -1,11 +1,12 @@
 'use client';
 import { useState } from 'react';
-import { Check, ChevronDown, Crown, Gauge, Leaf, Minus, Rocket, Sparkles, Wallet, type LucideIcon } from 'lucide-react';
+import { Check, ChevronDown, Crown, ExternalLink, Gauge, Leaf, Minus, Rocket, Sparkles, Wallet, type LucideIcon } from 'lucide-react';
 import { useLocale } from '@/lib/client/locale';
 import { dateTime, numberFormat } from '@/lib/client/format';
 import { errorText, newKey, request } from '@/lib/client/api';
 import { useBilling, type Order } from '@/lib/client/billing-store';
 import { PLAN_LIMITS, TIERS, TOP_UPS, TOP_UP_VALIDITY_MONTHS, type Tier, type TopUp } from '@/lib/plans';
+import { lynkProduct } from '@/lib/lynk-products';
 import { pressGreen, raisedGreen } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
 import { Alert } from '@/components/ui/Alert';
@@ -17,7 +18,8 @@ type Cells = [string | boolean, string | boolean, string | boolean, string | boo
 type PaidTier = Exclude<Tier, 'free'>;
 
 // Prices, allowances and gates all come from PLAN_LIMITS, so this catalogue cannot drift from what the server enforces.
-// Buying goes through Tulis Lab's own Midtrans checkout. While payments are closed, choosing a plan explains that instead of pretending to sell.
+// Buying goes through Tulis Lab's own Midtrans checkout when it is open, else through the Lynk products (docs/lynk-payments.md).
+// While both are closed, choosing a plan explains that instead of pretending to sell.
 const FREE_CHARACTERS = PLAN_LIMITS.free.includedCharacters;
 const chars = (value: number, t: T) => t(`${numberFormat(value, 'id')} karakter`, `${numberFormat(value, 'en')} characters`);
 const perRun = (tier: Tier, t: T) => t(`Sekali proses s.d. ${chars(PLAN_LIMITS[tier].runLimit, t)}`, `Up to ${chars(PLAN_LIMITS[tier].runLimit, t)} per run`);
@@ -114,7 +116,25 @@ const perThousand = (pack: TopUp) => Math.round((pack.priceIdr / pack.characters
 // The cheapest price per 1,000 characters is computed, so the "best value" tag cannot drift from the catalogue.
 const BEST_VALUE = TOP_UPS.reduce((best, pack) => (perThousand(pack) < perThousand(best) ? pack : best)).id;
 
-function TopUps({ t, canBuy, busy, onBuy }: { t: T; canBuy: boolean; busy: string; onBuy: (pack: TopUp['id']) => void }) {
+const lynkLink = 'inline-flex w-full items-center justify-center gap-1.5 rounded-full font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2';
+
+// A plan bought on Lynk: one month (the main button) or a year of monthly periods (hemat 4 bulan), on the product pages.
+function LynkPlanLinks({ plan, name, renew, popular, t }: { plan: PaidTier; name: string; renew?: boolean; popular?: boolean; t: T }) {
+  const monthly = lynkProduct(`${plan}-1m`); const yearly = lynkProduct(`${plan}-12m`);
+  const saving = monthly.priceIdr * 12 - yearly.priceIdr;
+  return (
+    <div className="mt-4 space-y-1">
+      <a href={monthly.url} target="_blank" rel="noopener noreferrer" className={`${lynkLink} h-9 text-[13px] ${popular ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`}>
+        {renew ? t('Perpanjang 1 bulan', 'Renew 1 month') : t(`Pilih ${name}`, `Choose ${name}`)}<ExternalLink size={13} aria-hidden="true" />
+      </a>
+      <a href={yearly.url} target="_blank" rel="noopener noreferrer" className={`${lynkLink} h-8 text-[12px] text-brand-800 hover:bg-brand-50`}>
+        {t(`1 tahun Rp${numberFormat(yearly.priceIdr, 'id')} · hemat Rp${numberFormat(saving, 'id')}`, `1 year Rp${numberFormat(yearly.priceIdr, 'id')} · save Rp${numberFormat(saving, 'id')}`)}
+      </a>
+    </div>
+  );
+}
+
+function TopUps({ t, canBuy, busy, onBuy, lynk }: { t: T; canBuy: boolean; busy: string; onBuy: (pack: TopUp['id']) => void; lynk: boolean }) {
   const rules = [
     t('Hanya menambah kuota AI — tidak membuka fitur paket lain', 'Adds AI allowance only — never unlocks another plan\'s features'),
     t(`Dipakai setelah kuota bulanan habis, berlaku ${TOP_UP_VALIDITY_MONTHS} bulan`, `Used after the monthly allowance, valid for ${TOP_UP_VALIDITY_MONTHS} months`),
@@ -145,7 +165,8 @@ function TopUps({ t, canBuy, busy, onBuy }: { t: T; canBuy: boolean; busy: strin
               <p className="mt-1.5 text-xl font-semibold tracking-tight text-ink-950 tabular-nums">{numberFormat(pack.characters, 'id')}<span className="ml-1 text-xs font-medium text-ink-500">{t('karakter', 'characters')}</span></p>
               <p className="mt-0.5 text-[14px] font-semibold text-ink-800 tabular-nums">Rp{numberFormat(pack.priceIdr, 'id')}</p>
               <p className="mt-2 text-[11.5px] text-ink-500 tabular-nums">{t(`≈ Rp${numberFormat(perThousand(pack), 'id')} per 1.000 karakter`, `≈ Rp${numberFormat(perThousand(pack), 'id')} per 1,000 characters`)}</p>
-              {canBuy && <button type="button" disabled={busy !== ''} onClick={() => onBuy(pack.id)} className="mt-3 inline-flex h-8 items-center justify-center rounded-full border border-line-strong bg-white text-[12.5px] font-semibold text-ink-800 hover:border-ink-300 disabled:opacity-60">{busy === pack.id ? t('Membuka pembayaran…', 'Opening payment…') : t('Beli', 'Buy')}</button>}
+              {canBuy && lynk ? <a href={lynkProduct(`topup-${pack.id}`).url} target="_blank" rel="noopener noreferrer" className={`${lynkLink} mt-3 h-8 border border-line-strong bg-white text-[12.5px] text-ink-800 hover:border-ink-300`}>{t('Beli', 'Buy')}<ExternalLink size={12} aria-hidden="true" /></a>
+                : canBuy && <button type="button" disabled={busy !== ''} onClick={() => onBuy(pack.id)} className="mt-3 inline-flex h-8 items-center justify-center rounded-full border border-line-strong bg-white text-[12.5px] font-semibold text-ink-800 hover:border-ink-300 disabled:opacity-60">{busy === pack.id ? t('Membuka pembayaran…', 'Opening payment…') : t('Beli', 'Buy')}</button>}
             </li>
           );
         })}
@@ -173,6 +194,8 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState('');
   const en = locale === 'en';
   const running = billing?.plan ?? null;
+  // Midtrans wins when it is open; otherwise the plans link to their Lynk products.
+  const lynk = Boolean(billing?.lynkOpen && !billing.checkoutOpen);
   async function buy(body: { kind: 'plan'; plan: PaidTier } | { kind: 'topup'; pack: TopUp['id'] }, label: string) {
     if (!billing?.checkoutOpen) { setNotice(label); return; }
     setBusy(body.kind === 'plan' ? body.plan : body.pack); setError('');
@@ -187,7 +210,8 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
   return (
     <Modal size="2xl" onClose={onClose} title={t('Paket & kuota AI', 'Plans & AI allowance')}>
       {/* While checkout is closed the plans are shown for comparison only, and nothing here is a buy button. */}
-      {billing && !billing.checkoutOpen && !notice && <Alert tone="info" className="mb-4" title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t('Paket di bawah bisa kamu bandingkan dulu. Paket dan kuota yang sudah kamu punya tetap berlaku.', 'You can compare the plans below. Your current plan and allowance stay as they are.')}</Alert>}
+      {lynk && <Alert tone="info" className="mb-4" title={t('Bayar lewat Lynk', 'Pay on Lynk')}>{t(`Pembayaran lewat toko Lynk kami. Saat membayar, isi email akun ini: ${user.email}. Paket aktif otomatis beberapa saat setelah pembayaran berhasil, dan kami kirim email konfirmasinya.`, `Payment goes through our Lynk store. When paying, enter this account's email: ${user.email}. The plan turns on automatically shortly after the payment succeeds, and we email you a confirmation.`)}</Alert>}
+      {billing && !billing.checkoutOpen && !lynk && !notice && <Alert tone="info" className="mb-4" title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t('Paket di bawah bisa kamu bandingkan dulu. Paket dan kuota yang sudah kamu punya tetap berlaku.', 'You can compare the plans below. Your current plan and allowance stay as they are.')}</Alert>}
       {admin && <Alert tone="info" className="mb-4" title={t('Akun admin', 'Admin account')}>{t('Akun admin tidak dibatasi kuota permintaan bulanan (tetap maks. 10 per menit), tetapi tetap memakai saldo karakter.', 'An admin account has no monthly request cap (still at most 10 per minute), but it still spends its character balance.')}</Alert>}
       {notice && <Alert tone="info" className="mb-4" onDismiss={() => setNotice('')} dismissLabel={t('Tutup', 'Dismiss')} title={t('Pembayaran belum dibuka', 'Payments are not open yet')}>{t(`${notice} belum bisa dibeli karena pembayaran belum dibuka. Tulisan dan kuotamu saat ini tidak berubah.`, `${notice} cannot be bought yet because payments are not open. Your writing and current allowance are unchanged.`)}</Alert>}
       {error && <Alert tone="error" className="mb-4" onDismiss={() => setError('')} dismissLabel={t('Tutup', 'Dismiss')}>{error}</Alert>}
@@ -227,7 +251,9 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
               </div>
 
               {/* Free is not something to buy, so it gets a plain label instead of a disabled-looking button. */}
-              {current && plan.id !== 'free' && running?.code === plan.id && billing?.checkoutOpen ? (
+              {current && plan.id !== 'free' && running?.code === plan.id && lynk ? (
+                <LynkPlanLinks plan={plan.id as PaidTier} name={plan.name} renew t={t} />
+              ) : current && plan.id !== 'free' && running?.code === plan.id && billing?.checkoutOpen ? (
                 <button type="button" disabled={busy !== ''} onClick={() => void buy({ kind: 'plan', plan: plan.id as PaidTier }, plan.name)}
                   className="mt-4 inline-flex h-9 w-full items-center justify-center rounded-full border border-line-strong bg-white text-[13px] font-semibold text-ink-800 hover:border-ink-300 disabled:opacity-60">
                   {busy === plan.id ? t('Membuka pembayaran…', 'Opening payment…') : t('Perpanjang 1 bulan', 'Renew 1 month')}
@@ -238,6 +264,8 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
                 <p className="mt-4 flex h-9 items-center justify-center text-center text-[12px] text-ink-500">{t('Bisa dipilih setelah paket saat ini berakhir', 'Available after the current plan ends')}</p>
               ) : plan.id === 'free' ? (
                 <p className="mt-4 flex h-9 items-center justify-center text-[12.5px] text-ink-500">{t('Otomatis untuk setiap akun baru', 'Given to every new account')}</p>
+              ) : lynk ? (
+                <LynkPlanLinks plan={plan.id as PaidTier} name={plan.name} popular={plan.popular} t={t} />
               ) : (
                 <button type="button" disabled={busy !== ''} onClick={() => void buy({ kind: 'plan', plan: plan.id as PaidTier }, plan.name)}
                   className={`mt-4 inline-flex h-9 w-full items-center justify-center rounded-full text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-600 focus-visible:ring-offset-2 ${plan.popular && billing?.checkoutOpen ? `${raisedGreen} ${pressGreen}` : 'border border-line-strong bg-white text-ink-800 hover:border-ink-300 hover:text-ink-950'}`}>
@@ -249,7 +277,7 @@ export function PlansDialog({ onClose }: { onClose: () => void }) {
         })}
       </ul>
 
-      <TopUps t={t} canBuy={Boolean(billing?.checkoutOpen && running)} busy={busy} onBuy={(pack) => void buy({ kind: 'topup', pack }, t('Tambahan karakter', 'Character top-up'))} />
+      <TopUps t={t} lynk={lynk} canBuy={Boolean((billing?.checkoutOpen || lynk) && running)} busy={busy} onBuy={(pack) => void buy({ kind: 'topup', pack }, t('Tambahan karakter', 'Character top-up'))} />
 
       <section aria-label={t('Perbandingan fitur', 'Feature comparison')} className="mt-10">
         <h3 className="text-center text-[15px] font-semibold text-ink-900">{t('Bandingkan semua fitur', 'Compare all features')}</h3>

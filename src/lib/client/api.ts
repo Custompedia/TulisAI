@@ -174,6 +174,10 @@ export function errorText(error: unknown, english: boolean): string {
     case code === 'SELF_BAN' || code === 'YOU_CANNOT_BAN_YOURSELF': return t('Kamu tidak bisa menonaktifkan akunmu sendiri.', 'You cannot disable your own account.');
     case code === 'SELF_DELETE' || code === 'YOU_CANNOT_REMOVE_YOURSELF': return t('Kamu tidak bisa menghapus akunmu sendiri dari sini.', 'You cannot delete your own account from here.');
     case code === 'LAST_ADMIN': return t('Harus tersisa minimal satu admin aktif.', 'At least one active admin must remain.');
+    case code === 'LYNK_CLAIM_INVALID': return t('Link aktivasi ini tidak valid. Buka lagi link dari email pembelianmu.', 'This activation link is invalid. Open the link from your purchase email again.');
+    case code === 'LYNK_ALREADY_CLAIMED': return t('Pembelian ini sudah aktif di akun lain. Masuk dengan akun itu, atau balas email dari Tulis Lab.', 'This purchase is already active on another account. Sign in with that account, or reply to the Tulis Lab email.');
+    case code === 'LYNK_PROCESSING': return t('Pembelian ini sedang diproses. Coba lagi sebentar lagi.', 'This purchase is being processed. Try again shortly.');
+    case code === 'LYNK_NOT_CLAIMABLE': return t('Pembelian ini perlu ditangani admin. Balas email dari Tulis Lab, ya.', 'This purchase needs an administrator. Please reply to the Tulis Lab email.');
     case code === 'PAYMENTS_CLOSED': return t('Pembayaran belum dibuka. Paket dan kuota yang sudah kamu punya tetap berlaku.', 'Payments are not open yet. Your current plan and allowance stay as they are.');
     case code === 'PLAN_ACTIVE': return t('Paket lain masih berjalan. Paket bisa diganti setelah periodenya berakhir.', 'Another plan is still running. You can switch after its period ends.');
     case code === 'PAID_PLAN_REQUIRED': return t('Tambahan karakter hanya untuk paket Plus, Pro, atau Max yang sedang aktif.', 'Top-ups are only for an active Plus, Pro, or Max plan.');

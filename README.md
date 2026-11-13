@@ -25,4 +25,4 @@ pnpm dev
 
 AI tetap nonaktif sampai `AI_PUBLIC_ENABLED=true` dan `OPENROUTER_API_KEY` diisi. P09 (analisis kualitas) hanya berjalan saat diminta.
 
-- [Checklist implementasi](task.md) · [Setup](docs/setup.md) · [Verifikasi](docs/verification.md) · [Kebijakan data](docs/data-policy.md)
+- [Checklist implementasi](task.md) · [Setup](docs/setup.md) · [Verifikasi](docs/verification.md) · [Kebijakan data](docs/data-policy.md) · [Pembayaran lewat Lynk](docs/lynk-payments.md)

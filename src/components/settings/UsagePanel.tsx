@@ -120,12 +120,12 @@ export function UsagePanel() {
             <ul className="divide-y divide-line rounded-xl border border-line">
               {billing.orders.slice(0, 20).map((order) => {
                 const status = orderStatus(order.status, t);
-                const what = order.kind === 'plan' ? `${t('Paket', 'Plan')} ${order.plan ? tierName(order.plan, t) : ''}` : t(`Tambahan ${numberFormat(order.characters, 'id')} karakter`, `${numberFormat(order.characters, 'en')}-character top-up`);
+                const what = order.kind === 'plan' ? `${t('Paket', 'Plan')} ${order.plan ? tierName(order.plan, t) : ''}${(order.months ?? 1) > 1 ? t(` · ${order.months} bulan`, ` · ${order.months} months`) : ''}` : t(`Tambahan ${numberFormat(order.characters, 'id')} karakter`, `${numberFormat(order.characters, 'en')}-character top-up`);
                 return (
                   <li key={order.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13.5px] font-medium text-ink-900">{what} · Rp{numberFormat(order.amountIdr, 'id')}</p>
-                      <p className="text-[12px] text-ink-500">{dateTime(order.createdAt, locale)}{order.mode === 'sandbox' && ` · ${t('mode uji', 'test mode')}`}</p>
+                      <p className="text-[12px] text-ink-500">{dateTime(order.createdAt, locale)}{order.provider === 'lynk' && ' · Lynk'}{order.mode === 'sandbox' && ` · ${t('mode uji', 'test mode')}`}</p>
                     </div>
                     <span className={`shrink-0 rounded-md px-2 py-0.5 text-[11.5px] font-semibold ${TONE[status.tone]}`}>{status.label}</span>
                     {order.status === 'pending' && (
