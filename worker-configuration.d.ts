@@ -6,7 +6,10 @@ interface __BaseEnv_Env {
 	DB: D1Database;
 	EMAIL: SendEmail;
 	ASSETS: Fetcher;
-	EMAIL_FROM: "no-reply@REPLACE_WITH_VERIFIED_DOMAIN";
+	EMAIL_FROM: "Tulis Lab <noreply@mail.marikitalembur.com>";
+	EMAIL_REPLY_TO: "marikitalembur@gmail.com";
+	RESEND_API_KEY: string;
+	LYNK_MERCHANT_KEY: string;
 	BETTER_AUTH_SECRET: string;
 	BETTER_AUTH_URL: string;
 	GOOGLE_CLIENT_ID: string;
@@ -28,7 +31,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "EMAIL_FROM" | "BETTER_AUTH_SECRET" | "BETTER_AUTH_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "OPENROUTER_API_KEY" | "OPENROUTER_MODEL" | "AI_MONTHLY_REQUEST_LIMIT" | "AI_MONTHLY_CHARACTER_LIMIT" | "AI_PUBLIC_ENABLED">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "EMAIL_FROM" | "EMAIL_REPLY_TO" | "RESEND_API_KEY" | "LYNK_MERCHANT_KEY" | "BETTER_AUTH_SECRET" | "BETTER_AUTH_URL" | "GOOGLE_CLIENT_ID" | "GOOGLE_CLIENT_SECRET" | "OPENROUTER_API_KEY" | "OPENROUTER_MODEL" | "AI_MONTHLY_REQUEST_LIMIT" | "AI_MONTHLY_CHARACTER_LIMIT" | "AI_PUBLIC_ENABLED">> {}
 }
 
 // Begin runtime types

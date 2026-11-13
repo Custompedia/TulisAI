@@ -7,8 +7,9 @@ type PaidTier = Exclude<Tier, 'free'>;
 export type Order = {
   id: string; kind: 'plan' | 'topup'; plan: PaidTier | null; pack: TopUp['id'] | null; characters: number; amountIdr: number; mode: 'sandbox' | 'production';
   status: string; granted?: boolean; needsOperator?: boolean; payUrl: string | null; createdAt: string; expiresAt?: string; paidAt?: string | null;
+  provider?: 'midtrans' | 'lynk'; months?: number;
 };
-export type Billing = { checkoutOpen: boolean; mode: 'sandbox' | 'production' | null; orders: Order[]; plan: { code: PaidTier; source: 'admin' | 'payment'; periodEnd: string; paidThrough: string } | null };
+export type Billing = { checkoutOpen: boolean; lynkOpen?: boolean; mode: 'sandbox' | 'production' | null; orders: Order[]; plan: { code: PaidTier; source: 'admin' | 'payment'; periodEnd: string; paidThrough: string } | null };
 
 type State = { billing: Billing | null; loading: boolean; error: unknown };
 const EMPTY: State = { billing: null, loading: true, error: null };

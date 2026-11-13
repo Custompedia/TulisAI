@@ -15,13 +15,40 @@ export function renderEmail(template: EmailTemplate): { subject: string; text: s
   return { subject: template.subject, text, html };
 }
 
+// Two senders: Resend when RESEND_API_KEY is set (owner 2026-11-13: the account and verified domain
+// mail.marikitalembur.com that Ruang KOL and Mari Rekap already send from), else the Cloudflare send_email binding.
+export const RESEND_URL = "https://api.resend.com/emails";
+/** How long one Resend call may take before it counts as failed, so a slow provider never holds a request open. */
+export const EMAIL_TIMEOUT_MS = 5_000;
+
+const realSender = (from: string | undefined): from is string => Boolean(from?.trim()) && !from!.includes("REPLACE_WITH");
+const resendKey = () => runtime().RESEND_API_KEY?.trim() || null;
+
 export function emailConfigured(): boolean {
   const { EMAIL, EMAIL_FROM } = runtime();
-  return Boolean(EMAIL && EMAIL_FROM && !EMAIL_FROM.includes("REPLACE_WITH"));
+  return realSender(EMAIL_FROM) && Boolean(resendKey() || EMAIL);
 }
 
-export async function sendEmail({ to, subject, text, html }: EmailContent): Promise<void> {
-  const { EMAIL, EMAIL_FROM } = runtime();
-  if (!EMAIL || !EMAIL_FROM || !emailConfigured()) throw new ConfigurationError("EMAIL binding or EMAIL_FROM is not configured.");
-  await EMAIL.send({ from: EMAIL_FROM, to, subject, text, html });
+/** Why a Resend send failed: TIMEOUT, NETWORK, or RESEND_<status>. */
+export class EmailError extends Error { constructor(readonly code: string) { super(`email: ${code}`); this.name = "EmailError"; } }
+
+/** One email. `idempotencyKey` stops Resend from sending a retried email twice within 24 hours. */
+export async function sendEmail({ to, subject, text, html }: EmailContent, options: { idempotencyKey?: string } = {}): Promise<void> {
+  const { EMAIL, EMAIL_FROM, EMAIL_REPLY_TO } = runtime();
+  if (!emailConfigured() || !realSender(EMAIL_FROM)) throw new ConfigurationError("RESEND_API_KEY (or the EMAIL binding) and EMAIL_FROM are not configured.");
+  const key = resendKey();
+  if (!key) { await EMAIL!.send({ from: EMAIL_FROM, to, subject, text, html }); return; }
+  let response: Response;
+  try {
+    response = await fetch(RESEND_URL, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}`, "content-type": "application/json", ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}) },
+      body: JSON.stringify({ from: EMAIL_FROM.trim(), to: [to], subject, html, text, ...(EMAIL_REPLY_TO?.trim() ? { reply_to: EMAIL_REPLY_TO.trim() } : {}) }),
+      signal: AbortSignal.timeout(EMAIL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    throw new EmailError(name === "TimeoutError" || name === "AbortError" ? "TIMEOUT" : "NETWORK");
+  }
+  if (!response.ok) throw new EmailError(`RESEND_${response.status}`);
 }

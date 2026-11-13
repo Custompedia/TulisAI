@@ -27,12 +27,14 @@ export type OrderRow = {
   transaction_id: string | null; payment_type: string | null; provider_status: string | null; created_at: number; updated_at: number;
   expires_at: number; paid_at: number | null; fulfilled_at: number | null; fulfillment_token: string | null;
   fulfillment_outcome: "granted" | "needs_operator" | null; access_period_id: string | null; lot_id: string | null; refund_handled_at: number | null;
+  // Migration 0019: who took the money, and how many monthly periods a plan order buys (12 for a yearly Lynk product).
+  provider: "midtrans" | "lynk"; months: number;
 };
 
 export type PublicOrder = {
   id: string; kind: OrderKind; plan: PaidPlan | null; pack: PackCode | null; characters: number; amountIdr: number;
   mode: "sandbox" | "production"; status: OrderStatus; granted: boolean; needsOperator: boolean;
-  payUrl: string | null; createdAt: string; expiresAt: string; paidAt: string | null;
+  payUrl: string | null; createdAt: string; expiresAt: string; paidAt: string | null; provider: "midtrans" | "lynk"; months: number;
 };
 
 export function publicOrder(row: OrderRow, now = Date.now()): PublicOrder {
@@ -41,6 +43,7 @@ export function publicOrder(row: OrderRow, now = Date.now()): PublicOrder {
     mode: row.provider_mode, status: row.status, granted: row.fulfillment_outcome === "granted", needsOperator: row.fulfillment_outcome === "needs_operator",
     payUrl: row.status === "pending" && row.expires_at > now ? row.redirect_url : null,
     createdAt: new Date(row.created_at).toISOString(), expiresAt: new Date(row.expires_at).toISOString(), paidAt: row.paid_at === null ? null : new Date(row.paid_at).toISOString(),
+    provider: row.provider ?? "midtrans", months: row.months ?? 1,
   };
 }
 
@@ -62,7 +65,7 @@ function newOrderId(now: number): string {
   return `TA-${day}-${crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase()}`;
 }
 
-const orderById = (id: string) => runtime().DB.prepare("SELECT * FROM payment_orders WHERE id=?").bind(id).first<OrderRow>();
+export const orderById = (id: string) => runtime().DB.prepare("SELECT * FROM payment_orders WHERE id=?").bind(id).first<OrderRow>();
 
 async function sha256Hex(value: string): Promise<string> {
   const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
@@ -123,8 +126,11 @@ export async function createCheckout(buyer: Buyer, input: CheckoutInput, now = D
   return { order: publicOrder((await orderById(id))!, now), reused: false };
 }
 
-/** Grant the paid order exactly once. Every statement is conditioned on this order not yet being fulfilled. */
-async function fulfill(row: OrderRow, now: number): Promise<void> {
+/**
+ * Grant the paid order exactly once. Every statement is conditioned on this order not yet being fulfilled.
+ * Used by Midtrans (applyStatus) and Lynk (src/server/payments/lynk.ts) alike.
+ */
+export async function fulfillOrder(row: OrderRow, now: number): Promise<void> {
   const token = crypto.randomUUID();
   const notFulfilled = { sql: "NOT EXISTS (SELECT 1 FROM payment_orders WHERE id=? AND fulfilled_at IS NOT NULL)", values: [row.id] as unknown[] };
   const markPaid = (outcome: "granted" | "needs_operator", proof: { sql: string; values: unknown[] } | null, links: { period?: string; lot?: string }) =>
@@ -135,16 +141,28 @@ async function fulfill(row: OrderRow, now: number): Promise<void> {
   let audit: { action: string; details: Record<string, unknown> };
 
   if (row.kind === "plan") {
-    const plan = row.plan_code!; const state = await planState(row.user_id, now);
+    const plan = row.plan_code!; const months = Math.max(1, row.months ?? 1); const state = await planState(row.user_id, now);
     if (state.current && state.current.plan_code !== plan) {
       // Paid while another plan started (for example an admin grant). Take the money into account, never guess a swap.
       statements.push(markPaid("needs_operator", null, {}));
-      audit = { action: "payment.needs_operator", details: { orderId: row.id, reason: "plan_already_active", paid: plan, current: state.current.plan_code, amountIdr: row.amount_idr } };
+      audit = { action: "payment.needs_operator", details: { orderId: row.id, reason: "plan_already_active", paid: plan, current: state.current.plan_code, amountIdr: row.amount_idr, provider: row.provider ?? "midtrans" } };
     } else {
-      const startMs = state.current ? Date.parse(state.paidThrough!) : now; const endMs = addCalendarMonths(startMs, 1); const periodId = crypto.randomUUID();
-      statements.push(periodInsertStatement({ id: periodId, ownerId: row.user_id, plan, source: "payment", paymentOrderId: row.id, startMs, endMs, now, extraGuard: notFulfilled }));
-      statements.push(markPaid("granted", { sql: "EXISTS (SELECT 1 FROM access_periods WHERE id=?)", values: [periodId] }, { period: periodId }));
-      audit = { action: state.current ? "payment.plan.renewed" : "payment.plan.activated", details: { orderId: row.id, plan, periodStart: new Date(startMs).toISOString(), periodEnd: new Date(endMs).toISOString(), amountIdr: row.amount_idr, mode: row.provider_mode } };
+      // A renewal starts where the last covered period ends; a yearly order is twelve monthly periods in a row, each
+      // with its own allowance, anchored to the first day (Jan 31 -> Feb 29 -> Mar 31).
+      const startMs = state.paidThrough ? Math.max(now, Date.parse(state.paidThrough)) : now; const anchor = new Date(startMs).getUTCDate();
+      const ids = Array.from({ length: months }, () => crypto.randomUUID()); let periodStart = startMs; let endMs = startMs;
+      for (let index = 0; index < months; index++) {
+        endMs = addCalendarMonths(startMs, index + 1, anchor);
+        // access_periods.payment_order_id is unique, so periods after the first carry '<order id>#<n>'.
+        const guard = index === 0 ? notFulfilled : { sql: `${notFulfilled.sql} AND EXISTS (SELECT 1 FROM access_periods WHERE id=?)`, values: [...notFulfilled.values, ids[index - 1]] };
+        statements.push(periodInsertStatement({ id: ids[index]!, ownerId: row.user_id, plan, source: "payment", paymentOrderId: index === 0 ? row.id : `${row.id}#${index + 1}`, startMs: periodStart, endMs, now, extraGuard: guard }));
+        periodStart = endMs;
+      }
+      // All periods or none: if the first went in but a later one was blocked, changing the frozen `months` aborts the batch.
+      if (months > 1) statements.push(runtime().DB.prepare(`UPDATE payment_orders SET months=0 WHERE id=? AND EXISTS (SELECT 1 FROM access_periods WHERE id=?)
+        AND NOT EXISTS (SELECT 1 FROM access_periods WHERE id=?)`).bind(row.id, ids[0], ids.at(-1)));
+      statements.push(markPaid("granted", { sql: "EXISTS (SELECT 1 FROM access_periods WHERE id=?)", values: [ids.at(-1)] }, { period: ids[0] }));
+      audit = { action: state.current ? "payment.plan.renewed" : "payment.plan.activated", details: { orderId: row.id, plan, months, periodStart: new Date(startMs).toISOString(), periodEnd: new Date(endMs).toISOString(), amountIdr: row.amount_idr, mode: row.provider_mode, provider: row.provider ?? "midtrans" } };
     }
   } else {
     const lotId = crypto.randomUUID(); const expiresMs = addCalendarMonths(now, TOP_UP_VALIDITY_MONTHS);
@@ -159,9 +177,9 @@ async function fulfill(row: OrderRow, now: number): Promise<void> {
         now, expiresMs, payloadHash, CHARACTER_MEASUREMENT_VERSION, now, now, ...notFulfilled.values));
     statements.push(runtime().DB.prepare(`INSERT INTO character_wallet_events (id,owner_id,event_type,lot_id,quantity,causal_reference,metadata_json,created_at)
       SELECT ?,?,'purchased_lot_accepted',?,?,?,?,? WHERE EXISTS (SELECT 1 FROM character_purchased_lots WHERE id=?) AND ${notFulfilled.sql}`)
-      .bind(crypto.randomUUID(), row.user_id, lotId, row.characters, row.id, JSON.stringify({ source: "midtrans", pack: row.pack_code }), now, lotId, ...notFulfilled.values));
+      .bind(crypto.randomUUID(), row.user_id, lotId, row.characters, row.id, JSON.stringify({ source: row.provider ?? "midtrans", pack: row.pack_code }), now, lotId, ...notFulfilled.values));
     statements.push(markPaid("granted", { sql: "EXISTS (SELECT 1 FROM character_purchased_lots WHERE id=?)", values: [lotId] }, { lot: lotId }));
-    audit = { action: "payment.topup.credited", details: { orderId: row.id, pack: row.pack_code, characters: row.characters, expiresAt: new Date(expiresMs).toISOString(), amountIdr: row.amount_idr, mode: row.provider_mode } };
+    audit = { action: "payment.topup.credited", details: { orderId: row.id, pack: row.pack_code, characters: row.characters, expiresAt: new Date(expiresMs).toISOString(), amountIdr: row.amount_idr, mode: row.provider_mode, provider: row.provider ?? "midtrans" } };
   }
   // The audit row commits with the grant or not at all.
   statements.push(runtime().DB.prepare(`INSERT INTO admin_audit_log (id,actor_id,target_user_id,action,details_json,created_at)
@@ -207,7 +225,7 @@ export async function applyStatus(config: MidtransConfig, row: OrderRow, status:
       await writeAudit(row.user_id, row.user_id, "payment.amount_mismatch", { orderId: row.id, expectedIdr: row.amount_idr, gross: status.gross_amount ?? null, currency: status.currency ?? null });
       return (await orderById(row.id))!;
     }
-    if (row.fulfilled_at === null) await fulfill(row, now);
+    if (row.fulfilled_at === null) await fulfillOrder(row, now);
   } else if (outcome === "refunded") {
     const fresh = (await orderById(row.id))!;
     if (fresh.status === "paid") await handleRefund(fresh, status, now);
@@ -221,7 +239,8 @@ export async function applyStatus(config: MidtransConfig, row: OrderRow, status:
 export async function refreshOrder(ownerId: string, orderId: string, now = Date.now(), fetcher: typeof fetch = fetch): Promise<PublicOrder> {
   const row = await orderById(orderId);
   if (!row || row.user_id !== ownerId) throw new RequestError("NOT_FOUND", "Pesanan tidak ditemukan.", 404);
-  if (row.status !== "pending" && row.status !== "paid") return publicOrder(row, now);
+  // A Lynk order is created already paid; Midtrans knows nothing about it.
+  if ((row.status !== "pending" && row.status !== "paid") || row.provider === "lynk") return publicOrder(row, now);
   const config = requireConfig();
   let status: MidtransStatus | null;
   try { status = await getTransactionStatus(config, orderId, fetcher); }
